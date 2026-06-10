@@ -22,16 +22,22 @@ class _CoursesPageState extends State<CoursesPage>
   // Replace with your own API key
   static const _apiKey = 'AIzaSyDwiUw3uEO5xqafhsfMZ0KVFYUhQ9hvmh8';
   static const _channelId = 'UCkIanvr92e8SPMgZo5y5P7g'; // majidalbana3 channel ID
+  static const _scheduleUrl = 'https://majidalbana.com/admin/table/load_schedule.php';
 
   List<Map<String, String>> _videos = [];
   bool _loadingVideos = true;
   String? _videoError;
+
+  List<_ScheduleItem> _schedule = [];
+  bool _loadingSchedule = true;
+  String? _scheduleError;
 
   @override
   void initState() {
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
     _fetchVideos();
+    _fetchSchedule();
   }
 
   @override
@@ -94,17 +100,69 @@ class _CoursesPageState extends State<CoursesPage>
     }
   }
 
-  // ─── Schedule data ────────────────────────────────────────────────────────
-  final List<Map<String, String>> _schedule = [
-    {'num': '١', 'day': 'الأحد',   'time': '٦:٠٠ م',  'location': 'قاعة A1'},
-    {'num': '٢', 'day': 'الثلاثاء','time': '٦:٠٠ م',  'location': 'قاعة A1'},
-    {'num': '٣', 'day': 'الأحد',   'time': '٦:٠٠ م',  'location': 'قاعة B2'},
-    {'num': '٤', 'day': 'الثلاثاء','time': '٧:٠٠ م',  'location': 'قاعة B2'},
-    {'num': '٥', 'day': 'الخميس', 'time': '٥:٠٠ م',  'location': 'أونلاين'},
-    {'num': '٦', 'day': 'الأحد',   'time': '٦:٠٠ م',  'location': 'قاعة A1'},
-    {'num': '٧', 'day': 'الثلاثاء','time': '٦:٠٠ م',  'location': 'قاعة C3'},
-    {'num': '٨', 'day': 'الخميس', 'time': '٥:٠٠ م',  'location': 'أونلاين'},
-  ];
+
+  Future<void> _fetchSchedule() async {
+    setState(() {
+      _loadingSchedule = true;
+      _scheduleError = null;
+    });
+
+    try {
+      final response = await http.get(Uri.parse(_scheduleUrl));
+      if (response.statusCode != 200) {
+        throw Exception('فشل الاتصال: HTTP ${response.statusCode}');
+      }
+
+      final html = utf8.decode(response.bodyBytes);
+      final rows = RegExp(r'<tr[^>]*>(.*?)</tr>', dotAll: true, caseSensitive: false)
+          .allMatches(html);
+
+      final items = <_ScheduleItem>[];
+      for (final row in rows) {
+        final rowHtml = row.group(1) ?? '';
+        final cells = RegExp(r'<td[^>]*>(.*?)</td>', dotAll: true, caseSensitive: false)
+            .allMatches(rowHtml)
+            .map((m) => m.group(1) ?? '')
+            .toList();
+
+        if (cells.length < 4) continue;
+
+        final locationHtml = cells[3];
+        final urlMatch = RegExp(r'''href=["\']([^"\']+)["\']''', caseSensitive: false)
+            .firstMatch(locationHtml);
+
+        items.add(_ScheduleItem(
+          lectureNumber: _cleanHtml(cells[0]),
+          day: _cleanHtml(cells[1]),
+          time: _cleanHtml(cells[2]),
+          location: _cleanHtml(
+            locationHtml.replaceAll(
+              RegExp(r'<a\b[^>]*>.*?</a>', dotAll: true, caseSensitive: false),
+              '',
+            ),
+          ),
+          urlLocation: urlMatch?.group(1)?.trim() ?? '',
+        ));
+      }
+
+      items.sort((a, b) => _parseLectureNumber(b.lectureNumber)
+          .compareTo(_parseLectureNumber(a.lectureNumber)));
+
+      if (!mounted) return;
+      setState(() {
+        _schedule = items;
+        _loadingSchedule = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _scheduleError = e.toString();
+        _loadingSchedule = false;
+      });
+    }
+  }
+
+  // ─── Schedule data is loaded from the website ──────────────────────────────
 
   @override
   Widget build(BuildContext context) {
@@ -141,6 +199,9 @@ class _CoursesPageState extends State<CoursesPage>
                 textSub: textSub,
                 cardBg: cardBg,
                 schedule: _schedule,
+                loadingSchedule: _loadingSchedule,
+                scheduleError: _scheduleError,
+                onRetrySchedule: _fetchSchedule,
               ),
 
               // ════════════════════════════════ TAB 2: LECTURES ════════════
@@ -160,6 +221,41 @@ class _CoursesPageState extends State<CoursesPage>
       ],
     );
   }
+}
+
+class _ScheduleItem {
+  final String lectureNumber;
+  final String day;
+  final String time;
+  final String location;
+  final String urlLocation;
+
+  const _ScheduleItem({
+    required this.lectureNumber,
+    required this.day,
+    required this.time,
+    required this.location,
+    required this.urlLocation,
+  });
+}
+
+String _cleanHtml(String value) {
+  var text = value
+      .replaceAll(RegExp(r'<[^>]*>', dotAll: true), ' ')
+      .replaceAll('&nbsp;', ' ')
+      .replaceAll('&amp;', '&')
+      .replaceAll('&quot;', '"')
+      .replaceAll('&#039;', "'")
+      .replaceAll('&lt;', '<')
+      .replaceAll('&gt;', '>');
+  return text.replaceAll(RegExp(r'\s+'), ' ').trim();
+}
+
+int _parseLectureNumber(String value) {
+  const arabic = {'٠': '0', '١': '1', '٢': '2', '٣': '3', '٤': '4', '٥': '5', '٦': '6', '٧': '7', '٨': '8', '٩': '9'};
+  var normalized = value;
+  arabic.forEach((k, v) => normalized = normalized.replaceAll(k, v));
+  return int.tryParse(normalized.replaceAll(RegExp(r'[^0-9]'), '')) ?? 0;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -229,7 +325,10 @@ class _TabBarDelegate extends SliverPersistentHeaderDelegate {
 class _CoursesTab extends StatelessWidget {
   final bool isDark;
   final Color textPrimary, textSub, cardBg;
-  final List<Map<String, String>> schedule;
+  final List<_ScheduleItem> schedule;
+  final bool loadingSchedule;
+  final String? scheduleError;
+  final VoidCallback onRetrySchedule;
 
   const _CoursesTab({
     required this.isDark,
@@ -237,6 +336,9 @@ class _CoursesTab extends StatelessWidget {
     required this.textSub,
     required this.cardBg,
     required this.schedule,
+    required this.loadingSchedule,
+    required this.scheduleError,
+    required this.onRetrySchedule,
   });
 
   static const gold = Color(0xFFD4A017);
@@ -247,73 +349,133 @@ class _CoursesTab extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(16, 20, 16, 100),
       children: [
         // ── Hero Banner ──────────────────────────────────────────────────────
-        Container(
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(24),
-            gradient: const LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: [Color(0xFFD4A017), Color(0xFF9B7000)],
+// ── Course Card ──────────────────────────────────────────────────────
+ClipRRect(
+  borderRadius: BorderRadius.circular(28),
+  child: Container(
+    decoration: BoxDecoration(
+      color: isDark ? const Color(0xFF111111) : const Color(0xFF1A1200),
+      borderRadius: BorderRadius.circular(28),
+      border: Border.all(color: gold.withOpacity(0.18)),
+    ),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // ── صورة الدورة ──
+        Stack(
+          children: [
+            AspectRatio(
+              aspectRatio: 16 / 9,
+              child: Image.asset(
+                'assets/images/dora.png',
+                fit: BoxFit.cover,
+                errorBuilder: (_, __, ___) => Container(
+                  height: 210,
+                  decoration: const BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                      colors: [Color(0xFF2A1C00), Color(0xFF1A1200)],
+                    ),
+                  ),
+                ),
+              ),
             ),
-          ),
-          padding: const EdgeInsets.all(20),
+            // تدرج داكن أسفل الصورة
+            Positioned.fill(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [
+                      Colors.transparent,
+                      Colors.black.withOpacity(0.72),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            // شارة "دورة احترافية"
+            Positioned(
+              top: 14,
+              right: 14,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 5),
+                decoration: BoxDecoration(
+                  color: const Color.fromARGB(209, 206, 204, 201),
+                  borderRadius: BorderRadius.circular(100),
+                ),
+                child: const Text(
+                  'دورة احترافية',
+                  style: TextStyle(
+                    color: Color(0xFF1A0F00),
+                    fontSize: 11,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+            ),
+            // عنوان الدورة فوق الصورة
+            Positioned(
+              bottom: 16,
+              right: 16,
+              left: 16,
+              child: const Text(
+                'دورة تدريبية لتنمية مهندس موقع',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 17,
+                  fontWeight: FontWeight.w900,
+                  height: 1.45,
+                  shadows: [Shadow(color: Colors.black54, blurRadius: 8)],
+                ),
+              ),
+            ),
+          ],
+        ),
+
+        // ── جسم الكارت ──
+        Padding(
+          padding: const EdgeInsets.all(18),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Row(
-                children: [
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 10, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: Colors.white.withOpacity(0.2),
-                      borderRadius: BorderRadius.circular(20),
-                    ),
-                    child: const Text(
-                      'دورة احترافية',
-                      style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 11,
-                          fontWeight: FontWeight.w600),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              const Text(
-                'دورة تطوير مهارات إدارة موقع المهندس',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 18,
-                  fontWeight: FontWeight.w800,
-                  height: 1.4,
-                ),
-              ),
-              const SizedBox(height: 10),
               Text(
-                'دورة علمية متكاملة تهدف إلى تمكين الطلبة والمهندسين من إدارة المواقع الإنشائية باحترافية عالية، وتطوير مهاراتهم التقنية والإدارية بأساليب حديثة، مع التركيز على الجانب التطبيقي الميداني لضمان الجودة والكفاءة.',
+                'دورة علمية متكاملة تهدف إلى تمكين الطلبة والمهندسين من إدارة المواقع الإنشائية باحترافية عالية وتطوير مهاراتهم التقنية.',
                 style: TextStyle(
-                  color: Colors.white.withOpacity(0.88),
+                  color: Colors.white.withOpacity(0.62),
                   fontSize: 12.5,
-                  height: 1.7,
+                  height: 1.8,
                 ),
               ),
               const SizedBox(height: 16),
-              // Stats row
-              Row(
+
+              // الشرائح
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
                 children: [
-                  _StatChip(icon: Icons.access_time_rounded,
-                      label: '٨ محاضرات'),
-                  const SizedBox(width: 8),
-                  _StatChip(icon: Icons.people_rounded, label: 'جميع المستويات'),
-                  const SizedBox(width: 8),
-                  _StatChip(icon: Icons.verified_rounded, label: 'شهادة حضور'),
+                  _ChipBadge(
+                    icon: Icons.access_time_rounded,
+                    label: schedule.isNotEmpty ? '+${schedule.length} محاضرة' : '+25 محاضرة',
+                  ),
+                  const _ChipBadge(icon: Icons.people_rounded, label: ' للخريجين'),
+                  const _ChipBadge(icon: Icons.verified_rounded, label: 'شهادة '),
                 ],
               ),
+
+              const SizedBox(height: 16),
+
+              // زرّا الإجراء
+
             ],
           ),
         ),
-
+      ],
+    ),
+  ),
+),
         const SizedBox(height: 28),
 
         // ── Schedule Table Header ────────────────────────────────────────────
@@ -342,113 +504,215 @@ class _CoursesTab extends StatelessWidget {
         const SizedBox(height: 14),
 
         // ── Table ───────────────────────────────────────────────────────────
-        Container(
-          decoration: BoxDecoration(
-            color: cardBg,
-            borderRadius: BorderRadius.circular(20),
-            border: Border.all(color: gold.withOpacity(0.15)),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(isDark ? 0.25 : 0.06),
-                blurRadius: 12,
-                offset: const Offset(0, 4),
+        _ScheduleTable(
+          schedule: schedule,
+          loading: loadingSchedule,
+          error: scheduleError,
+          onRetry: onRetrySchedule,
+          isDark: isDark,
+          textPrimary: textPrimary,
+          textSub: textSub,
+          cardBg: cardBg,
+        ),
+      ],
+    );
+  }
+}
+
+class _ScheduleTable extends StatelessWidget {
+  final List<_ScheduleItem> schedule;
+  final bool loading;
+  final String? error;
+  final VoidCallback onRetry;
+  final bool isDark;
+  final Color textPrimary, textSub, cardBg;
+
+  const _ScheduleTable({
+    required this.schedule,
+    required this.loading,
+    required this.error,
+    required this.onRetry,
+    required this.isDark,
+    required this.textPrimary,
+    required this.textSub,
+    required this.cardBg,
+  });
+
+  static const gold = Color(0xFFD4A017);
+
+  Future<void> _openLocation(String rawUrl) async {
+    if (rawUrl.trim().isEmpty) return;
+    var value = rawUrl.trim();
+    if (!value.startsWith('http://') && !value.startsWith('https://')) {
+      value = 'https://$value';
+    }
+    final uri = Uri.parse(value);
+    if (await canLaunchUrl(uri)) {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (loading) {
+      return Container(
+        padding: const EdgeInsets.symmetric(vertical: 28),
+        decoration: _boxDecoration(),
+        child: Column(
+          children: [
+            const SizedBox(
+              width: 28,
+              height: 28,
+              child: CircularProgressIndicator(color: gold, strokeWidth: 2.5),
+            ),
+            const SizedBox(height: 12),
+            Text('جارٍ تحميل جدول المحاضرات...', style: TextStyle(color: textSub, fontSize: 12.5)),
+          ],
+        ),
+      );
+    }
+
+    if (error != null) {
+      return Container(
+        padding: const EdgeInsets.all(18),
+        decoration: _boxDecoration(),
+        child: Column(
+          children: [
+            const Icon(Icons.wifi_off_rounded, color: gold, size: 34),
+            const SizedBox(height: 8),
+            Text('تعذّر جلب جدول المحاضرات', style: TextStyle(color: textPrimary, fontWeight: FontWeight.w800)),
+            const SizedBox(height: 12),
+            ElevatedButton.icon(
+              onPressed: onRetry,
+              icon: const Icon(Icons.refresh_rounded, size: 16),
+              label: const Text('إعادة المحاولة'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: gold,
+                foregroundColor: Colors.black,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
               ),
-            ],
+            ),
+          ],
+        ),
+      );
+    }
+
+    if (schedule.isEmpty) {
+      return Container(
+        padding: const EdgeInsets.all(22),
+        decoration: _boxDecoration(),
+        child: Text('لا توجد محاضرات حالياً', textAlign: TextAlign.center, style: TextStyle(color: textSub)),
+      );
+    }
+
+    return Container(
+      decoration: _boxDecoration(),
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        children: [
+          Container(
+            decoration: const BoxDecoration(
+              gradient: LinearGradient(colors: [Color(0xFFD4A017), Color(0xFFB8860B)]),
+            ),
+            padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 12),
+            child: const Row(
+              children: [
+                _HeaderCell(text: '#', flex: 1),
+                _HeaderCell(text: 'اليوم', flex: 2),
+                _HeaderCell(text: 'الوقت', flex: 2),
+                _HeaderCell(text: 'الموقع', flex: 3),
+              ],
+            ),
           ),
-          clipBehavior: Clip.antiAlias,
-          child: Column(
-            children: [
-              // Header row
-              Container(
-                decoration: const BoxDecoration(
-                  gradient: LinearGradient(
-                    colors: [Color(0xFFD4A017), Color(0xFFB8860B)],
+          ...schedule.asMap().entries.map((entry) {
+            final i = entry.key;
+            final row = entry.value;
+            final isEven = i % 2 == 0;
+            return Container(
+              color: isEven
+                  ? (isDark ? Colors.white.withOpacity(0.03) : const Color(0xFFFFF9EE))
+                  : Colors.transparent,
+              padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 12),
+              child: Row(
+                children: [
+                  Expanded(
+                    flex: 1,
+                    child: Center(
+                      child: Container(
+                        width: 30,
+                        height: 30,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: gold.withOpacity(0.15),
+                          border: Border.all(color: gold.withOpacity(0.22)),
+                        ),
+                        alignment: Alignment.center,
+                        child: Text(row.lectureNumber, style: const TextStyle(color: gold, fontSize: 12, fontWeight: FontWeight.w800)),
+                      ),
+                    ),
                   ),
-                ),
-                padding: const EdgeInsets.symmetric(
-                    vertical: 12, horizontal: 16),
-                child: const Row(
-                  children: [
-                    _HeaderCell(text: '#', flex: 1),
-                    _HeaderCell(text: 'اليوم', flex: 2),
-                    _HeaderCell(text: 'الوقت', flex: 2),
-                    _HeaderCell(text: 'الموقع', flex: 3),
-                  ],
-                ),
-              ),
-              // Data rows
-              ...schedule.asMap().entries.map((entry) {
-                final i = entry.key;
-                final row = entry.value;
-                final isEven = i % 2 == 0;
-                return Container(
-                  color: isEven
-                      ? (isDark
-                          ? Colors.white.withOpacity(0.03)
-                          : const Color(0xFFFFF9EE))
-                      : Colors.transparent,
-                  padding: const EdgeInsets.symmetric(
-                      vertical: 13, horizontal: 16),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        flex: 1,
-                        child: Container(
-                          alignment: Alignment.center,
-                          child: Container(
-                            width: 28,
-                            height: 28,
-                            decoration: BoxDecoration(
-                              shape: BoxShape.circle,
-                              color: gold.withOpacity(0.15),
-                            ),
-                            alignment: Alignment.center,
-                            child: Text(
-                              row['num']!,
-                              style: TextStyle(
-                                color: gold,
-                                fontSize: 12,
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
+                  _DataCell(text: row.day, flex: 2, color: textPrimary),
+                  _DataCell(text: row.time, flex: 2, color: textSub),
+                  Expanded(
+                    flex: 3,
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          row.location.contains('أونلاين') || row.location.toLowerCase().contains('online')
+                              ? Icons.videocam_rounded
+                              : Icons.location_on_rounded,
+                          size: 15,
+                          color: row.urlLocation.isNotEmpty ? gold : const Color(0xFF43A047),
+                        ),
+                        const SizedBox(width: 4),
+                        Flexible(
+                          child: Text(
+                            row.location,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            textAlign: TextAlign.center,
+                            style: TextStyle(color: textPrimary, fontSize: 11.5, fontWeight: FontWeight.w600),
                           ),
                         ),
-                      ),
-                      _DataCell(text: row['day']!, flex: 2,
-                          color: textPrimary),
-                      _DataCell(text: row['time']!, flex: 2,
-                          color: textSub),
-                      Expanded(
-                        flex: 3,
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(
-                              row['location']!.contains('أونلاين')
-                                  ? Icons.videocam_rounded
-                                  : Icons.location_on_rounded,
-                              size: 13,
-                              color: row['location']!.contains('أونلاين')
-                                  ? const Color(0xFF1E88E5)
-                                  : const Color(0xFF43A047),
+                        if (row.urlLocation.isNotEmpty) ...[
+                          const SizedBox(width: 3),
+                          InkWell(
+                            borderRadius: BorderRadius.circular(20),
+                            onTap: () => _openLocation(row.urlLocation),
+                            child: Container(
+                              padding: const EdgeInsets.all(5),
+                              decoration: BoxDecoration(
+                                color: gold.withOpacity(0.14),
+                                shape: BoxShape.circle,
+                              ),
+                              child: const Icon(Icons.map_rounded, color: gold, size: 15),
                             ),
-                            const SizedBox(width: 4),
-                            Text(
-                              row['location']!,
-                              style: TextStyle(
-                                  color: textPrimary,
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w500),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
+                          ),
+                        ],
+                      ],
+                    ),
                   ),
-                );
-              }),
-            ],
-          ),
+                ],
+              ),
+            );
+          }),
+        ],
+      ),
+    );
+  }
+
+  BoxDecoration _boxDecoration() {
+    return BoxDecoration(
+      color: cardBg,
+      borderRadius: BorderRadius.circular(20),
+      border: Border.all(color: gold.withOpacity(0.15)),
+      boxShadow: [
+        BoxShadow(
+          color: Colors.black.withOpacity(isDark ? 0.25 : 0.06),
+          blurRadius: 12,
+          offset: const Offset(0, 4),
         ),
       ],
     );
@@ -805,7 +1069,35 @@ Uri url = Uri.parse('https://www.youtube.com/watch?v=$videoId');
     ); // GestureDetector
   }
 }
+class _ChipBadge extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  const _ChipBadge({required this.icon, required this.label});
 
+  static const gold = Color(0xFFD4A017);
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+      decoration: BoxDecoration(
+        color: gold.withOpacity(0.1),
+        border: Border.all(color: gold.withOpacity(0.22)),
+        borderRadius: BorderRadius.circular(100),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, color: gold, size: 13),
+          const SizedBox(width: 5),
+          Text(label,
+              style: const TextStyle(
+                  color: gold, fontSize: 11.5, fontWeight: FontWeight.w700)),
+        ],
+      ),
+    );
+  }
+}
 // ─────────────────────────────────────────────────────────────────────────────
 // Helper Widgets
 // ─────────────────────────────────────────────────────────────────────────────
