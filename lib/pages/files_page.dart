@@ -307,6 +307,34 @@ class _FilesPageState extends State<FilesPage> with SingleTickerProviderStateMix
   isDark: widget.isDark,
 ),
 
+SliverToBoxAdapter(
+  child: Padding(
+    padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+    child: Align(
+      alignment: Alignment.centerLeft,
+      child: GestureDetector(
+        onTap: _searchActive ? _closeSearch : _openSearch,
+        child: Container(
+          width: 42,
+          height: 42,
+          decoration: BoxDecoration(
+            color: const Color(0xFFD4A017).withOpacity(0.12),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(
+              color: const Color(0xFFD4A017).withOpacity(0.35),
+            ),
+          ),
+          child: Icon(
+            _searchActive ? Icons.close_rounded : Icons.search_rounded,
+            color: const Color(0xFFD4A017),
+            size: 22,
+          ),
+        ),
+      ),
+    ),
+  ),
+),
+
           // ── Search bar (animated) ─────────────────────────────────────
           SliverToBoxAdapter(
             child: AnimatedBuilder(
@@ -409,45 +437,7 @@ class _FilesPageState extends State<FilesPage> with SingleTickerProviderStateMix
     );
   }
 
-  Widget _buildAppBar(Color pageBg) {
-    return SliverToBoxAdapter(
-      child: Stack(
-        alignment: Alignment.centerRight,
-        children: [
-          PremiumAppBar(title: 'الملفات', isDark: widget.isDark),
-          Positioned(
-            left: 16,
-            child: GestureDetector(
-              onTap: _searchActive ? _closeSearch : _openSearch,
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 220),
-                width: 40,
-                height: 40,
-                decoration: BoxDecoration(
-                  color: _searchActive
-                      ? const Color(0xFFD4A017).withOpacity(0.18)
-                      : const Color(0xFFD4A017).withOpacity(0.10),
-                  borderRadius: BorderRadius.circular(14),
-                  border: Border.all(
-                    color: const Color(0xFFD4A017).withOpacity(_searchActive ? 0.5 : 0.22),
-                  ),
-                ),
-                child: AnimatedSwitcher(
-                  duration: const Duration(milliseconds: 180),
-                  child: Icon(
-                    _searchActive ? Icons.close_rounded : Icons.search_rounded,
-                    key: ValueKey(_searchActive),
-                    color: const Color(0xFFD4A017),
-                    size: 20,
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
+
 
   Widget _buildSearchBar() {
     final cardBg = widget.isDark ? const Color(0xFF111111) : Colors.white;

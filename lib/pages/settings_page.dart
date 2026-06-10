@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../widgets/shared_widgets.dart';
-
+import 'package:google_sign_in/google_sign_in.dart';
 class SettingsPage extends StatelessWidget {
   final bool isDark;
   final ValueChanged<bool> onThemeToggle;
@@ -17,34 +17,31 @@ class SettingsPage extends StatelessWidget {
     return email == 'hmode.qq@gmail.com' || email == 'hmode.qu@gmail.com';
   }
 
-  Future<void> _signInWithGoogle(BuildContext context) async {
-    try {
-      final provider = GoogleAuthProvider();
-      await FirebaseAuth.instance.signInWithProvider(provider);
-    } catch (e) {
-      if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('فشل تسجيل الدخول: $e'),
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
-    }
-  }
+Future<void> _signInWithGoogle(BuildContext context) async {
+  try {
+    final googleUser = await GoogleSignIn().signIn();
 
-  Future<void> _signOut(BuildContext context) async {
-    try {
-      await FirebaseAuth.instance.signOut();
-    } catch (e) {
-      if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('فشل تسجيل الخروج: $e'),
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
-    }
+    if (googleUser == null) return;
+
+    final googleAuth = await googleUser.authentication;
+
+    final credential = GoogleAuthProvider.credential(
+      accessToken: googleAuth.accessToken,
+      idToken: googleAuth.idToken,
+    );
+
+    await FirebaseAuth.instance.signInWithCredential(credential);
+  } catch (e) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('فشل تسجيل الدخول: $e')),
+    );
   }
+}
+
+Future<void> _signOut() async {
+  await GoogleSignIn().signOut();
+  await FirebaseAuth.instance.signOut();
+}
 
   @override
   Widget build(BuildContext context) {
@@ -236,9 +233,9 @@ class SettingsPage extends StatelessWidget {
                             SizedBox(
                               height: 48,
                               child: ElevatedButton(
-                                onPressed: () => isLoggedIn
-                                    ? _signOut(context)
-                                    : _signInWithGoogle(context),
+onPressed: () => isLoggedIn
+    ? _signOut()
+    : _signInWithGoogle(context),
                                 style: ElevatedButton.styleFrom(
                                   backgroundColor: Colors.white,
                                   foregroundColor: const Color(0xFF6B4200),
