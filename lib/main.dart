@@ -428,7 +428,7 @@ class _CenterLogoButtonState extends State<_CenterLogoButton>
 
   @override
   Widget build(BuildContext context) {
-    final inactiveColor = widget.isDark ? const ui.Color.fromARGB(136, 151, 142, 122) : Colors.black38;
+    final inactiveColor = widget.isDark ? const ui.Color.fromARGB(135, 255, 255, 255) : Colors.black38;
 
     return GestureDetector(
       onTapDown: (_) => _pressCtrl.forward(),

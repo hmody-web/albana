@@ -8,6 +8,45 @@ import 'package:webview_flutter/webview_flutter.dart';
 
 import '../widgets/shared_widgets.dart';
 
+// ══════════════════════════════════════════════════════════════════════════════
+//  LOCAL CACHE SERVICE
+//  Saves & loads the file list from disk so it's instant on re-open.
+// ══════════════════════════════════════════════════════════════════════════════
+class _CacheService {
+  static const _cacheFileName = 'pdf_posts_cache.json';
+
+  static Future<File> _cacheFile() async {
+    final dir = await getApplicationDocumentsDirectory();
+    return File('${dir.path}/$_cacheFileName');
+  }
+
+  static Future<List<PdfFileItem>> load() async {
+    try {
+      final file = await _cacheFile();
+      if (!await file.exists()) return [];
+      final body = await file.readAsString();
+      final decoded = jsonDecode(body);
+      if (decoded is! List) return [];
+      return decoded
+          .map((e) => PdfFileItem.fromJson(Map<String, dynamic>.from(e)))
+          .toList();
+    } catch (_) {
+      return [];
+    }
+  }
+
+  static Future<void> save(List<PdfFileItem> files) async {
+    try {
+      final file = await _cacheFile();
+      final data = files.map((f) => f.toJson()).toList();
+      await file.writeAsString(jsonEncode(data));
+    } catch (_) {}
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  FILES PAGE
+// ══════════════════════════════════════════════════════════════════════════════
 class FilesPage extends StatefulWidget {
   final bool isDark;
   const FilesPage({super.key, required this.isDark});
@@ -16,9 +55,8 @@ class FilesPage extends StatefulWidget {
   State<FilesPage> createState() => _FilesPageState();
 }
 
-class _FilesPageState extends State<FilesPage> {
+class _FilesPageState extends State<FilesPage> with SingleTickerProviderStateMixin {
   static const gold = Color(0xFFD4A017);
-  static const darkCard = Color(0xFF111111);
 
   static const String _apiUrl =
       'https://majidalbana.com/admin/pdf-posts/load_pdf_posts.php';
@@ -30,31 +68,106 @@ class _FilesPageState extends State<FilesPage> {
   final Set<int> _downloaded = {};
 
   List<PdfFileItem> _files = [];
-  bool _loading = true;
+  List<PdfFileItem> _filteredFiles = [];
+  bool _loading = true;          // only true on very first launch (no cache)
+  bool _backgroundRefreshing = false;
   String? _error;
   Timer? _refreshTimer;
+
+  // Search
+  bool _searchActive = false;
+  final TextEditingController _searchCtrl = TextEditingController();
+  final FocusNode _searchFocus = FocusNode();
+  late final AnimationController _searchAnimCtrl;
+  late final Animation<double> _searchAnim;
 
   @override
   void initState() {
     super.initState();
-    _loadFiles(showLoading: true);
-    _refreshTimer = Timer.periodic(const Duration(seconds: 12), (_) {
-      _loadFiles(showLoading: false);
+    _searchAnimCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 280),
+    );
+    _searchAnim = CurvedAnimation(parent: _searchAnimCtrl, curve: Curves.easeOutCubic);
+    _searchCtrl.addListener(_onSearchChanged);
+
+    _initLoad();
+    _refreshTimer = Timer.periodic(const Duration(seconds: 8), (_) {
+      _fetchFromNetwork(silent: true);
     });
   }
 
   @override
   void dispose() {
     _refreshTimer?.cancel();
+    _searchCtrl.dispose();
+    _searchFocus.dispose();
+    _searchAnimCtrl.dispose();
     super.dispose();
   }
 
-  Future<void> _loadFiles({required bool showLoading}) async {
-    if (showLoading && mounted) {
+  // ── Search ────────────────────────────────────────────────────────────────
+
+  void _onSearchChanged() {
+    final q = _searchCtrl.text.trim();
+    setState(() {
+      _filteredFiles = q.isEmpty
+          ? List.from(_files)
+          : _files.where((f) {
+              final lower = q.toLowerCase();
+              return f.title.toLowerCase().contains(lower) ||
+                  f.description.toLowerCase().contains(lower) ||
+                  f.author.toLowerCase().contains(lower) ||
+                  f.fileName.toLowerCase().contains(lower);
+            }).toList();
+    });
+  }
+
+  void _openSearch() {
+    setState(() => _searchActive = true);
+    _searchAnimCtrl.forward();
+    Future.delayed(const Duration(milliseconds: 80), () {
+      if (mounted) _searchFocus.requestFocus();
+    });
+  }
+
+  void _closeSearch() {
+    _searchFocus.unfocus();
+    _searchAnimCtrl.reverse().then((_) {
+      if (mounted) {
+        setState(() {
+          _searchActive = false;
+          _searchCtrl.clear();
+          _filteredFiles = List.from(_files);
+        });
+      }
+    });
+  }
+
+  // ── Data loading ──────────────────────────────────────────────────────────
+
+  Future<void> _initLoad() async {
+    // 1. Load cache instantly — show it right away
+    final cached = await _CacheService.load();
+    if (cached.isNotEmpty && mounted) {
+      setState(() {
+        _files = cached;
+        _filteredFiles = List.from(cached);
+        _loading = false;
+      });
+    }
+    // 2. Then fetch from network (silently if we had cache)
+    await _fetchFromNetwork(silent: cached.isNotEmpty);
+  }
+
+  Future<void> _fetchFromNetwork({required bool silent}) async {
+    if (!silent && mounted) {
       setState(() {
         _loading = true;
         _error = null;
       });
+    } else if (silent && mounted) {
+      setState(() => _backgroundRefreshing = true);
     }
 
     try {
@@ -62,30 +175,39 @@ class _FilesPageState extends State<FilesPage> {
       final request = await HttpClient().getUrl(uri);
       final response = await request.close();
 
-      if (response.statusCode != 200) {
-        throw Exception('HTTP ${response.statusCode}');
-      }
+      if (response.statusCode != 200) throw Exception('HTTP ${response.statusCode}');
 
       final body = await response.transform(utf8.decoder).join();
       final decoded = jsonDecode(body);
+      if (decoded is! List) throw Exception('صيغة البيانات غير صحيحة');
 
-      if (decoded is! List) {
-        throw Exception('صيغة البيانات غير صحيحة');
-      }
-
-      final loadedFiles = decoded
-          .map((item) => PdfFileItem.fromJson(Map<String, dynamic>.from(item)))
+      final fresh = decoded
+          .map((e) => PdfFileItem.fromJson(Map<String, dynamic>.from(e)))
           .toList();
 
+      // Check if there's actually anything new before rebuilding
+      final hasNewContent = _hasNewItems(fresh);
+
       if (!mounted) return;
-      setState(() {
-        _files = loadedFiles;
-        _loading = false;
-        _error = null;
-      });
+
+      if (hasNewContent || _files.isEmpty) {
+        setState(() {
+          // Merge: prepend new items with a "new" animation flag
+          _files = fresh;
+          _onSearchChanged(); // re-apply search filter
+          _loading = false;
+          _error = null;
+          _backgroundRefreshing = false;
+        });
+        // Save to cache
+        await _CacheService.save(fresh);
+      } else {
+        if (mounted) setState(() => _backgroundRefreshing = false);
+      }
     } catch (_) {
       if (!mounted) return;
       setState(() {
+        _backgroundRefreshing = false;
         _loading = false;
         if (_files.isEmpty) {
           _error = 'تعذر تحميل الملفات. تأكد من الاتصال بالإنترنت.';
@@ -94,9 +216,16 @@ class _FilesPageState extends State<FilesPage> {
     }
   }
 
+  bool _hasNewItems(List<PdfFileItem> fresh) {
+    if (fresh.length != _files.length) return true;
+    final existingIds = _files.map((f) => f.id).toSet();
+    return fresh.any((f) => !existingIds.contains(f.id));
+  }
+
+  // ── Download ──────────────────────────────────────────────────────────────
+
   Future<void> _downloadFile(PdfFileItem file) async {
     if (_downloading.contains(file.id)) return;
-
     setState(() {
       _downloading.add(file.id);
       _downloadProgress[file.id] = 0;
@@ -105,10 +234,7 @@ class _FilesPageState extends State<FilesPage> {
     try {
       final request = await HttpClient().getUrl(Uri.parse(file.fileUrl));
       final response = await request.close();
-
-      if (response.statusCode != 200) {
-        throw Exception('فشل التحميل');
-      }
+      if (response.statusCode != 200) throw Exception('فشل التحميل');
 
       final dir = await getApplicationDocumentsDirectory();
       final output = File('${dir.path}/${file.safeFileName}').openWrite();
@@ -137,6 +263,7 @@ class _FilesPageState extends State<FilesPage> {
         SnackBar(
           content: Text('تم تحميل الملف: ${file.title}'),
           behavior: SnackBarBehavior.floating,
+          backgroundColor: const Color(0xFFD4A017),
         ),
       );
     } catch (_) {
@@ -162,16 +289,71 @@ class _FilesPageState extends State<FilesPage> {
     );
   }
 
+  // ── Build ─────────────────────────────────────────────────────────────────
+
   @override
   Widget build(BuildContext context) {
     final pageBg = widget.isDark ? const Color(0xFF050505) : const Color(0xFFF8F6F0);
+    final displayList = _searchActive ? _filteredFiles : _files;
 
     return Container(
       color: pageBg,
       child: CustomScrollView(
         physics: const BouncingScrollPhysics(),
         slivers: [
-          PremiumAppBar(title: 'الملفات', isDark: widget.isDark),
+          // ── App Bar ──────────────────────────────────────────────────────
+          _buildAppBar(pageBg),
+
+          // ── Search bar (animated) ─────────────────────────────────────
+          SliverToBoxAdapter(
+            child: AnimatedBuilder(
+              animation: _searchAnim,
+              builder: (_, __) {
+                if (!_searchActive && _searchAnim.value == 0) {
+                  return const SizedBox.shrink();
+                }
+                return SizeTransition(
+                  sizeFactor: _searchAnim,
+                  child: FadeTransition(
+                    opacity: _searchAnim,
+                    child: _buildSearchBar(),
+                  ),
+                );
+              },
+            ),
+          ),
+
+          // ── New post indicator ────────────────────────────────────────
+          if (_backgroundRefreshing)
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    SizedBox(
+                      width: 12,
+                      height: 12,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 1.5,
+                        color: gold.withOpacity(0.7),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      'جارٍ التحقق من المنشورات الجديدة...',
+                      style: TextStyle(
+                        color: gold.withOpacity(0.7),
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+
+          // ── Content ───────────────────────────────────────────────────
           if (_loading)
             const SliverFillRemaining(
               hasScrollBody: false,
@@ -183,32 +365,39 @@ class _FilesPageState extends State<FilesPage> {
               child: _ErrorState(
                 message: _error!,
                 isDark: widget.isDark,
-                onRetry: () => _loadFiles(showLoading: true),
+                onRetry: () => _fetchFromNetwork(silent: false),
               ),
             )
-          else if (_files.isEmpty)
+          else if (displayList.isEmpty && _searchActive)
+            SliverFillRemaining(
+              hasScrollBody: false,
+              child: _SearchEmptyState(query: _searchCtrl.text, isDark: widget.isDark),
+            )
+          else if (displayList.isEmpty)
             SliverFillRemaining(
               hasScrollBody: false,
               child: _EmptyState(isDark: widget.isDark),
             )
           else
             SliverPadding(
-              padding: const EdgeInsets.fromLTRB(12, 14, 12, 105),
+              padding: const EdgeInsets.fromLTRB(12, 8, 12, 105),
               sliver: SliverList(
                 delegate: SliverChildBuilderDelegate(
                   (ctx, i) {
-                    final file = _files[i];
+                    final file = displayList[i];
                     return _FileCard(
+                      key: ValueKey(file.id),
                       file: file,
                       isDark: widget.isDark,
                       isDownloading: _downloading.contains(file.id),
                       isDownloaded: _downloaded.contains(file.id),
                       progress: _downloadProgress[file.id] ?? 0,
+                      searchQuery: _searchActive ? _searchCtrl.text : '',
                       onDownload: () => _downloadFile(file),
                       onView: () => _openFile(file),
                     );
                   },
-                  childCount: _files.length,
+                  childCount: displayList.length,
                 ),
               ),
             ),
@@ -216,8 +405,130 @@ class _FilesPageState extends State<FilesPage> {
       ),
     );
   }
+
+  Widget _buildAppBar(Color pageBg) {
+    return SliverToBoxAdapter(
+      child: Stack(
+        alignment: Alignment.centerRight,
+        children: [
+          PremiumAppBar(title: 'الملفات', isDark: widget.isDark),
+          Positioned(
+            left: 16,
+            child: GestureDetector(
+              onTap: _searchActive ? _closeSearch : _openSearch,
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 220),
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: _searchActive
+                      ? const Color(0xFFD4A017).withOpacity(0.18)
+                      : const Color(0xFFD4A017).withOpacity(0.10),
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(
+                    color: const Color(0xFFD4A017).withOpacity(_searchActive ? 0.5 : 0.22),
+                  ),
+                ),
+                child: AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 180),
+                  child: Icon(
+                    _searchActive ? Icons.close_rounded : Icons.search_rounded,
+                    key: ValueKey(_searchActive),
+                    color: const Color(0xFFD4A017),
+                    size: 20,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSearchBar() {
+    final cardBg = widget.isDark ? const Color(0xFF111111) : Colors.white;
+    final hintColor = widget.isDark ? Colors.white38 : Colors.black38;
+    final textColor = widget.isDark ? Colors.white : const Color(0xFF17120A);
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 0, 12, 10),
+      child: Container(
+        height: 52,
+        decoration: BoxDecoration(
+          color: cardBg,
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: const Color(0xFFD4A017).withOpacity(0.35)),
+          boxShadow: [
+            BoxShadow(
+              color: const Color(0xFFD4A017).withOpacity(0.08),
+              blurRadius: 20,
+              offset: const Offset(0, 6),
+            ),
+            BoxShadow(
+              color: Colors.black.withOpacity(widget.isDark ? 0.3 : 0.06),
+              blurRadius: 12,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        child: Row(
+          textDirection: TextDirection.rtl,
+          children: [
+            const SizedBox(width: 14),
+            Icon(Icons.search_rounded, color: const Color(0xFFD4A017), size: 22),
+            const SizedBox(width: 10),
+            Expanded(
+              child: TextField(
+                controller: _searchCtrl,
+                focusNode: _searchFocus,
+                textDirection: TextDirection.rtl,
+                style: TextStyle(
+                  color: textColor,
+                  fontSize: 15,
+                  fontWeight: FontWeight.w700,
+                ),
+                decoration: InputDecoration(
+                  hintText: 'ابحث في الملفات...',
+                  hintStyle: TextStyle(
+                    color: hintColor,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                  ),
+                  border: InputBorder.none,
+                  isDense: true,
+                  contentPadding: EdgeInsets.zero,
+                ),
+              ),
+            ),
+            if (_searchCtrl.text.isNotEmpty) ...[
+              GestureDetector(
+                onTap: () {
+                  _searchCtrl.clear();
+                  _searchFocus.requestFocus();
+                },
+                child: Container(
+                  margin: const EdgeInsets.only(left: 10),
+                  padding: const EdgeInsets.all(4),
+                  decoration: BoxDecoration(
+                    color: hintColor.withOpacity(0.15),
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(Icons.close_rounded, size: 14, color: hintColor),
+                ),
+              ),
+            ],
+            const SizedBox(width: 14),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
+// ══════════════════════════════════════════════════════════════════════════════
+//  DATA MODEL
+// ══════════════════════════════════════════════════════════════════════════════
 class PdfFileItem {
   final int id;
   final String title;
@@ -252,6 +563,17 @@ class PdfFileItem {
     );
   }
 
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'title': title,
+        'description': description,
+        'file_name': fileName,
+        'file_size': fileSize,
+        'author': author,
+        'thumbnail': thumbnail,
+        'created_at': createdAt,
+      };
+
   static String _clean(dynamic value) => '${value ?? ''}'.trim();
 
   String get fileUrl => '${_FilesPageState._fileBaseUrl}$fileName';
@@ -281,21 +603,27 @@ class PdfFileItem {
   }
 }
 
+// ══════════════════════════════════════════════════════════════════════════════
+//  FILE CARD  (with search highlight)
+// ══════════════════════════════════════════════════════════════════════════════
 class _FileCard extends StatelessWidget {
   final PdfFileItem file;
   final bool isDark;
   final bool isDownloading;
   final bool isDownloaded;
   final double progress;
+  final String searchQuery;
   final VoidCallback onDownload;
   final VoidCallback onView;
 
   const _FileCard({
+    super.key,
     required this.file,
     required this.isDark,
     required this.isDownloading,
     required this.isDownloaded,
     required this.progress,
+    required this.searchQuery,
     required this.onDownload,
     required this.onView,
   });
@@ -313,7 +641,9 @@ class _FileCard extends StatelessWidget {
       decoration: BoxDecoration(
         color: cardBg,
         borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: isDark ? Colors.white.withOpacity(0.08) : Colors.black.withOpacity(0.06)),
+        border: Border.all(
+          color: isDark ? Colors.white.withOpacity(0.08) : Colors.black.withOpacity(0.06),
+        ),
         boxShadow: [
           BoxShadow(
             color: Colors.black.withOpacity(isDark ? 0.35 : 0.08),
@@ -333,12 +663,13 @@ class _FileCard extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    file.title.isEmpty ? 'ملف بدون عنوان' : file.title,
+                  // Title with search highlight
+                  _HighlightText(
+                    text: file.title.isEmpty ? 'ملف بدون عنوان' : file.title,
+                    query: searchQuery,
                     maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
                     textAlign: TextAlign.right,
-                    style: TextStyle(
+                    baseStyle: TextStyle(
                       color: textPrimary,
                       fontSize: 18,
                       height: 1.45,
@@ -355,11 +686,12 @@ class _FileCard extends StatelessWidget {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text(
-                              file.author,
+                            _HighlightText(
+                              text: file.author,
+                              query: searchQuery,
                               maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
+                              textAlign: TextAlign.start,
+                              baseStyle: const TextStyle(
                                 color: Color(0xFF486CFF),
                                 fontSize: 13,
                                 fontWeight: FontWeight.w800,
@@ -384,15 +716,15 @@ class _FileCard extends StatelessWidget {
                   const SizedBox(height: 16),
                   Divider(color: isDark ? Colors.white24 : Colors.black12, height: 1),
                   const SizedBox(height: 18),
-                  _FileInfoPill(file: file, isDark: isDark),
+                  _FileInfoPill(file: file, isDark: isDark, searchQuery: searchQuery),
                   if (file.description.isNotEmpty) ...[
                     const SizedBox(height: 16),
-                    Text(
-                      file.description,
+                    _HighlightText(
+                      text: file.description,
+                      query: searchQuery,
                       maxLines: 3,
-                      overflow: TextOverflow.ellipsis,
                       textAlign: TextAlign.right,
-                      style: TextStyle(
+                      baseStyle: TextStyle(
                         color: textSub,
                         fontSize: 13.5,
                         height: 1.65,
@@ -433,6 +765,73 @@ class _FileCard extends StatelessWidget {
   }
 }
 
+// ══════════════════════════════════════════════════════════════════════════════
+//  HIGHLIGHT TEXT WIDGET  (highlights search query in yellow)
+// ══════════════════════════════════════════════════════════════════════════════
+class _HighlightText extends StatelessWidget {
+  final String text;
+  final String query;
+  final int maxLines;
+  final TextAlign textAlign;
+  final TextStyle baseStyle;
+
+  const _HighlightText({
+    required this.text,
+    required this.query,
+    required this.maxLines,
+    required this.textAlign,
+    required this.baseStyle,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    if (query.isEmpty) {
+      return Text(
+        text,
+        maxLines: maxLines,
+        overflow: TextOverflow.ellipsis,
+        textAlign: textAlign,
+        style: baseStyle,
+      );
+    }
+
+    final lower = text.toLowerCase();
+    final queryLower = query.toLowerCase();
+    final spans = <TextSpan>[];
+    int start = 0;
+
+    while (true) {
+      final idx = lower.indexOf(queryLower, start);
+      if (idx == -1) {
+        spans.add(TextSpan(text: text.substring(start)));
+        break;
+      }
+      if (idx > start) {
+        spans.add(TextSpan(text: text.substring(start, idx)));
+      }
+      spans.add(TextSpan(
+        text: text.substring(idx, idx + query.length),
+        style: baseStyle.copyWith(
+          backgroundColor: const Color(0xFFD4A017).withOpacity(0.30),
+          color: const Color(0xFFD4A017),
+          fontWeight: FontWeight.w900,
+        ),
+      ));
+      start = idx + query.length;
+    }
+
+    return Text.rich(
+      TextSpan(children: spans, style: baseStyle),
+      maxLines: maxLines,
+      overflow: TextOverflow.ellipsis,
+      textAlign: textAlign,
+    );
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  HERO THUMBNAIL  (cached network image)
+// ══════════════════════════════════════════════════════════════════════════════
 class _HeroThumbnail extends StatelessWidget {
   final PdfFileItem file;
   final bool isDark;
@@ -456,17 +855,27 @@ class _HeroThumbnail extends StatelessWidget {
               file.thumbnailUrl,
               fit: BoxFit.cover,
               alignment: Alignment.topCenter,
-              errorBuilder: (_, __, ___) => _FallbackThumbnail(extension: file.extension, isDark: isDark),
+              // Flutter's Image.network caches images in memory automatically.
+              // For disk-level cache, add the `cached_network_image` package.
+              errorBuilder: (_, __, ___) =>
+                  _FallbackThumbnail(extension: file.extension, isDark: isDark),
               loadingBuilder: (context, child, progress) {
                 if (progress == null) return child;
-                return Center(
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2,
-                    color: gold,
-                    value: progress.expectedTotalBytes == null
-                        ? null
-                        : progress.cumulativeBytesLoaded / progress.expectedTotalBytes!,
-                  ),
+                return Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    Container(color: bg),
+                    Center(
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: gold,
+                        value: progress.expectedTotalBytes == null
+                            ? null
+                            : progress.cumulativeBytesLoaded /
+                                progress.expectedTotalBytes!,
+                      ),
+                    ),
+                  ],
                 );
               },
             )
@@ -541,6 +950,9 @@ class _HeroThumbnail extends StatelessWidget {
   }
 }
 
+// ══════════════════════════════════════════════════════════════════════════════
+//  AUTHOR AVATAR
+// ══════════════════════════════════════════════════════════════════════════════
 class _AuthorAvatar extends StatelessWidget {
   const _AuthorAvatar();
 
@@ -553,7 +965,7 @@ class _AuthorAvatar extends StatelessWidget {
       decoration: BoxDecoration(
         shape: BoxShape.circle,
         gradient: const LinearGradient(
-          colors: [Color(0xFFD4A017), Color(0xFF2E6BFF)],
+          colors: [Color(0xFFD4A017), Color(0xFFB8860B)],
         ),
         boxShadow: [
           BoxShadow(
@@ -577,19 +989,28 @@ class _AuthorAvatar extends StatelessWidget {
   }
 }
 
+// ══════════════════════════════════════════════════════════════════════════════
+//  FILE INFO PILL
+// ══════════════════════════════════════════════════════════════════════════════
 class _FileInfoPill extends StatelessWidget {
   final PdfFileItem file;
   final bool isDark;
-  const _FileInfoPill({required this.file, required this.isDark});
+  final String searchQuery;
+
+  const _FileInfoPill({
+    required this.file,
+    required this.isDark,
+    required this.searchQuery,
+  });
 
   @override
   Widget build(BuildContext context) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
       decoration: BoxDecoration(
-        color: isDark ? const Color(0xFF1D2134) : const Color(0xFFF2F4FF),
+        color: isDark ? const Color(0xFF1C1A10) : const Color(0xFFFDF8EC),
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFF5567FF).withOpacity(0.16)),
+        border: Border.all(color: const Color(0xFFD4A017).withOpacity(0.22)),
       ),
       child: Row(
         textDirection: TextDirection.rtl,
@@ -597,13 +1018,13 @@ class _FileInfoPill extends StatelessWidget {
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 8),
             decoration: BoxDecoration(
-              color: const Color(0xFF34418E).withOpacity(0.72),
+              color: const Color(0xFFD4A017).withOpacity(0.18),
               borderRadius: BorderRadius.circular(999),
             ),
             child: Text(
               file.fileSize.isEmpty ? 'PDF' : file.fileSize,
               style: const TextStyle(
-                color: Color(0xFF91A2FF),
+                color: Color(0xFFD4A017),
                 fontSize: 11,
                 fontWeight: FontWeight.w900,
               ),
@@ -611,24 +1032,32 @@ class _FileInfoPill extends StatelessWidget {
           ),
           const SizedBox(width: 12),
           Expanded(
-            child: Text(
-              file.fileName.isEmpty ? 'ملف PDF' : file.fileName,
+            child: _HighlightText(
+              text: file.fileName.isEmpty ? 'ملف PDF' : file.fileName,
+              query: searchQuery,
               maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
+              textAlign: TextAlign.start,
+              baseStyle: TextStyle(
                 color: isDark ? Colors.white : const Color(0xFF172033),
                 fontSize: 13,
                 fontWeight: FontWeight.w900,
               ),
             ),
           ),
-          Icon(Icons.attach_file_rounded, size: 18, color: isDark ? Colors.white38 : Colors.black38),
+          Icon(
+            Icons.attach_file_rounded,
+            size: 18,
+            color: isDark ? Colors.white38 : Colors.black38,
+          ),
         ],
       ),
     );
   }
 }
 
+// ══════════════════════════════════════════════════════════════════════════════
+//  ACTION BUTTON  (View)
+// ══════════════════════════════════════════════════════════════════════════════
 class _ActionButton extends StatelessWidget {
   final IconData icon;
   final String label;
@@ -652,11 +1081,11 @@ class _ActionButton extends StatelessWidget {
         label: Text(label),
         style: ElevatedButton.styleFrom(
           elevation: 0,
-          backgroundColor: isDark ? const Color(0xFF202337) : const Color(0xFFF1F3FF),
+          backgroundColor: isDark ? const Color(0xFF1C1A10) : const Color(0xFFFDF8EC),
           foregroundColor: isDark ? const Color(0xFFE8D2B0) : const Color(0xFF49351B),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(999),
-            side: BorderSide(color: const Color(0xFF6370FF).withOpacity(0.24)),
+            side: BorderSide(color: const Color(0xFFD4A017).withOpacity(0.35)),
           ),
           textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w900),
         ),
@@ -665,6 +1094,9 @@ class _ActionButton extends StatelessWidget {
   }
 }
 
+// ══════════════════════════════════════════════════════════════════════════════
+//  DOWNLOAD BUTTON
+// ══════════════════════════════════════════════════════════════════════════════
 class _DownloadButton extends StatelessWidget {
   final bool isDark;
   final bool isDownloading;
@@ -690,12 +1122,13 @@ class _DownloadButton extends StatelessWidget {
         onPressed: isDownloading ? null : onPressed,
         style: ElevatedButton.styleFrom(
           elevation: 0,
-          backgroundColor: isDark ? const Color(0xFF202337) : const Color(0xFFF1F3FF),
-          disabledBackgroundColor: isDark ? const Color(0xFF202337) : const Color(0xFFF1F3FF),
+          backgroundColor: isDark ? const Color(0xFF1C1A10) : const Color(0xFFFDF8EC),
+          disabledBackgroundColor:
+              isDark ? const Color(0xFF1C1A10) : const Color(0xFFFDF8EC),
           foregroundColor: isDark ? const Color(0xFFE8D2B0) : const Color(0xFF49351B),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(999),
-            side: BorderSide(color: const Color(0xFF6370FF).withOpacity(0.24)),
+            side: BorderSide(color: const Color(0xFFD4A017).withOpacity(0.35)),
           ),
           padding: EdgeInsets.zero,
         ),
@@ -744,6 +1177,9 @@ class _DownloadButton extends StatelessWidget {
   }
 }
 
+// ══════════════════════════════════════════════════════════════════════════════
+//  PDF BROWSER PAGE
+// ══════════════════════════════════════════════════════════════════════════════
 class _PdfBrowserPage extends StatefulWidget {
   final PdfFileItem file;
   final bool isDark;
@@ -762,21 +1198,59 @@ class _PdfBrowserPageState extends State<_PdfBrowserPage> {
   @override
   void initState() {
     super.initState();
-    final viewerUrl = Uri.parse(
-      'https://docs.google.com/gview?embedded=1&url=${Uri.encodeComponent(widget.file.fileUrl)}',
-    );
+    _loadPdf();
+  }
+
+  void _loadPdf() {
+    final bgColor = widget.isDark ? '#050505' : '#F8F6F0';
+    final pdfUrl = widget.file.fileUrl;
+
+    final html = '''
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes">
+  <title>${widget.file.title}</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; background: $bgColor; overflow: hidden; }
+    iframe { width: 100%; height: 100%; border: none; display: block; }
+  </style>
+</head>
+<body>
+  <iframe
+    src="https://mozilla.github.io/pdf.js/web/viewer.html?file=${Uri.encodeComponent(pdfUrl)}"
+    allowfullscreen webkitallowfullscreen>
+  </iframe>
+</body>
+</html>
+''';
 
     _controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
-      ..setBackgroundColor(widget.isDark ? const Color(0xFF050505) : Colors.white)
+      ..setBackgroundColor(
+          widget.isDark ? const Color(0xFF050505) : const Color(0xFFF8F6F0))
       ..setNavigationDelegate(
         NavigationDelegate(
           onProgress: (value) => setState(() => _progress = value),
           onPageStarted: (_) => setState(() => _hasError = false),
-          onWebResourceError: (_) => setState(() => _hasError = true),
+          onWebResourceError: (error) {
+            if (error.isForMainFrame ?? false) {
+              setState(() => _hasError = true);
+            }
+          },
         ),
       )
-      ..loadRequest(viewerUrl);
+      ..loadHtmlString(html, baseUrl: 'https://majidalbana.com');
+  }
+
+  void _retryLoad() {
+    setState(() {
+      _hasError = false;
+      _progress = 0;
+    });
+    _loadPdf();
   }
 
   @override
@@ -792,27 +1266,47 @@ class _PdfBrowserPageState extends State<_PdfBrowserPage> {
         body: SafeArea(
           child: Column(
             children: [
+              // ── Top Bar ─────────────────────────────────────────────────
               Container(
-                margin: const EdgeInsets.fromLTRB(12, 10, 12, 8),
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                margin: const EdgeInsets.fromLTRB(12, 10, 12, 0),
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
                 decoration: BoxDecoration(
                   color: card,
                   borderRadius: BorderRadius.circular(20),
-                  border: Border.all(color: const Color(0xFFD4A017).withOpacity(0.16)),
+                  border: Border.all(
+                      color: const Color(0xFFD4A017).withOpacity(0.22)),
                   boxShadow: [
                     BoxShadow(
-                      color: Colors.black.withOpacity(widget.isDark ? 0.25 : 0.08),
+                      color: Colors.black
+                          .withOpacity(widget.isDark ? 0.30 : 0.08),
                       blurRadius: 18,
-                      offset: const Offset(0, 8),
+                      offset: const Offset(0, 6),
                     ),
                   ],
                 ),
                 child: Row(
                   children: [
-                    IconButton(
-                      onPressed: () => Navigator.pop(context),
-                      icon: Icon(Icons.arrow_back_ios_new_rounded, color: text, size: 20),
+                    Material(
+                      color: Colors.transparent,
+                      child: InkWell(
+                        borderRadius: BorderRadius.circular(14),
+                        onTap: () => Navigator.pop(context),
+                        child: Container(
+                          width: 40,
+                          height: 40,
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFD4A017).withOpacity(0.12),
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                          child: const Icon(
+                            Icons.arrow_back_ios_new_rounded,
+                            color: Color(0xFFD4A017),
+                            size: 18,
+                          ),
+                        ),
+                      ),
                     ),
+                    const SizedBox(width: 10),
                     const _SmallLogo(),
                     const SizedBox(width: 10),
                     Expanded(
@@ -822,18 +1316,20 @@ class _PdfBrowserPageState extends State<_PdfBrowserPage> {
                           Text(
                             'عرض الملف',
                             style: TextStyle(
-                              color: text.withOpacity(0.68),
+                              color: const Color(0xFFD4A017).withOpacity(0.85),
                               fontSize: 11,
                               fontWeight: FontWeight.w800,
                             ),
                           ),
                           Text(
-                            widget.file.title.isEmpty ? widget.file.fileName : widget.file.title,
+                            widget.file.title.isEmpty
+                                ? widget.file.fileName
+                                : widget.file.title,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
                               color: text,
-                              fontSize: 14,
+                              fontSize: 13,
                               fontWeight: FontWeight.w900,
                             ),
                           ),
@@ -843,29 +1339,49 @@ class _PdfBrowserPageState extends State<_PdfBrowserPage> {
                   ],
                 ),
               ),
-              if (_progress < 100 && !_hasError)
-                LinearProgressIndicator(
-                  value: _progress <= 0 ? null : _progress / 100,
-                  color: const Color(0xFFD4A017),
-                  backgroundColor: Colors.transparent,
-                  minHeight: 2,
+              // ── Progress ─────────────────────────────────────────────────
+              if (_progress < 100 && !_hasError) ...[
+                const SizedBox(height: 4),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(4),
+                    child: LinearProgressIndicator(
+                      value: _progress <= 0 ? null : _progress / 100,
+                      color: const Color(0xFFD4A017),
+                      backgroundColor:
+                          const Color(0xFFD4A017).withOpacity(0.12),
+                      minHeight: 3,
+                    ),
+                  ),
                 ),
+              ],
+              const SizedBox(height: 8),
+              // ── Viewer ────────────────────────────────────────────────────
               Expanded(
                 child: Container(
-                  margin: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+                  margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
                   clipBehavior: Clip.antiAlias,
                   decoration: BoxDecoration(
                     color: card,
                     borderRadius: BorderRadius.circular(22),
-                    border: Border.all(color: Colors.white.withOpacity(widget.isDark ? 0.07 : 0.0)),
+                    border: Border.all(
+                      color: const Color(0xFFD4A017)
+                          .withOpacity(widget.isDark ? 0.12 : 0.10),
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black
+                            .withOpacity(widget.isDark ? 0.30 : 0.06),
+                        blurRadius: 20,
+                        offset: const Offset(0, 8),
+                      ),
+                    ],
                   ),
                   child: _hasError
                       ? _ViewerError(
                           isDark: widget.isDark,
-                          onRetry: () {
-                            setState(() => _hasError = false);
-                            _controller.reload();
-                          },
+                          onRetry: _retryLoad,
                         )
                       : WebViewWidget(controller: _controller),
                 ),
@@ -878,6 +1394,9 @@ class _PdfBrowserPageState extends State<_PdfBrowserPage> {
   }
 }
 
+// ══════════════════════════════════════════════════════════════════════════════
+//  SMALL LOGO
+// ══════════════════════════════════════════════════════════════════════════════
 class _SmallLogo extends StatelessWidget {
   const _SmallLogo();
 
@@ -889,7 +1408,7 @@ class _SmallLogo extends StatelessWidget {
       padding: const EdgeInsets.all(2),
       decoration: const BoxDecoration(
         shape: BoxShape.circle,
-        gradient: LinearGradient(colors: [Color(0xFFD4A017), Color(0xFF2E6BFF)]),
+        gradient: LinearGradient(colors: [Color(0xFFD4A017), Color(0xFFB8860B)]),
       ),
       child: ClipOval(
         child: Image.asset(
@@ -897,7 +1416,8 @@ class _SmallLogo extends StatelessWidget {
           fit: BoxFit.cover,
           errorBuilder: (_, __, ___) => Container(
             color: Colors.white,
-            child: const Icon(Icons.menu_book_rounded, color: Color(0xFFD4A017), size: 24),
+            child: const Icon(Icons.menu_book_rounded,
+                color: Color(0xFFD4A017), size: 24),
           ),
         ),
       ),
@@ -905,6 +1425,9 @@ class _SmallLogo extends StatelessWidget {
   }
 }
 
+// ══════════════════════════════════════════════════════════════════════════════
+//  VIEWER ERROR
+// ══════════════════════════════════════════════════════════════════════════════
 class _ViewerError extends StatelessWidget {
   final bool isDark;
   final VoidCallback onRetry;
@@ -924,7 +1447,8 @@ class _ViewerError extends StatelessWidget {
             Text(
               'تعذر عرض الملف داخل المتصفح.',
               textAlign: TextAlign.center,
-              style: TextStyle(color: color, fontSize: 14, fontWeight: FontWeight.w700),
+              style:
+                  TextStyle(color: color, fontSize: 14, fontWeight: FontWeight.w700),
             ),
             const SizedBox(height: 14),
             ElevatedButton(
@@ -932,7 +1456,8 @@ class _ViewerError extends StatelessWidget {
               style: ElevatedButton.styleFrom(
                 backgroundColor: const Color(0xFFD4A017),
                 foregroundColor: Colors.black,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14)),
               ),
               child: const Text('إعادة المحاولة'),
             ),
@@ -943,6 +1468,9 @@ class _ViewerError extends StatelessWidget {
   }
 }
 
+// ══════════════════════════════════════════════════════════════════════════════
+//  FALLBACK THUMBNAIL
+// ══════════════════════════════════════════════════════════════════════════════
 class _FallbackThumbnail extends StatelessWidget {
   final String extension;
   final bool isDark;
@@ -960,12 +1488,14 @@ class _FallbackThumbnail extends StatelessWidget {
           decoration: BoxDecoration(
             color: const Color(0xFFD4A017).withOpacity(0.12),
             borderRadius: BorderRadius.circular(24),
-            border: Border.all(color: const Color(0xFFD4A017).withOpacity(0.25)),
+            border:
+                Border.all(color: const Color(0xFFD4A017).withOpacity(0.25)),
           ),
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              const Icon(Icons.picture_as_pdf_rounded, color: Color(0xFFD4A017), size: 36),
+              const Icon(Icons.picture_as_pdf_rounded,
+                  color: Color(0xFFD4A017), size: 36),
               const SizedBox(height: 6),
               Text(
                 extension,
@@ -983,6 +1513,9 @@ class _FallbackThumbnail extends StatelessWidget {
   }
 }
 
+// ══════════════════════════════════════════════════════════════════════════════
+//  FOLD PAINTER
+// ══════════════════════════════════════════════════════════════════════════════
 class _FoldPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
@@ -999,12 +1532,65 @@ class _FoldPainter extends CustomPainter {
   bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
 
+// ══════════════════════════════════════════════════════════════════════════════
+//  SEARCH EMPTY STATE
+// ══════════════════════════════════════════════════════════════════════════════
+class _SearchEmptyState extends StatelessWidget {
+  final String query;
+  final bool isDark;
+  const _SearchEmptyState({required this.query, required this.isDark});
+
+  @override
+  Widget build(BuildContext context) {
+    final color = isDark ? Colors.white70 : Colors.black54;
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 72,
+              height: 72,
+              decoration: BoxDecoration(
+                color: const Color(0xFFD4A017).withOpacity(0.10),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(Icons.search_off_rounded,
+                  color: Color(0xFFD4A017), size: 36),
+            ),
+            const SizedBox(height: 16),
+            Text(
+              'لا توجد نتائج لـ "$query"',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: isDark ? Colors.white : const Color(0xFF17120A),
+                fontSize: 16,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'جرّب كلمة بحث مختلفة',
+              style: TextStyle(color: color, fontSize: 13),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  ERROR STATE
+// ══════════════════════════════════════════════════════════════════════════════
 class _ErrorState extends StatelessWidget {
   final String message;
   final bool isDark;
   final VoidCallback onRetry;
 
-  const _ErrorState({required this.message, required this.isDark, required this.onRetry});
+  const _ErrorState(
+      {required this.message, required this.isDark, required this.onRetry});
 
   @override
   Widget build(BuildContext context) {
@@ -1027,7 +1613,8 @@ class _ErrorState extends StatelessWidget {
             style: ElevatedButton.styleFrom(
               backgroundColor: const Color(0xFFD4A017),
               foregroundColor: Colors.black,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+              shape:
+                  RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
             ),
             child: const Text('إعادة المحاولة'),
           ),
@@ -1037,6 +1624,9 @@ class _ErrorState extends StatelessWidget {
   }
 }
 
+// ══════════════════════════════════════════════════════════════════════════════
+//  EMPTY STATE
+// ══════════════════════════════════════════════════════════════════════════════
 class _EmptyState extends StatelessWidget {
   final bool isDark;
   const _EmptyState({required this.isDark});
@@ -1047,7 +1637,8 @@ class _EmptyState extends StatelessWidget {
     return Center(
       child: Text(
         'لا توجد ملفات حالياً',
-        style: TextStyle(color: color, fontSize: 15, fontWeight: FontWeight.w700),
+        style:
+            TextStyle(color: color, fontSize: 15, fontWeight: FontWeight.w700),
       ),
     );
   }
