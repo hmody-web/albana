@@ -173,6 +173,8 @@ class _CoursesPageState extends State<CoursesPage>
     final bg         = isDark ? const Color(0xFF111111) : const Color(0xFFF7F3EC);
 
     return CustomScrollView(
+      keyboardDismissBehavior:
+    ScrollViewKeyboardDismissBehavior.onDrag,
       physics: const BouncingScrollPhysics(),
       slivers: [
         PremiumAppBar(title: 'الدورات والمحاضرات', isDark: isDark),

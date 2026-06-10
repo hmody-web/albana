@@ -170,6 +170,8 @@ class _PublicationsPageState extends State<PublicationsPage> {
         widget.isDark ? const Color(0xFF101010) : const Color(0xFFF7F4EE);
 
     return CustomScrollView(
+      keyboardDismissBehavior:
+    ScrollViewKeyboardDismissBehavior.onDrag,
       physics: const BouncingScrollPhysics(),
       slivers: [
         PremiumAppBar(title: 'المنشورات', isDark: widget.isDark),

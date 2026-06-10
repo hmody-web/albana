@@ -131,9 +131,10 @@ class _MainScaffoldState extends State<MainScaffold>
 
     return Directionality(
       textDirection: TextDirection.rtl,
-      child: Scaffold(
-        backgroundColor: bg,
-        body: Stack(
+child: Scaffold(
+  resizeToAvoidBottomInset: false,
+  backgroundColor: bg,
+  body: Stack(
           children: [
             // ── PageView for swipe navigation ──
             PageView(
@@ -1214,8 +1215,10 @@ Widget _buildSocialBtn(IconData icon, Color color) {
     final cardBg = isDark ? const Color(0xFF181818) : Colors.white;
     final heroBg = isDark ? const Color(0xFF0E0E0E) : const Color(0xFFFAF4E8);
 
-    return CustomScrollView(
-      physics: const BouncingScrollPhysics(),
+return CustomScrollView(
+  keyboardDismissBehavior:
+      ScrollViewKeyboardDismissBehavior.onDrag,
+  physics: const BouncingScrollPhysics(),
       slivers: [
         // ── Premium Home App Bar ──
         SliverAppBar(

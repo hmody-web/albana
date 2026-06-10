@@ -1,13 +1,14 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-
 import 'package:flutter/material.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:webview_flutter/webview_flutter.dart';
-
+import 'package:file_picker/file_picker.dart';
 import '../widgets/shared_widgets.dart';
-
+import 'package:http/http.dart' as http;
 // ══════════════════════════════════════════════════════════════════════════════
 //  LOCAL CACHE SERVICE
 //  Saves & loads the file list from disk so it's instant on re-open.
@@ -80,7 +81,24 @@ class _FilesPageState extends State<FilesPage> with SingleTickerProviderStateMix
   final FocusNode _searchFocus = FocusNode();
   late final AnimationController _searchAnimCtrl;
   late final Animation<double> _searchAnim;
+bool _isSupervisor() {
+    final user = FirebaseAuth.instance.currentUser;
+    final email = user?.email?.trim().toLowerCase();
+    return email == 'hmode.qq@gmail.com' || email == 'hmode.qu@gmail.com';
+  }
 
+  void _onFilePublished() {
+    _fetchFromNetwork(silent: true);
+  }
+
+  void _onFileEdited(PdfFileItem updated) {
+    setState(() {
+      final idx = _files.indexWhere((f) => f.id == updated.id);
+      if (idx != -1) _files[idx] = updated;
+      _onSearchChanged();
+    });
+    _CacheService.save(_files);
+  }
   @override
   void initState() {
     super.initState();
@@ -299,6 +317,8 @@ class _FilesPageState extends State<FilesPage> with SingleTickerProviderStateMix
     return Container(
       color: pageBg,
       child: CustomScrollView(
+        keyboardDismissBehavior:
+    ScrollViewKeyboardDismissBehavior.onDrag,
         physics: const BouncingScrollPhysics(),
         slivers: [
           // ── App Bar ──────────────────────────────────────────────────────
@@ -355,34 +375,29 @@ SliverToBoxAdapter(
           ),
 
           // ── New post indicator ────────────────────────────────────────
-          if (_backgroundRefreshing)
-            SliverToBoxAdapter(
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    SizedBox(
-                      width: 12,
-                      height: 12,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 1.5,
-                        color: gold.withOpacity(0.7),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Text(
-                      '    ',
-                      style: TextStyle(
-                        color: gold.withOpacity(0.7),
-                        fontSize: 11,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
+if (_backgroundRefreshing)
+  Positioned(
+    top: 12,
+    left: 0,
+    right: 0,
+    child: Center(
+      child: Container(
+        padding: const EdgeInsets.all(8),
+        decoration: BoxDecoration(
+          color: Colors.black.withOpacity(0.4),
+          shape: BoxShape.circle,
+        ),
+        child: SizedBox(
+          width: 14,
+          height: 14,
+          child: CircularProgressIndicator(
+            strokeWidth: 2,
+            color: gold,
+          ),
+        ),
+      ),
+    ),
+  ),
 
           // ── Content ───────────────────────────────────────────────────
           if (_loading)
@@ -415,7 +430,16 @@ SliverToBoxAdapter(
               sliver: SliverList(
                 delegate: SliverChildBuilderDelegate(
                   (ctx, i) {
-                    final file = displayList[i];
+                    final supervisor = _isSupervisor();
+                    // First item = publish box for supervisors
+                    if (supervisor && i == 0) {
+                      return _AdminPdfPublishBox(
+                        isDark: widget.isDark,
+                        onPublished: _onFilePublished,
+                      );
+                    }
+                    final fileIndex = supervisor ? i - 1 : i;
+                    final file = displayList[fileIndex];
                     return _FileCard(
                       key: ValueKey(file.id),
                       file: file,
@@ -426,9 +450,11 @@ SliverToBoxAdapter(
                       searchQuery: _searchActive ? _searchCtrl.text : '',
                       onDownload: () => _downloadFile(file),
                       onView: () => _openFile(file),
+                      isSupervisor: supervisor,
+                      onEdited: _onFileEdited,
                     );
                   },
-                  childCount: displayList.length,
+                  childCount: displayList.length + (_isSupervisor() ? 1 : 0),
                 ),
               ),
             ),
@@ -568,6 +594,18 @@ class PdfFileItem {
       };
 
   static String _clean(dynamic value) => '${value ?? ''}'.trim();
+  PdfFileItem copyWith({String? title, String? description}) {
+    return PdfFileItem(
+      id: id,
+      title: title ?? this.title,
+      description: description ?? this.description,
+      fileName: fileName,
+      fileSize: fileSize,
+      author: author,
+      thumbnail: thumbnail,
+      createdAt: createdAt,
+    );
+  }
 
   String get fileUrl => '${_FilesPageState._fileBaseUrl}$fileName';
   String get thumbnailUrl => '${_FilesPageState._thumbBaseUrl}$thumbnail';
@@ -608,6 +646,8 @@ class _FileCard extends StatelessWidget {
   final String searchQuery;
   final VoidCallback onDownload;
   final VoidCallback onView;
+  final bool isSupervisor;
+  final void Function(PdfFileItem) onEdited;
 
   const _FileCard({
     super.key,
@@ -619,6 +659,8 @@ class _FileCard extends StatelessWidget {
     required this.searchQuery,
     required this.onDownload,
     required this.onView,
+    required this.isSupervisor,
+    required this.onEdited,
   });
 
   static const gold = Color(0xFFD4A017);
@@ -657,17 +699,61 @@ class _FileCard extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   // Title with search highlight
-                  _HighlightText(
-                    text: file.title.isEmpty ? 'ملف بدون عنوان' : file.title,
-                    query: searchQuery,
-                    maxLines: 2,
-                    textAlign: TextAlign.right,
-                    baseStyle: TextStyle(
-                      color: textPrimary,
-                      fontSize: 18,
-                      height: 1.45,
-                      fontWeight: FontWeight.w900,
-                    ),
+                  Row(
+                    textDirection: TextDirection.rtl,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        child: _HighlightText(
+                          text: file.title.isEmpty ? 'ملف بدون عنوان' : file.title,
+                          query: searchQuery,
+                          maxLines: 2,
+                          textAlign: TextAlign.right,
+                          baseStyle: TextStyle(
+                            color: textPrimary,
+                            fontSize: 18,
+                            height: 1.45,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                      ),
+                      if (isSupervisor) ...[
+                        const SizedBox(width: 10),
+                        GestureDetector(
+                          onTap: () => showModalBottomSheet(
+                            context: context,
+                            isScrollControlled: true,
+                            backgroundColor: Colors.transparent,
+                            builder: (_) => _EditPdfSheet(
+                              file: file,
+                              isDark: isDark,
+                              onSaved: onEdited,
+                            ),
+                          ),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 12, vertical: 6),
+                            decoration: BoxDecoration(
+                              color: gold.withOpacity(0.12),
+                              borderRadius: BorderRadius.circular(20),
+                              border: Border.all(color: gold.withOpacity(0.4)),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(Icons.edit_rounded, size: 13, color: gold),
+                                const SizedBox(width: 5),
+                                Text('تعديل',
+                                    style: TextStyle(
+                                        color: gold,
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.w700)),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ],
+                    ],
                   ),
                   const SizedBox(height: 12),
                   Row(
@@ -1632,6 +1718,425 @@ class _EmptyState extends StatelessWidget {
         'لا توجد ملفات حالياً',
         style:
             TextStyle(color: color, fontSize: 15, fontWeight: FontWeight.w700),
+      ),
+    );
+  }
+  
+}
+// ══════════════════════════════════════════════════════════════════════════════
+//  ADMIN PDF PUBLISH BOX
+// ══════════════════════════════════════════════════════════════════════════════
+class _AdminPdfPublishBox extends StatefulWidget {
+  final bool isDark;
+  final VoidCallback onPublished;
+  const _AdminPdfPublishBox({required this.isDark, required this.onPublished});
+  @override
+  State<_AdminPdfPublishBox> createState() => _AdminPdfPublishBoxState();
+}
+
+class _AdminPdfPublishBoxState extends State<_AdminPdfPublishBox> {
+  static const gold = Color(0xFFD4A017);
+  static const _addApi = 'https://majidalbana.com/admin/pdf-posts/add_pdf_post.php';
+
+  final _titleCtrl = TextEditingController();
+  final _descCtrl = TextEditingController();
+  File? _pickedPdf;
+  String _pdfName = '';
+  bool _publishing = false;
+  bool _expanded = false;
+
+  @override
+  void dispose() {
+    _titleCtrl.dispose();
+    _descCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _pickPdf() async {
+    final picker = ImagePicker();
+    // Use file_picker if available; fallback: pick any file via image_picker workaround
+    // We use FilePicker from file_picker package here:
+    try {
+      // ignore: import_of_legacy_library_into_null_safe
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['pdf'],
+      );
+      if (result != null && result.files.single.path != null) {
+        setState(() {
+          _pickedPdf = File(result.files.single.path!);
+          _pdfName = result.files.single.name;
+        });
+      }
+    } catch (_) {
+      _showSnack('تعذر فتح منتقي الملفات');
+    }
+  }
+
+  Future<void> _publish() async {
+    if (_titleCtrl.text.trim().isEmpty) { _showSnack('العنوان مطلوب'); return; }
+    if (_pickedPdf == null) { _showSnack('الملف PDF مطلوب'); return; }
+    setState(() => _publishing = true);
+    try {
+      final req = http.MultipartRequest('POST', Uri.parse(_addApi));
+      req.fields['title'] = _titleCtrl.text.trim();
+      req.fields['description'] = _descCtrl.text.trim();
+      req.files.add(await http.MultipartFile.fromPath('pdf_file', _pickedPdf!.path));
+      final res = await req.send().timeout(const Duration(seconds: 60));
+      if (res.statusCode == 200 || res.statusCode == 302) {
+        _titleCtrl.clear(); _descCtrl.clear();
+        setState(() { _pickedPdf = null; _pdfName = ''; _expanded = false; _publishing = false; });
+        _showSnack('تم النشر بنجاح ✓', success: true);
+        widget.onPublished();
+      } else {
+        _showSnack('فشل النشر'); setState(() => _publishing = false);
+      }
+    } catch (_) { _showSnack('خطأ في الاتصال'); setState(() => _publishing = false); }
+  }
+
+  void _showSnack(String msg, {bool success = false}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(msg, textDirection: TextDirection.rtl,
+          style: const TextStyle(fontWeight: FontWeight.w600)),
+      backgroundColor: success ? const Color(0xFF2E7D32) : Colors.red.shade700,
+      behavior: SnackBarBehavior.floating,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+      margin: const EdgeInsets.all(14),
+    ));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = widget.isDark;
+    final cardBg = isDark ? const Color(0xFF111111) : Colors.white;
+    final textPrimary = isDark ? Colors.white : const Color(0xFF17120A);
+    final hintColor = isDark ? Colors.white38 : Colors.black38;
+    final fieldBg = isDark ? const Color(0xFF1C1A10) : const Color(0xFFFDF8EC);
+    final borderColor = gold.withOpacity(0.35);
+
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 300),
+      margin: const EdgeInsets.only(bottom: 18),
+      decoration: BoxDecoration(
+        color: cardBg,
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: gold.withOpacity(0.4), width: 1.2),
+        boxShadow: [BoxShadow(color: gold.withOpacity(isDark ? 0.12 : 0.08), blurRadius: 18, offset: const Offset(0, 5))],
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(24),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            // Header
+            GestureDetector(
+              onTap: () => setState(() => _expanded = !_expanded),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(colors: [
+                    gold.withOpacity(isDark ? 0.22 : 0.14),
+                    gold.withOpacity(isDark ? 0.08 : 0.04),
+                  ]),
+                ),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 38, height: 38,
+                      decoration: BoxDecoration(color: gold.withOpacity(0.18), borderRadius: BorderRadius.circular(12)),
+                      child: const Icon(Icons.add_rounded, color: gold, size: 22),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(child: Text('نشر ملف PDF جديد',
+                        textDirection: TextDirection.rtl,
+                        style: TextStyle(color: textPrimary, fontWeight: FontWeight.w800, fontSize: 15))),
+                    AnimatedRotation(
+                      turns: _expanded ? 0.5 : 0,
+                      duration: const Duration(milliseconds: 300),
+                      child: Icon(Icons.keyboard_arrow_down_rounded, color: gold, size: 24),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            // Body
+            AnimatedCrossFade(
+              duration: const Duration(milliseconds: 300),
+              crossFadeState: _expanded ? CrossFadeState.showSecond : CrossFadeState.showFirst,
+              firstChild: const SizedBox.shrink(),
+              secondChild: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    // Title field
+                    Container(
+                      decoration: BoxDecoration(color: fieldBg, borderRadius: BorderRadius.circular(16), border: Border.all(color: borderColor)),
+                      child: TextField(
+                        controller: _titleCtrl,
+                        textDirection: TextDirection.rtl,
+                        textAlign: TextAlign.right,
+                        style: TextStyle(color: textPrimary, fontSize: 14.5, fontWeight: FontWeight.w600),
+                        decoration: InputDecoration(
+                          hintText: 'عنوان الملف *',
+                          hintTextDirection: TextDirection.rtl,
+                          hintStyle: TextStyle(color: hintColor, fontSize: 13.5),
+                          contentPadding: const EdgeInsets.all(14),
+                          border: InputBorder.none,
+                          prefixIcon: Icon(Icons.title_rounded, color: gold.withOpacity(0.6), size: 20),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    // Description field
+                    Container(
+                      decoration: BoxDecoration(color: fieldBg, borderRadius: BorderRadius.circular(16), border: Border.all(color: borderColor)),
+                      child: TextField(
+                        controller: _descCtrl,
+                        textDirection: TextDirection.rtl,
+                        textAlign: TextAlign.right,
+                        maxLines: 4, minLines: 2,
+                        style: TextStyle(color: textPrimary, fontSize: 14.5, height: 1.7, fontWeight: FontWeight.w500),
+                        decoration: InputDecoration(
+                          hintText: 'وصف الملف (اختياري)',
+                          hintTextDirection: TextDirection.rtl,
+                          hintStyle: TextStyle(color: hintColor, fontSize: 13.5),
+                          contentPadding: const EdgeInsets.all(14),
+                          border: InputBorder.none,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    // PDF picker
+                    GestureDetector(
+                      onTap: _pickPdf,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                        decoration: BoxDecoration(
+                          color: _pickedPdf != null ? gold.withOpacity(0.08) : fieldBg,
+                          borderRadius: BorderRadius.circular(16),
+                          border: Border.all(color: _pickedPdf != null ? gold.withOpacity(0.6) : borderColor, width: _pickedPdf != null ? 1.5 : 1),
+                        ),
+                        child: Row(
+                          textDirection: TextDirection.rtl,
+                          children: [
+                            Container(
+                              width: 42, height: 42,
+                              decoration: BoxDecoration(color: const Color(0xFFE94343).withOpacity(0.12), borderRadius: BorderRadius.circular(11)),
+                              child: const Icon(Icons.picture_as_pdf_rounded, color: Color(0xFFE94343), size: 22),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(_pickedPdf != null ? _pdfName : 'اضغط لاختيار ملف PDF',
+                                    maxLines: 1, overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(color: _pickedPdf != null ? textPrimary : hintColor, fontSize: 13.5, fontWeight: FontWeight.w600)),
+                                if (_pickedPdf != null)
+                                  Text('تم اختيار الملف ✓',
+                                      style: TextStyle(color: gold, fontSize: 11.5, fontWeight: FontWeight.w700)),
+                              ],
+                            )),
+                            Icon(_pickedPdf != null ? Icons.check_circle_rounded : Icons.upload_file_rounded,
+                                color: _pickedPdf != null ? gold : hintColor, size: 22),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                    // Publish button
+                    SizedBox(
+                      height: 50,
+                      child: ElevatedButton(
+                        onPressed: _publishing ? null : _publish,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: gold, foregroundColor: Colors.white,
+                          disabledBackgroundColor: gold.withOpacity(0.5),
+                          elevation: 0,
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                        ),
+                        child: _publishing
+                            ? const SizedBox(width: 22, height: 22, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2.5))
+                            : const Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                                Icon(Icons.send_rounded, size: 18),
+                                SizedBox(width: 8),
+                                Text('نشر الملف', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800)),
+                              ]),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  EDIT PDF BOTTOM SHEET
+// ══════════════════════════════════════════════════════════════════════════════
+class _EditPdfSheet extends StatefulWidget {
+  final PdfFileItem file;
+  final bool isDark;
+  final void Function(PdfFileItem) onSaved;
+  const _EditPdfSheet({required this.file, required this.isDark, required this.onSaved});
+  @override
+  State<_EditPdfSheet> createState() => _EditPdfSheetState();
+}
+
+class _EditPdfSheetState extends State<_EditPdfSheet> {
+  static const gold = Color(0xFFD4A017);
+  static const _updateApi = 'https://majidalbana.com/admin/pdf-posts/update_pdf_post.php';
+
+  late TextEditingController _titleCtrl;
+  late TextEditingController _descCtrl;
+  bool _saving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _titleCtrl = TextEditingController(text: widget.file.title);
+    _descCtrl = TextEditingController(text: widget.file.description);
+  }
+
+  @override
+  void dispose() { _titleCtrl.dispose(); _descCtrl.dispose(); super.dispose(); }
+
+  Future<void> _save() async {
+    if (_titleCtrl.text.trim().isEmpty) { _showSnack('العنوان مطلوب'); return; }
+    setState(() => _saving = true);
+    try {
+      final res = await http.post(Uri.parse(_updateApi), body: {
+        'id': '${widget.file.id}',
+        'title': _titleCtrl.text.trim(),
+        'description': _descCtrl.text.trim(),
+      }).timeout(const Duration(seconds: 30));
+      if (res.statusCode == 200) {
+        final updated = widget.file.copyWith(title: _titleCtrl.text.trim(), description: _descCtrl.text.trim());
+        widget.onSaved(updated);
+        if (mounted) Navigator.pop(context);
+        _showSnack('تم التعديل بنجاح ✓', success: true);
+      } else { _showSnack('فشل التعديل'); setState(() => _saving = false); }
+    } catch (_) { _showSnack('خطأ في الاتصال'); setState(() => _saving = false); }
+  }
+
+  void _showSnack(String msg, {bool success = false}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(msg, textDirection: TextDirection.rtl, style: const TextStyle(fontWeight: FontWeight.w600)),
+      backgroundColor: success ? const Color(0xFF2E7D32) : Colors.red.shade700,
+      behavior: SnackBarBehavior.floating,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+      margin: const EdgeInsets.all(14),
+    ));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = widget.isDark;
+    final sheetBg = isDark ? const Color(0xFF111111) : Colors.white;
+    final textPrimary = isDark ? Colors.white : const Color(0xFF17120A);
+    final hintColor = isDark ? Colors.white38 : Colors.black38;
+    final fieldBg = isDark ? const Color(0xFF1C1A10) : const Color(0xFFFDF8EC);
+    final borderColor = gold.withOpacity(0.35);
+
+    return Padding(
+      padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+      child: Container(
+        decoration: BoxDecoration(color: sheetBg, borderRadius: const BorderRadius.vertical(top: Radius.circular(28))),
+        child: SafeArea(
+          top: false,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Center(child: Container(
+                margin: const EdgeInsets.only(top: 12, bottom: 8),
+                width: 40, height: 4,
+                decoration: BoxDecoration(color: gold.withOpacity(0.4), borderRadius: BorderRadius.circular(4)),
+              )),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 4, 20, 16),
+                child: Row(children: [
+                  Container(
+                    width: 36, height: 36,
+                    decoration: BoxDecoration(color: gold.withOpacity(0.15), borderRadius: BorderRadius.circular(11)),
+                    child: const Icon(Icons.edit_rounded, color: gold, size: 18),
+                  ),
+                  const SizedBox(width: 10),
+                  Text('تعديل الملف', textDirection: TextDirection.rtl,
+                      style: TextStyle(color: textPrimary, fontSize: 17, fontWeight: FontWeight.w800)),
+                ]),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 20),
+                child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                  // Title field
+                  Container(
+                    decoration: BoxDecoration(color: fieldBg, borderRadius: BorderRadius.circular(16), border: Border.all(color: borderColor)),
+                    child: TextField(
+                      controller: _titleCtrl,
+                      textDirection: TextDirection.rtl,
+                      textAlign: TextAlign.right,
+                      style: TextStyle(color: textPrimary, fontSize: 14.5, fontWeight: FontWeight.w600),
+                      decoration: InputDecoration(
+                        hintText: 'عنوان الملف',
+                        hintTextDirection: TextDirection.rtl,
+                        hintStyle: TextStyle(color: hintColor, fontSize: 13.5),
+                        contentPadding: const EdgeInsets.all(14),
+                        border: InputBorder.none,
+                        prefixIcon: Icon(Icons.title_rounded, color: gold.withOpacity(0.6), size: 20),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  // Description field
+                  Container(
+                    decoration: BoxDecoration(color: fieldBg, borderRadius: BorderRadius.circular(16), border: Border.all(color: borderColor)),
+                    child: TextField(
+                      controller: _descCtrl,
+                      textDirection: TextDirection.rtl,
+                      textAlign: TextAlign.right,
+                      maxLines: 5, minLines: 3,
+                      style: TextStyle(color: textPrimary, fontSize: 14.5, height: 1.7, fontWeight: FontWeight.w500),
+                      decoration: InputDecoration(
+                        hintText: 'وصف الملف...',
+                        hintTextDirection: TextDirection.rtl,
+                        hintStyle: TextStyle(color: hintColor, fontSize: 13.5),
+                        contentPadding: const EdgeInsets.all(14),
+                        border: InputBorder.none,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  SizedBox(
+                    height: 50,
+                    child: ElevatedButton(
+                      onPressed: _saving ? null : _save,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: gold, foregroundColor: Colors.white,
+                        disabledBackgroundColor: gold.withOpacity(0.5),
+                        elevation: 0,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                      ),
+                      child: _saving
+                          ? const SizedBox(width: 22, height: 22, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2.5))
+                          : const Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                              Icon(Icons.check_rounded, size: 19),
+                              SizedBox(width: 8),
+                              Text('حفظ التعديلات', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800)),
+                            ]),
+                    ),
+                  ),
+                ]),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
