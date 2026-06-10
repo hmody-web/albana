@@ -5,7 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
-import 'package:open_filex/open_filex.dart';
+import 'package:webview_flutter/webview_flutter.dart';
 import 'package:file_picker/file_picker.dart';
 import '../widgets/shared_widgets.dart';
 import 'package:http/http.dart' as http;
@@ -299,47 +299,13 @@ bool _isSupervisor() {
     }
   }
 
-Future<void> _openFile(PdfFileItem file) async {
-  try {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('جاري تجهيز الملف للعرض...'),
-        behavior: SnackBarBehavior.floating,
-      ),
-    );
-
-    final dir = await getApplicationDocumentsDirectory();
-    final localFile = File('${dir.path}/${file.safeFileName}');
-
-    if (!await localFile.exists()) {
-      final request = await HttpClient().getUrl(Uri.parse(file.fileUrl));
-      final response = await request.close();
-
-      if (response.statusCode != 200) {
-        throw Exception('فشل تحميل الملف');
-      }
-
-      final sink = localFile.openWrite();
-      await response.pipe(sink);
-      await sink.close();
-    }
-
-    final result = await OpenFilex.open(localFile.path);
-
-    if (result.type != ResultType.done) {
-      throw Exception(result.message);
-    }
-  } catch (_) {
-    if (!mounted) return;
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('تعذر فتح الملف. تأكد من وجود عارض PDF في الجهاز.'),
-        behavior: SnackBarBehavior.floating,
+  void _openFile(PdfFileItem file) {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => _PdfBrowserPage(file: file, isDark: widget.isDark),
       ),
     );
   }
-}
 
   // ── Build ─────────────────────────────────────────────────────────────────
 
@@ -351,8 +317,6 @@ Future<void> _openFile(PdfFileItem file) async {
     return Container(
       color: pageBg,
       child: CustomScrollView(
-        keyboardDismissBehavior:
-    ScrollViewKeyboardDismissBehavior.onDrag,
         physics: const BouncingScrollPhysics(),
         slivers: [
           // ── App Bar ──────────────────────────────────────────────────────
@@ -409,29 +373,34 @@ SliverToBoxAdapter(
           ),
 
           // ── New post indicator ────────────────────────────────────────
-if (_backgroundRefreshing)
-  Positioned(
-    top: 12,
-    left: 0,
-    right: 0,
-    child: Center(
-      child: Container(
-        padding: const EdgeInsets.all(8),
-        decoration: BoxDecoration(
-          color: Colors.black.withOpacity(0.4),
-          shape: BoxShape.circle,
-        ),
-        child: SizedBox(
-          width: 14,
-          height: 14,
-          child: CircularProgressIndicator(
-            strokeWidth: 2,
-            color: gold,
-          ),
-        ),
-      ),
-    ),
-  ),
+          if (_backgroundRefreshing)
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    SizedBox(
+                      width: 12,
+                      height: 12,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 1.5,
+                        color: gold.withOpacity(0.7),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      '    ',
+                      style: TextStyle(
+                        color: gold.withOpacity(0.7),
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
 
           // ── Content ───────────────────────────────────────────────────
           if (_loading)
@@ -1290,6 +1259,222 @@ class _DownloadButton extends StatelessWidget {
   }
 }
 
+// ══════════════════════════════════════════════════════════════════════════════
+//  PDF BROWSER PAGE
+// ══════════════════════════════════════════════════════════════════════════════
+class _PdfBrowserPage extends StatefulWidget {
+  final PdfFileItem file;
+  final bool isDark;
+
+  const _PdfBrowserPage({required this.file, required this.isDark});
+
+  @override
+  State<_PdfBrowserPage> createState() => _PdfBrowserPageState();
+}
+
+class _PdfBrowserPageState extends State<_PdfBrowserPage> {
+  late final WebViewController _controller;
+  int _progress = 0;
+  bool _hasError = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadPdf();
+  }
+
+  void _loadPdf() {
+    final bgColor = widget.isDark ? '#050505' : '#F8F6F0';
+    final pdfUrl = widget.file.fileUrl;
+
+    final html = '''
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes">
+  <title>${widget.file.title}</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; background: $bgColor; overflow: hidden; }
+    iframe { width: 100%; height: 100%; border: none; display: block; }
+  </style>
+</head>
+<body>
+  <iframe
+    src="https://mozilla.github.io/pdf.js/web/viewer.html?file=${Uri.encodeComponent(pdfUrl)}"
+    allowfullscreen webkitallowfullscreen>
+  </iframe>
+</body>
+</html>
+''';
+
+    _controller = WebViewController()
+      ..setJavaScriptMode(JavaScriptMode.unrestricted)
+      ..setBackgroundColor(
+          widget.isDark ? const Color(0xFF050505) : const Color(0xFFF8F6F0))
+      ..setNavigationDelegate(
+        NavigationDelegate(
+          onProgress: (value) => setState(() => _progress = value),
+          onPageStarted: (_) => setState(() => _hasError = false),
+          onWebResourceError: (error) {
+            if (error.isForMainFrame ?? false) {
+              setState(() => _hasError = true);
+            }
+          },
+        ),
+      )
+      ..loadHtmlString(html, baseUrl: 'https://majidalbana.com');
+  }
+
+  void _retryLoad() {
+    setState(() {
+      _hasError = false;
+      _progress = 0;
+    });
+    _loadPdf();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final bg = widget.isDark ? const Color(0xFF050505) : const Color(0xFFF8F6F0);
+    final card = widget.isDark ? const Color(0xFF111111) : Colors.white;
+    final text = widget.isDark ? Colors.white : const Color(0xFF17120A);
+
+    return Directionality(
+      textDirection: TextDirection.rtl,
+      child: Scaffold(
+        backgroundColor: bg,
+        body: SafeArea(
+          child: Column(
+            children: [
+              // ── Top Bar ─────────────────────────────────────────────────
+              Container(
+                margin: const EdgeInsets.fromLTRB(12, 10, 12, 0),
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                decoration: BoxDecoration(
+                  color: card,
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(
+                      color: const Color(0xFFD4A017).withOpacity(0.22)),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black
+                          .withOpacity(widget.isDark ? 0.30 : 0.08),
+                      blurRadius: 18,
+                      offset: const Offset(0, 6),
+                    ),
+                  ],
+                ),
+                child: Row(
+                  children: [
+                    Material(
+                      color: Colors.transparent,
+                      child: InkWell(
+                        borderRadius: BorderRadius.circular(14),
+                        onTap: () => Navigator.pop(context),
+                        child: Container(
+                          width: 40,
+                          height: 40,
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFD4A017).withOpacity(0.12),
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                          child: const Icon(
+                            Icons.arrow_back_ios_new_rounded,
+                            color: Color(0xFFD4A017),
+                            size: 18,
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    const _SmallLogo(),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'عرض الملف',
+                            style: TextStyle(
+                              color: const Color(0xFFD4A017).withOpacity(0.85),
+                              fontSize: 11,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                          Text(
+                            widget.file.title.isEmpty
+                                ? widget.file.fileName
+                                : widget.file.title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: text,
+                              fontSize: 13,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              // ── Progress ─────────────────────────────────────────────────
+              if (_progress < 100 && !_hasError) ...[
+                const SizedBox(height: 4),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(4),
+                    child: LinearProgressIndicator(
+                      value: _progress <= 0 ? null : _progress / 100,
+                      color: const Color(0xFFD4A017),
+                      backgroundColor:
+                          const Color(0xFFD4A017).withOpacity(0.12),
+                      minHeight: 3,
+                    ),
+                  ),
+                ),
+              ],
+              const SizedBox(height: 8),
+              // ── Viewer ────────────────────────────────────────────────────
+              Expanded(
+                child: Container(
+                  margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+                  clipBehavior: Clip.antiAlias,
+                  decoration: BoxDecoration(
+                    color: card,
+                    borderRadius: BorderRadius.circular(22),
+                    border: Border.all(
+                      color: const Color(0xFFD4A017)
+                          .withOpacity(widget.isDark ? 0.12 : 0.10),
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black
+                            .withOpacity(widget.isDark ? 0.30 : 0.06),
+                        blurRadius: 20,
+                        offset: const Offset(0, 8),
+                      ),
+                    ],
+                  ),
+                  child: _hasError
+                      ? _ViewerError(
+                          isDark: widget.isDark,
+                          onRetry: _retryLoad,
+                        )
+                      : WebViewWidget(controller: _controller),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
 
 // ══════════════════════════════════════════════════════════════════════════════
 //  SMALL LOGO
