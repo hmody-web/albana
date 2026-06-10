@@ -18,6 +18,7 @@ class SettingsPage extends StatelessWidget {
   }
 
 Future<void> _signInWithGoogle(BuildContext context) async {
+  final messenger = ScaffoldMessenger.of(context);
   try {
     final googleUser = await GoogleSignIn().signIn();
 
@@ -32,7 +33,7 @@ Future<void> _signInWithGoogle(BuildContext context) async {
 
     await FirebaseAuth.instance.signInWithCredential(credential);
   } catch (e) {
-    ScaffoldMessenger.of(context).showSnackBar(
+    messenger.showSnackBar(
       SnackBar(content: Text('فشل تسجيل الدخول: $e')),
     );
   }
