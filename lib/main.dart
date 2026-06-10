@@ -100,7 +100,7 @@ class _MainScaffoldState extends State<MainScaffold>
   @override
   void initState() {
     super.initState();
-    _pageController = PageController(initialPage: 2);
+    _pageController = PageController(initialPage: 2, keepPage: true);
     _navAnimCtrl = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 200),

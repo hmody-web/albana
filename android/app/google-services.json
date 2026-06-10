@@ -37,6 +37,13 @@
             {
               "client_id": "14634099103-e276mc30gdd5hggf40ealn082muo53mj.apps.googleusercontent.com",
               "client_type": 3
+            },
+            {
+              "client_id": "14634099103-n5r847gqsgga7hdghhbvblpqg2tnjkc1.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.example.majidalbana"
+              }
             }
           ]
         }

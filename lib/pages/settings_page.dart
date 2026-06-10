@@ -2,57 +2,60 @@ import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../widgets/shared_widgets.dart';
 import 'package:google_sign_in/google_sign_in.dart';
-class SettingsPage extends StatelessWidget {
+
+class SettingsPage extends StatefulWidget {
   final bool isDark;
   final ValueChanged<bool> onThemeToggle;
-  const SettingsPage(
-      {super.key, required this.isDark, required this.onThemeToggle});
+  const SettingsPage({super.key, required this.isDark, required this.onThemeToggle});
+
+  @override
+  State<SettingsPage> createState() => _SettingsPageState();
+}
+
+class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClientMixin {
+  @override
+  bool get wantKeepAlive => true;
 
   static const gold = Color(0xFFD4A017);
-
-
 
   bool _isSupervisor(User? user) {
     final email = user?.email?.trim().toLowerCase();
     return email == 'hmode.qq@gmail.com' || email == 'hmode.qu@gmail.com';
   }
 
-Future<void> _signInWithGoogle(BuildContext context) async {
-  final messenger = ScaffoldMessenger.of(context);
-  try {
-    final googleUser = await GoogleSignIn().signIn();
-
-    if (googleUser == null) return;
-
-    final googleAuth = await googleUser.authentication;
-
-    final credential = GoogleAuthProvider.credential(
-      accessToken: googleAuth.accessToken,
-      idToken: googleAuth.idToken,
-    );
-
-    await FirebaseAuth.instance.signInWithCredential(credential);
-  } catch (e) {
-    messenger.showSnackBar(
-      SnackBar(content: Text('فشل تسجيل الدخول: $e')),
-    );
+  Future<void> _signInWithGoogle(BuildContext context) async {
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      final googleUser = await GoogleSignIn().signIn();
+      if (googleUser == null) return;
+      final googleAuth = await googleUser.authentication;
+      final credential = GoogleAuthProvider.credential(
+        accessToken: googleAuth.accessToken,
+        idToken: googleAuth.idToken,
+      );
+      await FirebaseAuth.instance.signInWithCredential(credential);
+    } catch (e) {
+      messenger.showSnackBar(
+        SnackBar(content: Text('فشل تسجيل الدخول: $e')),
+      );
+    }
   }
-}
 
-Future<void> _signOut() async {
-  await GoogleSignIn().signOut();
-  await FirebaseAuth.instance.signOut();
-}
+  Future<void> _signOut() async {
+    await GoogleSignIn().signOut();
+    await FirebaseAuth.instance.signOut();
+  }
 
   @override
   Widget build(BuildContext context) {
-    final textPrimary = isDark ? Colors.white : const Color(0xFF1A1000);
-    final textSub = isDark ? Colors.white60 : Colors.black54;
+    super.build(context);
+    final textPrimary = widget.isDark ? Colors.white : const Color(0xFF1A1000);
+    final textSub = widget.isDark ? Colors.white60 : Colors.black54;
 
     return CustomScrollView(
       physics: const BouncingScrollPhysics(),
       slivers: [
-        PremiumAppBar(title: 'الإعدادات', isDark: isDark),
+        PremiumAppBar(title: 'الإعدادات', isDark: widget.isDark),
         SliverPadding(
           padding: const EdgeInsets.fromLTRB(16, 16, 16, 100),
           sliver: SliverList(
@@ -234,9 +237,9 @@ Future<void> _signOut() async {
                             SizedBox(
                               height: 48,
                               child: ElevatedButton(
-onPressed: () => isLoggedIn
-    ? _signOut()
-    : _signInWithGoogle(context),
+                                onPressed: () => isLoggedIn
+                                    ? _signOut()
+                                    : _signInWithGoogle(context),
                                 style: ElevatedButton.styleFrom(
                                   backgroundColor: Colors.white,
                                   foregroundColor: const Color(0xFF6B4200),
@@ -298,7 +301,7 @@ onPressed: () => isLoggedIn
 
               // ── مظهر التطبيق ──
               AppSettingsCard(
-                isDark: isDark,
+                isDark: widget.isDark,
                 child: Row(
                   children: [
                     Container(
@@ -309,7 +312,7 @@ onPressed: () => isLoggedIn
                         borderRadius: BorderRadius.circular(14),
                       ),
                       child: Icon(
-                        isDark
+                        widget.isDark
                             ? Icons.dark_mode_rounded
                             : Icons.light_mode_rounded,
                         color: gold,
@@ -328,14 +331,14 @@ onPressed: () => isLoggedIn
                                   fontSize: 15)),
                           const SizedBox(height: 3),
                           Text(
-                            isDark ? 'الوضع الداكن مفعّل' : 'الوضع الفاتح مفعّل',
+                            widget.isDark ? 'الوضع الداكن مفعّل' : 'الوضع الفاتح مفعّل',
                             style: TextStyle(color: textSub, fontSize: 12),
                           ),
                         ],
                       ),
                     ),
                     GestureDetector(
-                      onTap: () => onThemeToggle(!isDark),
+                      onTap: () => widget.onThemeToggle(!widget.isDark),
                       child: AnimatedContainer(
                         duration: const Duration(milliseconds: 300),
                         curve: Curves.easeInOut,
@@ -343,8 +346,8 @@ onPressed: () => isLoggedIn
                         height: 30,
                         decoration: BoxDecoration(
                           borderRadius: BorderRadius.circular(15),
-                          color: isDark ? gold : Colors.grey.shade300,
-                          boxShadow: isDark
+                          color: widget.isDark ? gold : Colors.grey.shade300,
+                          boxShadow: widget.isDark
                               ? [
                                   BoxShadow(
                                     color: gold.withOpacity(0.4),
@@ -356,7 +359,7 @@ onPressed: () => isLoggedIn
                         child: AnimatedAlign(
                           duration: const Duration(milliseconds: 300),
                           curve: Curves.easeInOut,
-                          alignment: isDark
+                          alignment: widget.isDark
                               ? Alignment.centerLeft
                               : Alignment.centerRight,
                           child: Container(
@@ -374,11 +377,11 @@ onPressed: () => isLoggedIn
                               ],
                             ),
                             child: Icon(
-                              isDark
+                              widget.isDark
                                   ? Icons.dark_mode_rounded
                                   : Icons.light_mode_rounded,
                               size: 14,
-                              color: isDark ? gold : Colors.orange,
+                              color: widget.isDark ? gold : Colors.orange,
                             ),
                           ),
                         ),
@@ -391,7 +394,7 @@ onPressed: () => isLoggedIn
 
               // ── عن التطبيق ──
               AppSettingsCard(
-                isDark: isDark,
+                isDark: widget.isDark,
                 child: Row(
                   children: [
                     Container(
@@ -437,7 +440,7 @@ onPressed: () => isLoggedIn
 
               // ── تواصل مع المكتب ──
               AppSettingsCard(
-                isDark: isDark,
+                isDark: widget.isDark,
                 child: Row(
                   children: [
                     Container(

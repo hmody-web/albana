@@ -59,7 +59,6 @@ class DefaultFirebaseOptions {
     projectId: 'majidalbana-c2da3',
     storageBucket: 'majidalbana-c2da3.firebasestorage.app',
   );
-
   static const FirebaseOptions ios = FirebaseOptions(
     apiKey: 'AIzaSyACkgCBefJvqkkZh56fyw78PyQItqeF6fw',
     appId: '1:14634099103:ios:67e4f078bed0395f3d1daa',
@@ -70,7 +69,6 @@ class DefaultFirebaseOptions {
     iosClientId: '14634099103-n5r847gqsgga7hdghhbvblpqg2tnjkc1.apps.googleusercontent.com',
     iosBundleId: 'com.example.majidalbana',
   );
-
   static const FirebaseOptions macos = FirebaseOptions(
     apiKey: 'AIzaSyACkgCBefJvqkkZh56fyw78PyQItqeF6fw',
     appId: '1:14634099103:ios:67e4f078bed0395f3d1daa',
