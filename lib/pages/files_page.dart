@@ -317,6 +317,8 @@ bool _isSupervisor() {
     return Container(
       color: pageBg,
       child: CustomScrollView(
+        keyboardDismissBehavior:
+    ScrollViewKeyboardDismissBehavior.onDrag,
         physics: const BouncingScrollPhysics(),
         slivers: [
           // ── App Bar ──────────────────────────────────────────────────────
@@ -371,37 +373,6 @@ SliverToBoxAdapter(
               },
             ),
           ),
-
-          // ── New post indicator ────────────────────────────────────────
-          if (_backgroundRefreshing)
-            SliverToBoxAdapter(
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    SizedBox(
-                      width: 12,
-                      height: 12,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 1.5,
-                        color: gold.withOpacity(0.7),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Text(
-                      '    ',
-                      style: TextStyle(
-                        color: gold.withOpacity(0.7),
-                        fontSize: 11,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-
           // ── Content ───────────────────────────────────────────────────
           if (_loading)
             const SliverFillRemaining(

@@ -8,6 +8,8 @@ import 'pages/courses_page.dart';
 import 'pages/settings_page.dart';
 import 'widgets/shared_widgets.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:google_sign_in/google_sign_in.dart';
 import 'firebase_options.dart';
 
 void main() async {
@@ -1277,24 +1279,7 @@ Row(
     ),
   ],
 ),
-  GestureDetector(
-    onTap: () {},
-    child: Container(
-      width: 40,
-      height: 40,
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(18),
-        color: isDark
-            ? Colors.white.withOpacity(0)
-            : Colors.black.withOpacity(0),
-      ),
-      child: Icon(
-        Icons.menu_rounded,
-        color: isDark ? const ui.Color.fromARGB(255, 218, 152, 30) : const ui.Color.fromARGB(221, 218, 136, 14),
-        size: 30,
-      ),
-    ),
-  ),
+  _UserAvatarButton(isDark: isDark),
 ],
             ),
           ),
@@ -1795,4 +1780,614 @@ const SizedBox(height: 20),
       ],
     );
   }
+}
+
+// ─────────────────────────────────────────────
+//  USER AVATAR BUTTON (AppBar - Top Right)
+// ─────────────────────────────────────────────
+
+class _UserAvatarButton extends StatefulWidget {
+  final bool isDark;
+  const _UserAvatarButton({required this.isDark});
+
+  @override
+  State<_UserAvatarButton> createState() => _UserAvatarButtonState();
+}
+
+class _UserAvatarButtonState extends State<_UserAvatarButton>
+    with SingleTickerProviderStateMixin {
+  static const gold = Color(0xFFD4A017);
+  late AnimationController _animCtrl;
+  late Animation<double> _scaleAnim;
+  late Animation<double> _fadeAnim;
+  OverlayEntry? _overlayEntry;
+  final GlobalKey _avatarKey = GlobalKey();
+
+  @override
+  void initState() {
+    super.initState();
+    _animCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 260),
+    );
+    _scaleAnim = CurvedAnimation(parent: _animCtrl, curve: Curves.easeOutBack);
+    _fadeAnim = CurvedAnimation(parent: _animCtrl, curve: Curves.easeOut);
+  }
+
+  @override
+  void dispose() {
+    _removeOverlay();
+    _animCtrl.dispose();
+    super.dispose();
+  }
+
+  void _removeOverlay() {
+    _overlayEntry?.remove();
+    _overlayEntry = null;
+  }
+
+  void _showPopup(BuildContext context, User? user) {
+    if (_overlayEntry != null) {
+      _animCtrl.reverse().then((_) => _removeOverlay());
+      return;
+    }
+
+    final RenderBox renderBox =
+        _avatarKey.currentContext!.findRenderObject() as RenderBox;
+    final Offset offset = renderBox.localToGlobal(Offset.zero);
+    final Size size = renderBox.size;
+    final bool isDark = widget.isDark;
+
+    _overlayEntry = OverlayEntry(
+      builder: (ctx) => Stack(
+        children: [
+          // Dismiss backdrop
+          Positioned.fill(
+            child: GestureDetector(
+              onTap: () {
+                _animCtrl.reverse().then((_) => _removeOverlay());
+              },
+              behavior: HitTestBehavior.translucent,
+              child: Container(color: Colors.transparent),
+            ),
+          ),
+          // Popup
+          Positioned(
+            top: offset.dy + size.height + 8,
+            left: offset.dx,
+            child: AnimatedBuilder(
+              animation: _animCtrl,
+              builder: (_, child) => FadeTransition(
+                opacity: _fadeAnim,
+                child: ScaleTransition(
+                  scale: _scaleAnim,
+                  alignment: Alignment.topRight,
+                  child: child,
+                ),
+              ),
+              child: _UserPopupCard(
+                isDark: isDark,
+                user: user,
+                onClose: () {
+                  _animCtrl.reverse().then((_) => _removeOverlay());
+                },
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+
+    Overlay.of(context).insert(_overlayEntry!);
+    _animCtrl.forward();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<User?>(
+      stream: FirebaseAuth.instance.authStateChanges(),
+      builder: (context, snapshot) {
+        final user = snapshot.data;
+        final photoUrl = user?.photoURL;
+        final hasPhoto = photoUrl != null && photoUrl.isNotEmpty;
+
+        return GestureDetector(
+          key: _avatarKey,
+          onTap: () => _showPopup(context, user),
+          child: Container(
+            width: 40,
+            height: 40,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              gradient: LinearGradient(
+                colors: [gold.withOpacity(0.8), const Color(0xFF8A5E00)],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+              border: Border.all(
+                color: gold.withOpacity(0.6),
+                width: 2,
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: gold.withOpacity(0.35),
+                  blurRadius: 10,
+                  offset: const Offset(0, 3),
+                ),
+              ],
+            ),
+            child: ClipOval(
+              child: hasPhoto
+                  ? Image.network(
+                      photoUrl,
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, __, ___) => _DefaultAvatar(),
+                    )
+                  : _DefaultAvatar(),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _DefaultAvatar extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return Image.asset(
+      'assets/images/profile.png',
+      fit: BoxFit.cover,
+      errorBuilder: (_, __, ___) => const Icon(
+        Icons.person_rounded,
+        color: Colors.white,
+        size: 22,
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────
+//  USER POPUP CARD
+// ─────────────────────────────────────────────
+
+class _UserPopupCard extends StatelessWidget {
+  final bool isDark;
+  final User? user;
+  final VoidCallback onClose;
+
+  const _UserPopupCard({
+    required this.isDark,
+    required this.user,
+    required this.onClose,
+  });
+
+  static const gold = Color(0xFFD4A017);
+
+  Future<void> _signInWithGoogle(BuildContext context) async {
+    onClose();
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      final googleUser = await GoogleSignIn().signIn();
+      if (googleUser == null) return;
+      final googleAuth = await googleUser.authentication;
+      final credential = GoogleAuthProvider.credential(
+        accessToken: googleAuth.accessToken,
+        idToken: googleAuth.idToken,
+      );
+      await FirebaseAuth.instance.signInWithCredential(credential);
+    } catch (e) {
+      messenger.showSnackBar(
+        SnackBar(content: Text('فشل تسجيل الدخول: $e')),
+      );
+    }
+  }
+
+  Future<void> _signOut(BuildContext context) async {
+    onClose();
+    await GoogleSignIn().signOut();
+    await FirebaseAuth.instance.signOut();
+  }
+
+  String _formatDate(DateTime? date) {
+    if (date == null) return 'غير معروف';
+    const months = [
+      'يناير', 'فبراير', 'مارس', 'أبريل', 'مايو', 'يونيو',
+      'يوليو', 'أغسطس', 'سبتمبر', 'أكتوبر', 'نوفمبر', 'ديسمبر'
+    ];
+    return '${date.day} ${months[date.month - 1]} ${date.year}';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isLoggedIn = user != null;
+    final cardBg = isDark ? const Color(0xFF141414) : Colors.white;
+    final textPrimary = isDark ? Colors.white : const Color(0xFF1A1000);
+    final textSub = isDark ? Colors.white54 : Colors.black45;
+    final photoUrl = user?.photoURL;
+    final hasPhoto = photoUrl != null && photoUrl.isNotEmpty;
+    final joinDate = user?.metadata.creationTime;
+
+    return Directionality(
+      textDirection: TextDirection.rtl,
+      child: Material(
+        color: Colors.transparent,
+        child: Stack(
+          clipBehavior: Clip.none,
+          children: [
+            // ── Arrow pointer ──
+            Positioned(
+              top: -9,
+              left: 10,
+              child: CustomPaint(
+                painter: _ArrowPainter(
+                  color: isDark
+                      ? const Color(0xFF1E1E1E)
+                      : const Color(0xFFFFFDF7),
+                  borderColor: gold.withOpacity(0.3),
+                ),
+                size: const Size(18, 10),
+              ),
+            ),
+            // ── Main card ──
+            Container(
+              width: 240,
+              decoration: BoxDecoration(
+                color: cardBg,
+                borderRadius: BorderRadius.circular(22),
+                border: Border.all(color: gold.withOpacity(0.25), width: 1),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(isDark ? 0.55 : 0.14),
+                    blurRadius: 30,
+                    offset: const Offset(0, 10),
+                  ),
+                  BoxShadow(
+                    color: gold.withOpacity(0.12),
+                    blurRadius: 20,
+                    offset: const Offset(0, 4),
+                  ),
+                ],
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (isLoggedIn) ...[
+                    // ── Header gradient ──
+                    Container(
+                      padding: const EdgeInsets.fromLTRB(18, 20, 18, 16),
+                      decoration: BoxDecoration(
+                        borderRadius: const BorderRadius.vertical(
+                            top: Radius.circular(22)),
+                        gradient: LinearGradient(
+                          colors: isDark
+                              ? [
+                                  const Color(0xFF1E1A0A),
+                                  const Color(0xFF141414),
+                                ]
+                              : [
+                                  const Color(0xFFFFF9EC),
+                                  const Color(0xFFFFFDF7),
+                                ],
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                        ),
+                        border: Border(
+                          bottom: BorderSide(
+                              color: gold.withOpacity(0.15), width: 0.8),
+                        ),
+                      ),
+                      child: Row(
+                        children: [
+                          // ── Avatar ──
+                          Container(
+                            width: 54,
+                            height: 54,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              gradient: const LinearGradient(
+                                colors: [Color(0xFFE8B84B), Color(0xFF8A5E00)],
+                              ),
+                              border: Border.all(
+                                  color: gold.withOpacity(0.6), width: 2.5),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: gold.withOpacity(0.4),
+                                  blurRadius: 12,
+                                  offset: const Offset(0, 4),
+                                ),
+                              ],
+                            ),
+                            child: ClipOval(
+                              child: hasPhoto
+                                  ? Image.network(
+                                      photoUrl,
+                                      fit: BoxFit.cover,
+                                      errorBuilder: (_, __, ___) =>
+                                          const Icon(Icons.person_rounded,
+                                              color: Colors.white, size: 28),
+                                    )
+                                  : const Icon(Icons.person_rounded,
+                                      color: Colors.white, size: 28),
+                            ),
+                          ),
+                          const SizedBox(width: 14),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  user?.displayName ?? 'مستخدم',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    color: textPrimary,
+                                    fontSize: 15,
+                                    fontWeight: FontWeight.w800,
+                                  ),
+                                ),
+                                const SizedBox(height: 4),
+                                Text(
+                                  user?.email ?? '',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    color: textSub,
+                                    fontSize: 11,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    // ── Join date ──
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(18, 14, 18, 4),
+                      child: Row(
+                        children: [
+                          Container(
+                            width: 32,
+                            height: 32,
+                            decoration: BoxDecoration(
+                              color: gold.withOpacity(0.10),
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: const Icon(Icons.calendar_today_rounded,
+                                color: gold, size: 16),
+                          ),
+                          const SizedBox(width: 10),
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'تاريخ الانضمام',
+                                style: TextStyle(
+                                    color: textSub,
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.w500),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                _formatDate(joinDate),
+                                style: TextStyle(
+                                    color: textPrimary,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w700),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                    // ── Divider ──
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(18, 12, 18, 0),
+                      child: Container(
+                        height: 0.8,
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(colors: [
+                            Colors.transparent,
+                            gold.withOpacity(0.25),
+                            Colors.transparent,
+                          ]),
+                        ),
+                      ),
+                    ),
+                    // ── Sign out button ──
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(14, 10, 14, 14),
+                      child: GestureDetector(
+                        onTap: () => _signOut(context),
+                        child: Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.symmetric(vertical: 11),
+                          decoration: BoxDecoration(
+                            color: Colors.red.withOpacity(0.08),
+                            borderRadius: BorderRadius.circular(14),
+                            border: Border.all(
+                                color: Colors.red.withOpacity(0.25), width: 1),
+                          ),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(Icons.logout_rounded,
+                                  color: Colors.red.shade400, size: 17),
+                              const SizedBox(width: 7),
+                              Text(
+                                'تسجيل الخروج',
+                                style: TextStyle(
+                                  color: Colors.red.shade400,
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ] else ...[
+                    // ── Not logged in ──
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(18, 20, 18, 10),
+                      child: Row(
+                        children: [
+                          Container(
+                            width: 50,
+                            height: 50,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: gold.withOpacity(0.12),
+                              border: Border.all(
+                                  color: gold.withOpacity(0.3), width: 2),
+                            ),
+child: ClipOval(
+  child: Image.asset(
+    'assets/images/profile.png',
+    fit: BoxFit.cover,
+    errorBuilder: (_, __, ___) => const Icon(
+        Icons.person_rounded,
+        color: gold,
+        size: 26),
+  ),
+),
+                          ),
+                          const SizedBox(width: 14),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'زائر',
+                                  style: TextStyle(
+                                    color: textPrimary,
+                                    fontSize: 15,
+                                    fontWeight: FontWeight.w800,
+                                  ),
+                                ),
+                                const SizedBox(height: 3),
+                                Text(
+                                  'سجّل دخولك للوصول إلى جميع المزايا',
+                                  style: TextStyle(
+                                      color: textSub, fontSize: 11, height: 1.4),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    // ── Divider ──
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 18),
+                      child: Container(
+                        height: 0.8,
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(colors: [
+                            Colors.transparent,
+                            gold.withOpacity(0.25),
+                            Colors.transparent,
+                          ]),
+                        ),
+                      ),
+                    ),
+                    // ── Sign in button ──
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(14, 12, 14, 16),
+                      child: GestureDetector(
+                        onTap: () => _signInWithGoogle(context),
+                        child: Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.symmetric(vertical: 8),
+                          decoration: BoxDecoration(
+                            gradient: const LinearGradient(
+                              colors: [ui.Color.fromARGB(255, 0, 110, 255), ui.Color.fromARGB(255, 23, 89, 212)],                              end: Alignment.bottomLeft,
+                            ),
+                            borderRadius: BorderRadius.circular(14),
+                            boxShadow: [
+                              BoxShadow(
+                                color: const ui.Color.fromARGB(120, 23, 89, 212).withOpacity(0.4),
+                                blurRadius: 6,
+                                offset: const Offset(0, 2),
+                              ),
+                            ],
+                          ),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Container(
+                                width: 22,
+                                height: 22,
+                                decoration: BoxDecoration(
+                                  color: Colors.white,
+                                  shape: BoxShape.circle,
+                                ),
+                                child: const Icon(Icons.g_mobiledata_rounded,
+                                    color: ui.Color.fromARGB(255, 23, 89, 212), size: 18),
+                              ),
+                              const SizedBox(width: 8),
+                              const Text(
+                                'تسجيل الدخول بـ Google',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────
+//  ARROW PAINTER (popup pointer)
+// ─────────────────────────────────────────────
+
+class _ArrowPainter extends CustomPainter {
+  final Color color;
+  final Color borderColor;
+  const _ArrowPainter({required this.color, required this.borderColor});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final borderPaint = Paint()
+      ..color = borderColor
+      ..style = PaintingStyle.fill;
+    final fillPaint = Paint()
+      ..color = color
+      ..style = PaintingStyle.fill;
+
+    final borderPath = Path()
+      ..moveTo(0, size.height)
+      ..lineTo(size.width / 2, 0)
+      ..lineTo(size.width, size.height)
+      ..close();
+
+    canvas.drawPath(borderPath, borderPaint);
+
+    final fillPath = Path()
+      ..moveTo(1.5, size.height)
+      ..lineTo(size.width / 2, 1.5)
+      ..lineTo(size.width - 1.5, size.height)
+      ..close();
+
+    canvas.drawPath(fillPath, fillPaint);
+  }
+
+  @override
+  bool shouldRepaint(_ArrowPainter old) =>
+      old.color != color || old.borderColor != borderColor;
 }
