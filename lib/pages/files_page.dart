@@ -302,7 +302,10 @@ class _FilesPageState extends State<FilesPage> with SingleTickerProviderStateMix
         physics: const BouncingScrollPhysics(),
         slivers: [
           // ── App Bar ──────────────────────────────────────────────────────
-          _buildAppBar(pageBg),
+          PremiumAppBar(
+  title: 'الملفات',
+  isDark: widget.isDark,
+),
 
           // ── Search bar (animated) ─────────────────────────────────────
           SliverToBoxAdapter(
