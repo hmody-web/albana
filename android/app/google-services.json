@@ -1,0 +1,47 @@
+{
+  "project_info": {
+    "project_number": "14634099103",
+    "project_id": "majidalbana-c2da3",
+    "storage_bucket": "majidalbana-c2da3.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:14634099103:android:884c0d2554674fe63d1daa",
+        "android_client_info": {
+          "package_name": "com.example.majidalbana"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "14634099103-jopb3156ul3kgfhihahc56lg1rsvt5lq.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.example.majidalbana",
+            "certificate_hash": "adeb2dfc7d1d009a09f3fbe794f4ae8f9ceb4dd7"
+          }
+        },
+        {
+          "client_id": "14634099103-e276mc30gdd5hggf40ealn082muo53mj.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDMV2wujC4KKKTrVIiX45pO4EI25RlOdHY"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "14634099103-e276mc30gdd5hggf40ealn082muo53mj.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

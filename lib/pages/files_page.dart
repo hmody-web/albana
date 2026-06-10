@@ -344,7 +344,7 @@ class _FilesPageState extends State<FilesPage> with SingleTickerProviderStateMix
                     ),
                     const SizedBox(width: 8),
                     Text(
-                      'جارٍ التحقق من المنشورات الجديدة...',
+                      '    ',
                       style: TextStyle(
                         color: gold.withOpacity(0.7),
                         fontSize: 11,
