@@ -7,6 +7,8 @@ environment:
   sdk: '>=3.0.0 <4.0.0'
  
 dependencies:
+  path_provider: ^2.1.5
+  shared_preferences: ^2.2.3
   http: ^1.2.2
   flutter:
     sdk: flutter
