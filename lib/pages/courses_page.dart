@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:url_launcher/url_launcher.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:async';
 import 'dart:convert';
 import '../widgets/shared_widgets.dart';
@@ -31,6 +32,9 @@ class _CoursesPageState extends State<CoursesPage>
       'https://majidalbana.com/admin/table/delete_schedule.php';
   static const _updateScheduleUrl =
       'https://majidalbana.com/admin/table/update_schedule.php';
+  static const _reorderScheduleUrl =
+      'https://majidalbana.com/admin/table/reorder_schedule.php';
+  static const _scheduleCacheKey = 'schedule_cache_v1';
 
   List<Map<String, String>> _videos = [];
   bool _loadingVideos = true;
@@ -124,6 +128,21 @@ class _CoursesPageState extends State<CoursesPage>
   }
 
   Future<void> _fetchSchedule() async {
+    // ── 1. اقرأ الكاش أولاً وأظهره فوراً ──
+    final cached = await _loadScheduleFromCache();
+    if (cached.isNotEmpty) {
+      if (!mounted) return;
+      setState(() {
+        _schedule = cached;
+        _loadingSchedule = false;
+        _lastScheduleHash = _computeHash(cached);
+      });
+      // ── 2. جلب التحديثات من الخادم في الخلفية ──
+      _silentPollSchedule();
+      return;
+    }
+
+    // ── لا يوجد كاش: تحميل أول مرة مع مؤشر التحميل ──
     setState(() {
       _loadingSchedule = true;
       _scheduleError = null;
@@ -133,6 +152,7 @@ class _CoursesPageState extends State<CoursesPage>
       final items = await _loadScheduleItems();
       if (!mounted) return;
       final hash = _computeHash(items);
+      await _saveScheduleToCache(items);
       setState(() {
         _schedule = items;
         _loadingSchedule = false;
@@ -145,6 +165,48 @@ class _CoursesPageState extends State<CoursesPage>
         _loadingSchedule = false;
       });
     }
+  }
+
+  // ── Cache Helpers ──────────────────────────────────────────────────────────
+
+  /// تحويل قائمة العناصر إلى JSON لحفظها
+  List<Map<String, dynamic>> _itemsToJson(List<_ScheduleItem> items) {
+    return items.map((e) => {
+      'id': e.id,
+      'lectureNumber': e.lectureNumber,
+      'day': e.day,
+      'time': e.time,
+      'location': e.location,
+      'urlLocation': e.urlLocation,
+    }).toList();
+  }
+
+  /// قراءة الجدول من الكاش المحلي
+  Future<List<_ScheduleItem>> _loadScheduleFromCache() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(_scheduleCacheKey);
+      if (raw == null || raw.isEmpty) return [];
+      final list = jsonDecode(raw) as List<dynamic>;
+      return list.map((e) => _ScheduleItem(
+        id: e['id'] as String? ?? '',
+        lectureNumber: e['lectureNumber'] as String? ?? '',
+        day: e['day'] as String? ?? '',
+        time: e['time'] as String? ?? '',
+        location: e['location'] as String? ?? '',
+        urlLocation: e['urlLocation'] as String? ?? '',
+      )).toList();
+    } catch (_) {
+      return [];
+    }
+  }
+
+  /// حفظ الجدول في الكاش المحلي
+  Future<void> _saveScheduleToCache(List<_ScheduleItem> items) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_scheduleCacheKey, jsonEncode(_itemsToJson(items)));
+    } catch (_) {}
   }
 
   /// تحميل عناصر الجدول من الخادم (مشترك)
@@ -195,9 +257,7 @@ class _CoursesPageState extends State<CoursesPage>
       ));
     }
 
-    items.sort((a, b) => _parseLectureNumber(b.lectureNumber)
-        .compareTo(_parseLectureNumber(a.lectureNumber)));
-
+    // الخادم يُرجع البيانات مرتبة بـ sort_order، لا نعيد ترتيبها هنا
     return items;
   }
 
@@ -214,6 +274,8 @@ class _CoursesPageState extends State<CoursesPage>
       if (!mounted) return;
       final hash = _computeHash(items);
       if (hash != _lastScheduleHash) {
+        await _saveScheduleToCache(items);
+        if (!mounted) return;
         setState(() {
           _schedule = items;
           _lastScheduleHash = hash;
@@ -229,8 +291,6 @@ class _CoursesPageState extends State<CoursesPage>
     final tempItem = item.copyWith(id: 'temp_${DateTime.now().millisecondsSinceEpoch}');
     setState(() {
       _schedule.insert(0, tempItem);
-      _schedule.sort((a, b) => _parseLectureNumber(b.lectureNumber)
-          .compareTo(_parseLectureNumber(a.lectureNumber)));
     });
 
     try {
@@ -245,16 +305,15 @@ class _CoursesPageState extends State<CoursesPage>
         },
       );
       if (response.statusCode == 200) {
-        // جلب البيانات الحقيقية من الخادم (مع ID الصحيح)
         final items = await _loadScheduleItems();
         if (!mounted) return;
+        await _saveScheduleToCache(items);
         setState(() {
           _schedule = items;
           _lastScheduleHash = _computeHash(items);
         });
       }
     } catch (_) {
-      // في حال الفشل: إزالة العنصر المؤقت
       if (!mounted) return;
       setState(() {
         _schedule.removeWhere((e) => e.id == tempItem.id);
@@ -274,10 +333,11 @@ class _CoursesPageState extends State<CoursesPage>
         Uri.parse(_deleteScheduleUrl),
         body: {'id': id},
       );
-      // تحديث الـ hash بعد الحذف
-      if (mounted) _lastScheduleHash = _computeHash(_schedule);
+      if (mounted) {
+        _lastScheduleHash = _computeHash(_schedule);
+        await _saveScheduleToCache(_schedule);
+      }
     } catch (_) {
-      // استعادة القائمة عند الفشل
       if (!mounted) return;
       setState(() => _schedule = backup);
     }
@@ -326,36 +386,42 @@ class _CoursesPageState extends State<CoursesPage>
                     isAdmin: isAdmin,
                     onAddSchedule: _addSchedule,
                     onDeleteSchedule: _deleteSchedule,
-                    onReorderSchedule: (oldIndex, newIndex) {
-                      // ── تحريك فوري في الواجهة ──
+                    onReorderSchedule: (oldIndex, newIndex) async {
+                      // ── تحريك الصف في الواجهة فوراً ──
                       setState(() {
                         if (newIndex > oldIndex) newIndex--;
                         final item = _schedule.removeAt(oldIndex);
                         _schedule.insert(newIndex, item);
-                        _lastScheduleHash = _computeHash(_schedule);
                       });
+                      await _saveScheduleToCache(_schedule);
+                      _lastScheduleHash = _computeHash(_schedule);
+                      // إرسال الترتيب الجديد للخادم
+                      try {
+                        final order = _schedule.map((e) => e.id).toList();
+                        await http.post(
+                          Uri.parse(_reorderScheduleUrl),
+                          headers: {'Content-Type': 'application/json'},
+                          body: jsonEncode({'order': order}),
+                        );
+                      } catch (_) {
+                        // فشل صامت - الترتيب محفوظ في الكاش المحلي
+                      }
                     },
                     onEditSchedule: (oldItem, newItem) async {
-                      // ── تعديل فوري في الواجهة ──
+                      // ── تعديل فوري في الواجهة بنفس الـ id تماماً ──
                       final idx = _schedule.indexWhere((e) => e.id == oldItem.id);
                       if (idx != -1) {
                         setState(() {
                           _schedule[idx] = newItem.copyWith(id: oldItem.id);
-                          _schedule.sort((a, b) => _parseLectureNumber(b.lectureNumber)
-                              .compareTo(_parseLectureNumber(a.lectureNumber)));
                         });
+                        await _saveScheduleToCache(_schedule);
                       }
-                      // إرسال للخادم: حذف القديم وإضافة الجديد
+                      // إرسال UPDATE حقيقي للخادم بنفس الـ id
                       try {
-                        if (oldItem.id.isNotEmpty) {
-                          await http.post(
-                            Uri.parse(_deleteScheduleUrl),
-                            body: {'id': oldItem.id},
-                          );
-                        }
                         final response = await http.post(
-                          Uri.parse(_addScheduleUrl),
+                          Uri.parse(_updateScheduleUrl),
                           body: {
+                            'id': oldItem.id,
                             'lecture_number': newItem.lectureNumber,
                             'day': newItem.day,
                             'time': newItem.time,
@@ -364,16 +430,11 @@ class _CoursesPageState extends State<CoursesPage>
                           },
                         );
                         if (response.statusCode == 200 && mounted) {
-                          final items = await _loadScheduleItems();
-                          if (mounted) {
-                            setState(() {
-                              _schedule = items;
-                              _lastScheduleHash = _computeHash(items);
-                            });
-                          }
+                          _lastScheduleHash = _computeHash(_schedule);
+                        } else if (mounted) {
+                          await _fetchSchedule();
                         }
                       } catch (_) {
-                        // إعادة جلب البيانات الصحيحة عند الفشل
                         if (mounted) await _fetchSchedule();
                       }
                     },
@@ -543,7 +604,7 @@ class _CoursesTab extends StatelessWidget {
   final bool isAdmin;
   final Future<void> Function(_ScheduleItem) onAddSchedule;
   final Future<void> Function(String) onDeleteSchedule;
-  final void Function(int, int) onReorderSchedule;
+  final Future<void> Function(int, int) onReorderSchedule;
   final Future<void> Function(_ScheduleItem, _ScheduleItem) onEditSchedule;
 
   const _CoursesTab({
@@ -743,8 +804,8 @@ class _CoursesTab extends StatelessWidget {
           cardBg: cardBg,
           isAdmin: isAdmin,
           onDelete: onDeleteSchedule,
-          onReorder: onReorderSchedule,
           onEdit: onEditSchedule,
+          onReorder: onReorderSchedule,
         ),
       ],
     );
@@ -1014,12 +1075,58 @@ class _AdminAddBoxState extends State<_AdminAddBox>
                     ],
                   ),
                   const SizedBox(height: 10),
-                  _AdminField(
-                    controller: _urlCtrl,
-                    label: 'رابط الموقع (اختياري)',
-                    icon: Icons.link_rounded,
-                    isDark: isDark,
-                    keyboardType: TextInputType.url,
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      Expanded(
+                        child: _AdminField(
+                          controller: _urlCtrl,
+                          label: 'رابط الموقع (اختياري)',
+                          icon: Icons.link_rounded,
+                          isDark: isDark,
+                          keyboardType: TextInputType.url,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      GestureDetector(
+                        onTap: () async {
+                          final raw = _urlCtrl.text.trim();
+                          if (raw.isEmpty) return;
+                          var url = raw;
+                          if (!url.startsWith('http://') && !url.startsWith('https://')) {
+                            url = 'https://$url';
+                          }
+                          final uri = Uri.tryParse(url);
+                          if (uri != null && await canLaunchUrl(uri)) {
+                            await launchUrl(uri, mode: LaunchMode.externalApplication);
+                          }
+                        },
+                        child: Container(
+                          width: 44,
+                          height: 44,
+                          decoration: BoxDecoration(
+                            gradient: const LinearGradient(
+                              colors: [Color(0xFFFFD86B), Color(0xFFD4A017)],
+                              begin: Alignment.topLeft,
+                              end: Alignment.bottomRight,
+                            ),
+                            borderRadius: BorderRadius.circular(12),
+                            boxShadow: [
+                              BoxShadow(
+                                color: gold.withOpacity(0.3),
+                                blurRadius: 8,
+                                offset: const Offset(0, 3),
+                              ),
+                            ],
+                          ),
+                          child: const Icon(
+                            Icons.location_on_rounded,
+                            color: Colors.black,
+                            size: 20,
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                   const SizedBox(height: 14),
                   SizedBox(
@@ -1159,8 +1266,8 @@ class _ScheduleTable extends StatelessWidget {
   final Color textPrimary, textSub, cardBg;
   final bool isAdmin;
   final Future<void> Function(String) onDelete;
-  final void Function(int, int) onReorder;
   final Future<void> Function(_ScheduleItem, _ScheduleItem) onEdit;
+  final Future<void> Function(int, int) onReorder;
 
   const _ScheduleTable({
     required this.schedule,
@@ -1173,8 +1280,8 @@ class _ScheduleTable extends StatelessWidget {
     required this.cardBg,
     required this.isAdmin,
     required this.onDelete,
-    required this.onReorder,
     required this.onEdit,
+    required this.onReorder,
   });
 
   static const gold = Color(0xFFD4A017);
@@ -1205,8 +1312,6 @@ class _ScheduleTable extends StatelessWidget {
       builder: (_) => _EditBottomSheet(
         isDark: isDark,
         item: item,
-        index: index,
-        scheduleLength: schedule.length,
         numCtrl: numCtrl,
         dayCtrl: dayCtrl,
         timeCtrl: timeCtrl,
@@ -1220,9 +1325,6 @@ class _ScheduleTable extends StatelessWidget {
             await onDelete(item.id);
           }
         },
-        onMoveUp: index > 0 ? () => onReorder(index, index - 1) : null,
-        onMoveDown:
-            index < schedule.length - 1 ? () => onReorder(index, index + 2) : null,
       ),
     );
   }
@@ -1305,122 +1407,150 @@ class _ScheduleTable extends StatelessWidget {
                 const _HeaderCell(text: 'الوقت', flex: 2),
                 const _HeaderCell(text: 'الموقع', flex: 3),
                 if (isAdmin) const SizedBox(width: 32),
+                if (isAdmin) const SizedBox(width: 24),
               ],
             ),
           ),
-          // Data Rows
-          ...schedule.asMap().entries.map((entry) {
-            final i = entry.key;
-            final row = entry.value;
-            final isEven = i % 2 == 0;
-            return Container(
-              color: isEven
-                  ? (isDark
-                      ? Colors.white.withOpacity(0.03)
-                      : const Color(0xFFFFF9EE))
-                  : Colors.transparent,
-              padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 12),
-              child: Row(
-                children: [
-                  // Lecture Number
-                  Expanded(
-                    flex: 1,
-                    child: Center(
-                      child: Container(
-                        width: 30,
-                        height: 30,
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: gold.withOpacity(0.15),
-                          border:
-                              Border.all(color: gold.withOpacity(0.22)),
-                        ),
-                        alignment: Alignment.center,
-                        child: Text(
-                          row.lectureNumber,
-                          style: const TextStyle(
-                              color: gold,
-                              fontSize: 12,
-                              fontWeight: FontWeight.w800),
-                        ),
-                      ),
-                    ),
+          // Data Rows — reorderable for admin, normal for users
+          if (isAdmin)
+            ReorderableListView.builder(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              itemCount: schedule.length,
+              onReorder: (oldIndex, newIndex) => onReorder(oldIndex, newIndex),
+              proxyDecorator: (child, index, animation) => Material(
+                elevation: 6,
+                borderRadius: BorderRadius.circular(12),
+                shadowColor: gold.withOpacity(0.4),
+                child: child,
+              ),
+              itemBuilder: (ctx, i) {
+                final row = schedule[i];
+                final isEven = i % 2 == 0;
+                return _buildRow(ctx, i, row, isEven);
+              },
+            )
+          else
+            ...schedule.asMap().entries.map((entry) {
+              return _buildRow(context, entry.key, entry.value, entry.key % 2 == 0);
+            }),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildRow(BuildContext context, int i, _ScheduleItem row, bool isEven) {
+    return Container(
+      key: ValueKey(row.id),
+      color: isEven
+          ? (isDark
+              ? Colors.white.withOpacity(0.03)
+              : const Color(0xFFFFF9EE))
+          : Colors.transparent,
+      padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 12),
+      child: Row(
+        children: [
+          // Drag handle for admin
+          if (isAdmin)
+            Padding(
+              padding: const EdgeInsets.only(left: 4),
+              child: Icon(Icons.drag_handle_rounded,
+                  color: gold.withOpacity(0.45), size: 18),
+            ),
+          // Lecture Number
+          Expanded(
+            flex: 1,
+            child: Center(
+              child: Container(
+                width: 30,
+                height: 30,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: gold.withOpacity(0.15),
+                  border: Border.all(color: gold.withOpacity(0.22)),
+                ),
+                alignment: Alignment.center,
+                child: Text(
+                  row.lectureNumber,
+                  style: const TextStyle(
+                      color: gold,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w800),
+                ),
+              ),
+            ),
+          ),
+          _DataCell(text: row.day, flex: 2, color: textPrimary),
+          _DataCell(text: row.time, flex: 2, color: textSub),
+          // Location cell
+          Expanded(
+            flex: 3,
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Flexible(
+                  child: Text(
+                    row.location,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                        color: textPrimary,
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w600),
                   ),
-                  _DataCell(text: row.day, flex: 2, color: textPrimary),
-                  _DataCell(text: row.time, flex: 2, color: textSub),
-                  // Location cell
-                  Expanded(
-                    flex: 3,
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(
-                          row.location.contains('أونلاين') ||
-                                  row.location
-                                      .toLowerCase()
-                                      .contains('online')
-                              ? Icons.videocam_rounded
-                              : Icons.location_on_rounded,
-                          size: 15,
-                          color: row.urlLocation.isNotEmpty
-                              ? gold
-                              : const Color(0xFF43A047),
+                ),
+                if (row.urlLocation.isNotEmpty) ...[
+                  const SizedBox(width: 5),
+                  GestureDetector(
+                    onTap: () => _openLocation(row.urlLocation),
+                    child: Container(
+                      padding: const EdgeInsets.all(5),
+                      decoration: BoxDecoration(
+                        gradient: const LinearGradient(
+                          colors: [Color(0xFFFFD86B), Color(0xFFD4A017)],
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
                         ),
-                        const SizedBox(width: 4),
-                        Flexible(
-                          child: Text(
-                            row.location,
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                            textAlign: TextAlign.center,
-                            style: TextStyle(
-                                color: textPrimary,
-                                fontSize: 11.5,
-                                fontWeight: FontWeight.w600),
-                          ),
-                        ),
-                        if (row.urlLocation.isNotEmpty) ...[
-                          const SizedBox(width: 3),
-                          InkWell(
-                            borderRadius: BorderRadius.circular(20),
-                            onTap: () => _openLocation(row.urlLocation),
-                            child: Container(
-                              padding: const EdgeInsets.all(5),
-                              decoration: BoxDecoration(
-                                color: gold.withOpacity(0.14),
-                                shape: BoxShape.circle,
-                              ),
-                              child: const Icon(Icons.map_rounded,
-                                  color: gold, size: 15),
-                            ),
+                        shape: BoxShape.circle,
+                        boxShadow: [
+                          BoxShadow(
+                            color: gold.withOpacity(0.35),
+                            blurRadius: 6,
+                            offset: const Offset(0, 2),
                           ),
                         ],
-                      ],
-                    ),
-                  ),
-                  // Admin Edit Button
-                  if (isAdmin)
-                    GestureDetector(
-                      onTap: () => _showEditDialog(context, row, i),
-                      child: Container(
-                        width: 28,
-                        height: 28,
-                        margin: const EdgeInsets.only(right: 2),
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: gold.withOpacity(0.12),
-                          border: Border.all(
-                              color: gold.withOpacity(0.3), width: 1),
-                        ),
-                        child: const Icon(Icons.edit_rounded,
-                            color: gold, size: 13),
+                      ),
+                      child: const Icon(
+                        Icons.location_on_rounded,
+                        color: Colors.black,
+                        size: 13,
                       ),
                     ),
+                  ),
                 ],
+              ],
+            ),
+          ),
+          // Admin Edit Button
+          if (isAdmin)
+            GestureDetector(
+              onTap: () => _showEditDialog(context, row, i),
+              child: Container(
+                width: 28,
+                height: 28,
+                margin: const EdgeInsets.only(right: 2),
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: gold.withOpacity(0.12),
+                  border: Border.all(
+                      color: gold.withOpacity(0.3), width: 1),
+                ),
+                child: const Icon(Icons.edit_rounded,
+                    color: gold, size: 13),
               ),
-            );
-          }),
+            ),
         ],
       ),
     );
@@ -1448,19 +1578,13 @@ class _ScheduleTable extends StatelessWidget {
 class _EditBottomSheet extends StatefulWidget {
   final bool isDark;
   final _ScheduleItem item;
-  final int index;
-  final int scheduleLength;
   final TextEditingController numCtrl, dayCtrl, timeCtrl, locCtrl, urlCtrl;
   final Future<void> Function(_ScheduleItem) onSave;
   final Future<void> Function() onDelete;
-  final VoidCallback? onMoveUp;
-  final VoidCallback? onMoveDown;
 
   const _EditBottomSheet({
     required this.isDark,
     required this.item,
-    required this.index,
-    required this.scheduleLength,
     required this.numCtrl,
     required this.dayCtrl,
     required this.timeCtrl,
@@ -1468,8 +1592,6 @@ class _EditBottomSheet extends StatefulWidget {
     required this.urlCtrl,
     required this.onSave,
     required this.onDelete,
-    this.onMoveUp,
-    this.onMoveDown,
   });
 
   @override
@@ -1604,29 +1726,6 @@ class _EditBottomSheetState extends State<_EditBottomSheet> {
                         fontWeight: FontWeight.w900,
                       ),
                     ),
-                    const Spacer(),
-                    // Move up/down controls
-                    _MoveButton(
-                      icon: Icons.keyboard_arrow_up_rounded,
-                      onTap: widget.onMoveUp != null
-                          ? () {
-                              widget.onMoveUp!();
-                              Navigator.pop(context);
-                            }
-                          : null,
-                      isDark: isDark,
-                    ),
-                    const SizedBox(width: 6),
-                    _MoveButton(
-                      icon: Icons.keyboard_arrow_down_rounded,
-                      onTap: widget.onMoveDown != null
-                          ? () {
-                              widget.onMoveDown!();
-                              Navigator.pop(context);
-                            }
-                          : null,
-                      isDark: isDark,
-                    ),
                   ],
                 ),
 
@@ -1680,12 +1779,64 @@ class _EditBottomSheetState extends State<_EditBottomSheet> {
                   ],
                 ),
                 const SizedBox(height: 10),
-                _AdminField(
-                  controller: widget.urlCtrl,
-                  label: 'رابط الموقع (اختياري)',
-                  icon: Icons.link_rounded,
-                  isDark: isDark,
-                  keyboardType: TextInputType.url,
+                // رابط الموقع مع زر فتح مباشر
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    Expanded(
+                      child: _AdminField(
+                        controller: widget.urlCtrl,
+                        label: 'رابط الموقع (اختياري)',
+                        icon: Icons.link_rounded,
+                        isDark: isDark,
+                        keyboardType: TextInputType.url,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    // زر فتح الرابط للتحقق منه
+                    StatefulBuilder(
+                      builder: (ctx, setLocal) {
+                        return GestureDetector(
+                          onTap: () async {
+                            final raw = widget.urlCtrl.text.trim();
+                            if (raw.isEmpty) return;
+                            var url = raw;
+                            if (!url.startsWith('http://') && !url.startsWith('https://')) {
+                              url = 'https://$url';
+                            }
+                            final uri = Uri.tryParse(url);
+                            if (uri != null && await canLaunchUrl(uri)) {
+                              await launchUrl(uri, mode: LaunchMode.externalApplication);
+                            }
+                          },
+                          child: Container(
+                            width: 44,
+                            height: 44,
+                            decoration: BoxDecoration(
+                              gradient: const LinearGradient(
+                                colors: [Color(0xFFFFD86B), Color(0xFFD4A017)],
+                                begin: Alignment.topLeft,
+                                end: Alignment.bottomRight,
+                              ),
+                              borderRadius: BorderRadius.circular(12),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: gold.withOpacity(0.3),
+                                  blurRadius: 8,
+                                  offset: const Offset(0, 3),
+                                ),
+                              ],
+                            ),
+                            child: const Icon(
+                              Icons.location_on_rounded,
+                              color: Colors.black,
+                              size: 20,
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  ],
                 ),
                 const SizedBox(height: 18),
 
@@ -1792,51 +1943,6 @@ class _EditBottomSheetState extends State<_EditBottomSheet> {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Move Up/Down Button
-// ─────────────────────────────────────────────────────────────────────────────
-class _MoveButton extends StatelessWidget {
-  final IconData icon;
-  final VoidCallback? onTap;
-  final bool isDark;
-
-  const _MoveButton({
-    required this.icon,
-    required this.onTap,
-    required this.isDark,
-  });
-
-  static const gold = Color(0xFFD4A017);
-
-  @override
-  Widget build(BuildContext context) {
-    final enabled = onTap != null;
-    return GestureDetector(
-      onTap: onTap,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 150),
-        width: 32,
-        height: 32,
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          color: enabled
-              ? gold.withOpacity(0.15)
-              : (isDark
-                  ? Colors.white.withOpacity(0.04)
-                  : Colors.black.withOpacity(0.04)),
-          border: Border.all(
-            color: enabled ? gold.withOpacity(0.4) : Colors.transparent,
-          ),
-        ),
-        child: Icon(
-          icon,
-          size: 18,
-          color: enabled ? gold : (isDark ? Colors.white24 : Colors.black26),
-        ),
-      ),
-    );
-  }
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // TAB 2 – LECTURES (YouTube Videos)

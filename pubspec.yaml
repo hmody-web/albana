@@ -7,6 +7,7 @@ environment:
   sdk: '>=3.0.0 <4.0.0'
 
 dependencies:
+  shared_preferences: ^2.3.0
   open_filex: ^4.7.0
   file_picker: ^6.1.1
   image_picker: ^1.1.2
