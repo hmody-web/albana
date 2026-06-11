@@ -20,7 +20,7 @@ class PremiumAppBar extends StatelessWidget {
       backgroundColor: Colors.transparent,
       elevation: 0,
       pinned: true,
-      toolbarHeight: 40,
+      toolbarHeight: 58,
       automaticallyImplyLeading: false,
       flexibleSpace: ClipRect(
         child: BackdropFilter(
