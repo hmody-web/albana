@@ -5,7 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
-import 'package:webview_flutter/webview_flutter.dart';
+import 'package:flutter_pdfview/flutter_pdfview.dart';
 import 'package:file_picker/file_picker.dart';
 import '../widgets/shared_widgets.dart';
 import 'package:http/http.dart' as http;
@@ -1203,10 +1203,6 @@ class _DownloadButton extends StatelessWidget {
     );
   }
 }
-
-// ══════════════════════════════════════════════════════════════════════════════
-//  PDF BROWSER PAGE
-// ══════════════════════════════════════════════════════════════════════════════
 class _PdfBrowserPage extends StatefulWidget {
   final PdfFileItem file;
   final bool isDark;
@@ -1216,11 +1212,15 @@ class _PdfBrowserPage extends StatefulWidget {
   @override
   State<_PdfBrowserPage> createState() => _PdfBrowserPageState();
 }
-
+// ══════════════════════════════════════════════════════════════════════════════
+//  PDF BROWSER PAGE
+// ══════════════════════════════════════════════════════════════════════════════
 class _PdfBrowserPageState extends State<_PdfBrowserPage> {
-  late final WebViewController _controller;
-  int _progress = 0;
+  String? _localPath;
+  bool _isLoading = true;
   bool _hasError = false;
+  int _totalPages = 0;
+  int _currentPage = 0;
 
   @override
   void initState() {
@@ -1228,57 +1228,33 @@ class _PdfBrowserPageState extends State<_PdfBrowserPage> {
     _loadPdf();
   }
 
-  void _loadPdf() {
-    final bgColor = widget.isDark ? '#050505' : '#F8F6F0';
-    final pdfUrl = widget.file.fileUrl;
+  Future<void> _loadPdf() async {
+    setState(() { _isLoading = true; _hasError = false; });
+    try {
+      final dir = await getApplicationDocumentsDirectory();
+      final filePath = '${dir.path}/${widget.file.safeFileName}';
+      final localFile = File(filePath);
 
-    final html = '''
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes">
-  <title>${widget.file.title}</title>
-  <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    html, body { width: 100%; height: 100%; background: $bgColor; overflow: hidden; }
-    iframe { width: 100%; height: 100%; border: none; display: block; }
-  </style>
-</head>
-<body>
-  <iframe
-    src="https://mozilla.github.io/pdf.js/web/viewer.html?file=${Uri.encodeComponent(pdfUrl)}"
-    allowfullscreen webkitallowfullscreen>
-  </iframe>
-</body>
-</html>
-''';
+      if (!await localFile.exists()) {
+        // تحميل من الإنترنت إذا لم يكن موجوداً محلياً
+        final request = await HttpClient().getUrl(Uri.parse(widget.file.fileUrl));
+        final response = await request.close();
+        if (response.statusCode != 200) throw Exception('فشل التحميل');
+        final output = localFile.openWrite();
+        await for (final chunk in response) { output.add(chunk); }
+        await output.flush();
+        await output.close();
+      }
 
-    _controller = WebViewController()
-      ..setJavaScriptMode(JavaScriptMode.unrestricted)
-      ..setBackgroundColor(
-          widget.isDark ? const Color(0xFF050505) : const Color(0xFFF8F6F0))
-      ..setNavigationDelegate(
-        NavigationDelegate(
-          onProgress: (value) => setState(() => _progress = value),
-          onPageStarted: (_) => setState(() => _hasError = false),
-          onWebResourceError: (error) {
-            if (error.isForMainFrame ?? false) {
-              setState(() => _hasError = true);
-            }
-          },
-        ),
-      )
-      ..loadHtmlString(html, baseUrl: 'https://majidalbana.com');
+      if (!mounted) return;
+      setState(() { _localPath = filePath; _isLoading = false; });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() { _isLoading = false; _hasError = true; });
+    }
   }
 
-  void _retryLoad() {
-    setState(() {
-      _hasError = false;
-      _progress = 0;
-    });
-    _loadPdf();
-  }
+  void _retryLoad() => _loadPdf();
 
   @override
   Widget build(BuildContext context) {
@@ -1367,22 +1343,6 @@ class _PdfBrowserPageState extends State<_PdfBrowserPage> {
                 ),
               ),
               // ── Progress ─────────────────────────────────────────────────
-              if (_progress < 100 && !_hasError) ...[
-                const SizedBox(height: 4),
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 12),
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(4),
-                    child: LinearProgressIndicator(
-                      value: _progress <= 0 ? null : _progress / 100,
-                      color: const Color(0xFFD4A017),
-                      backgroundColor:
-                          const Color(0xFFD4A017).withOpacity(0.12),
-                      minHeight: 3,
-                    ),
-                  ),
-                ),
-              ],
               const SizedBox(height: 8),
               // ── Viewer ────────────────────────────────────────────────────
               Expanded(
@@ -1405,12 +1365,20 @@ class _PdfBrowserPageState extends State<_PdfBrowserPage> {
                       ),
                     ],
                   ),
-                  child: _hasError
-                      ? _ViewerError(
-                          isDark: widget.isDark,
-                          onRetry: _retryLoad,
-                        )
-                      : WebViewWidget(controller: _controller),
+child: _hasError
+    ? _ViewerError(isDark: widget.isDark, onRetry: _retryLoad)
+    : _isLoading
+        ? const Center(child: CircularProgressIndicator(color: Color(0xFFD4A017)))
+        : PDFView(
+            filePath: _localPath!,
+            enableSwipe: true,
+            swipeHorizontal: false,
+            autoSpacing: true,
+            pageFling: true,
+            onRender: (pages) => setState(() => _totalPages = pages ?? 0),
+            onPageChanged: (page, _) => setState(() => _currentPage = page ?? 0),
+            onError: (_) => setState(() => _hasError = true),
+          ),
                 ),
               ),
             ],

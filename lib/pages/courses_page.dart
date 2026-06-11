@@ -1288,12 +1288,17 @@ class _ScheduleTable extends StatelessWidget {
 
   Future<void> _openLocation(String rawUrl) async {
     if (rawUrl.trim().isEmpty) return;
-    var value = rawUrl.trim();
+    var value = rawUrl.trim()
+        .replaceAll('&amp;', '&')
+        .replaceAll('&quot;', '"')
+        .replaceAll('&#039;', "'")
+        .replaceAll('&lt;', '<')
+        .replaceAll('&gt;', '>');
     if (!value.startsWith('http://') && !value.startsWith('https://')) {
       value = 'https://$value';
     }
-    final uri = Uri.parse(value);
-    if (await canLaunchUrl(uri)) {
+    final uri = Uri.tryParse(value);
+    if (uri != null && await canLaunchUrl(uri)) {
       await launchUrl(uri, mode: LaunchMode.externalApplication);
     }
   }
@@ -1487,20 +1492,34 @@ class _ScheduleTable extends StatelessWidget {
             flex: 3,
             child: Row(
               mainAxisAlignment: MainAxisAlignment.center,
-              mainAxisSize: MainAxisSize.min,
+              mainAxisSize: MainAxisSize.max,
               children: [
-                Flexible(
-                  child: Text(
-                    row.location,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                        color: textPrimary,
-                        fontSize: 11.5,
-                        fontWeight: FontWeight.w600),
+                if (row.urlLocation.isNotEmpty)
+                  Flexible(
+                    child: Text(
+                      row.location,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                          color: textPrimary,
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w600),
+                    ),
+                  )
+                else
+                  Expanded(
+                    child: Text(
+                      row.location,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                          color: textPrimary,
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w600),
+                    ),
                   ),
-                ),
                 if (row.urlLocation.isNotEmpty) ...[
                   const SizedBox(width: 5),
                   GestureDetector(
