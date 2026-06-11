@@ -233,9 +233,9 @@ class _CoursesPageState extends State<CoursesPage>
       if (cells.length < 4) continue;
 
       final locationHtml = cells[3];
-      final urlMatch =
-          RegExp(r'''href=[\"\']([\"\'])+[\"\'']''', caseSensitive: false)
-              .firstMatch(locationHtml);
+final urlMatch =
+    RegExp(r'''href=["']([^"']+)["']''', caseSensitive: false)
+        .firstMatch(locationHtml);
 
       final idMatch =
           RegExp(r'''data-id=[\"\''](\d+)[\"\'']''', caseSensitive: false)

@@ -10,7 +10,15 @@ import 'package:flutter/services.dart';
 class PremiumAppBar extends StatelessWidget {
   final String title;
   final bool isDark;
-  const PremiumAppBar({super.key, required this.title, required this.isDark});
+  final VoidCallback? onSearchTap;
+  final bool searchActive;
+  const PremiumAppBar({
+    super.key,
+    required this.title,
+    required this.isDark,
+    this.onSearchTap,
+    this.searchActive = false,
+  });
 
   static const gold = Color(0xFFD4A017);
 
@@ -80,7 +88,26 @@ class PremiumAppBar extends StatelessWidget {
                 letterSpacing: 0.3,
               ),
             ),
-            const SizedBox(width: 40),
+            if (onSearchTap != null)
+              GestureDetector(
+                onTap: onSearchTap,
+                child: Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    color: gold.withOpacity(0.12),
+                    borderRadius: BorderRadius.circular(13),
+                    border: Border.all(color: gold.withOpacity(0.35)),
+                  ),
+                  child: Icon(
+                    searchActive ? Icons.close_rounded : Icons.search_rounded,
+                    color: gold,
+                    size: 22,
+                  ),
+                ),
+              )
+            else
+              const SizedBox(width: 40),
           ],
         ),
       ),

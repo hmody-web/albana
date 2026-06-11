@@ -323,37 +323,11 @@ bool _isSupervisor() {
         slivers: [
           // ── App Bar ──────────────────────────────────────────────────────
           PremiumAppBar(
-  title: 'الملفات',
-  isDark: widget.isDark,
-),
-
-SliverToBoxAdapter(
-  child: Padding(
-    padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-    child: Align(
-      alignment: Alignment.centerLeft,
-      child: GestureDetector(
-        onTap: _searchActive ? _closeSearch : _openSearch,
-        child: Container(
-          width: 42,
-          height: 42,
-          decoration: BoxDecoration(
-            color: const Color(0xFFD4A017).withOpacity(0.12),
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(
-              color: const Color(0xFFD4A017).withOpacity(0.35),
-            ),
+            title: 'الملفات',
+            isDark: widget.isDark,
+            onSearchTap: _searchActive ? _closeSearch : _openSearch,
+            searchActive: _searchActive,
           ),
-          child: Icon(
-            _searchActive ? Icons.close_rounded : Icons.search_rounded,
-            color: const Color(0xFFD4A017),
-            size: 22,
-          ),
-        ),
-      ),
-    ),
-  ),
-),
 
           // ── Search bar (animated) ─────────────────────────────────────
           SliverToBoxAdapter(
@@ -445,7 +419,7 @@ SliverToBoxAdapter(
     final textColor = widget.isDark ? Colors.white : const Color(0xFF17120A);
 
     return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 0, 12, 10),
+      padding: const EdgeInsets.fromLTRB(12, 12, 12, 10),
       child: Container(
         height: 52,
         decoration: BoxDecoration(
