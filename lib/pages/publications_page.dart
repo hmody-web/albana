@@ -708,13 +708,15 @@ class _Comment {
   String get timeAgo {
     if (createdAt.isEmpty) return '';
     try {
-      final dt = DateTime.parse(createdAt);
+      final dt = DateTime.parse(createdAt).toLocal();
       final diff = DateTime.now().difference(dt);
-      if (diff.inMinutes < 1) return 'الآن';
-      if (diff.inMinutes < 60) return 'منذ ${diff.inMinutes} د';
-      if (diff.inHours < 24) return 'منذ ${diff.inHours} س';
-      if (diff.inDays < 7) return 'منذ ${diff.inDays} يوم';
-      return createdAt.split(' ').first;
+      if (diff.inSeconds < 60) return '${diff.inSeconds}s';
+      if (diff.inMinutes < 60) return '${diff.inMinutes}m';
+      if (diff.inHours < 24) return '${diff.inHours}h';
+      if (diff.inDays < 7) return '${diff.inDays}d';
+      if (diff.inDays < 30) return '${(diff.inDays / 7).floor()}w';
+      if (diff.inDays < 365) return '${(diff.inDays / 30).floor()}mo';
+      return '${(diff.inDays / 365).floor()}y';
     } catch (_) {
       return createdAt.split(' ').first;
     }
@@ -772,22 +774,8 @@ class _PostCardState extends State<_PostCard> {
   }
 
   Future<void> _loadCommentCount() async {
-    try {
-      final res = await http.get(
-        Uri.parse('$_commentsApi?post_id=${widget.post.id}&count_only=1'),
-      ).timeout(const Duration(seconds: 10));
-      if (!mounted) return;
-      if (res.statusCode == 200) {
-        final data = jsonDecode(utf8.decode(res.bodyBytes));
-        final count = int.tryParse('${data['count'] ?? 0}') ?? 0;
-        if (count > 0 && _comments.isEmpty) {
-          setState(() => _comments = List.generate(count, (i) => _Comment(
-            id: i, postId: widget.post.id,
-            userName: '', userAvatar: '', text: '', createdAt: '',
-          )));
-        }
-      }
-    } catch (_) {}
+    // نحمّل التعليقات الكاملة مباشرة بدل count_only حتى تكون جاهزة فوراً
+    await _loadComments();
   }
 
   Future<void> _loadComments() async {
@@ -863,31 +851,6 @@ class _PostCardState extends State<_PostCard> {
           _commentCtrl.clear();
           _commentsLoaded = false;
           await _loadComments();
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-              content: const Text('تم إرسال التعليق بنجاح ✓',
-                  textDirection: TextDirection.rtl,
-                  style: TextStyle(fontWeight: FontWeight.w600)),
-              backgroundColor: const Color(0xFF2E7D32),
-              behavior: SnackBarBehavior.floating,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-              margin: const EdgeInsets.all(14),
-            ));
-          }
-        } else {
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-              content: Text(
-                'فشل إرسال التعليق: ${data['error'] ?? 'خطأ غير معروف'}',
-                textDirection: TextDirection.rtl,
-                style: const TextStyle(fontWeight: FontWeight.w600),
-              ),
-              backgroundColor: Colors.red.shade700,
-              behavior: SnackBarBehavior.floating,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-              margin: const EdgeInsets.all(14),
-            ));
-          }
         }
       }
     } catch (e, stack) {
@@ -909,8 +872,53 @@ class _PostCardState extends State<_PostCard> {
     }
   }
 
+Future<void> _editComment(int commentId, String newText) async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+    try {
+      final res = await http.post(
+        Uri.parse('https://majidalbana.com/admin/comments/edit_comment.php'),
+        body: {
+          'comment_id': '$commentId',
+          'comment_text': newText,
+          'user_email': user.email ?? '',
+        },
+      ).timeout(const Duration(seconds: 15));
+      if (!mounted) return;
+      if (res.statusCode == 200) {
+        final data = jsonDecode(utf8.decode(res.bodyBytes));
+        if (data['success'] == true) {
+          _commentsLoaded = false;
+          await _loadComments();
+        }
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _deleteComment(int commentId) async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+    try {
+      final res = await http.post(
+        Uri.parse('https://majidalbana.com/admin/comments/delete_comment.php'),
+        body: {
+          'comment_id': '$commentId',
+          'user_email': user.email ?? '',
+        },
+      ).timeout(const Duration(seconds: 15));
+      if (!mounted) return;
+      if (res.statusCode == 200) {
+        final data = jsonDecode(utf8.decode(res.bodyBytes));
+        if (data['success'] == true) {
+          _commentsLoaded = false;
+          await _loadComments();
+        }
+      }
+    } catch (_) {}
+  }
+
   void _openPostDetail() {
-    Navigator.of(context).push(
+        Navigator.of(context).push(
       PageRouteBuilder(
         pageBuilder: (_, animation, __) => FadeTransition(
           opacity: animation,
@@ -951,7 +959,42 @@ class _PostCardState extends State<_PostCard> {
       ),
     );
   }
-
+void _openCommentsSheet() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => StatefulBuilder(
+        builder: (context, setSheetState) => _CommentsBottomSheet(
+          post: widget.post,
+          isDark: widget.isDark,
+          comments: _comments,
+          loadingComments: _loadingComments,
+          commentsLoaded: _commentsLoaded,
+          commentCtrl: _commentCtrl,
+          sendingComment: _sendingComment,
+          onSend: () async {
+            await _sendComment();
+            setSheetState(() {});
+          },
+          onLoginTap: _showLoginSheet,
+          onReload: () async {
+            await _loadComments();
+            setSheetState(() {});
+          },
+          onEdit: (id, newText) async {
+            await _editComment(id, newText);
+            setSheetState(() {});
+          },
+          onDelete: (id) async {
+            await _deleteComment(id);
+            setSheetState(() {});
+          },
+        ),
+      ),
+    );
+  }
   @override
   Widget build(BuildContext context) {
     final p = widget.post;
@@ -966,7 +1009,9 @@ class _PostCardState extends State<_PostCard> {
     final currentUser = FirebaseAuth.instance.currentUser;
     final commentCount = _comments.length;
 
-    return Container(
+    return GestureDetector(
+      onTap: _openPostDetail,
+      child: Container(
       margin: const EdgeInsets.only(bottom: 18),
       decoration: BoxDecoration(
         color: cardBg,
@@ -1145,6 +1190,7 @@ class _PostCardState extends State<_PostCard> {
                   // Like button
                   GestureDetector(
                     onTap: () => setState(() => _liked = !_liked),
+                    behavior: HitTestBehavior.opaque,
                     child: AnimatedContainer(
                       duration: const Duration(milliseconds: 200),
                       padding: const EdgeInsets.symmetric(
@@ -1180,35 +1226,38 @@ class _PostCardState extends State<_PostCard> {
 
                   const Spacer(),
 
-                  // Comments count badge — taps open detail page
-                  if (commentCount > 0)
-                    GestureDetector(
-                      onTap: _openPostDetail,
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 12, vertical: 7),
-                        decoration: BoxDecoration(
-                          color: gold.withOpacity(0.10),
-                          borderRadius: BorderRadius.circular(20),
-                          border:
-                              Border.all(color: gold.withOpacity(0.35)),
-                        ),
-                        child: Row(
-                          children: [
-                            Icon(Icons.chat_bubble_outline_rounded,
-                                size: 15, color: gold),
-                            const SizedBox(width: 6),
-                            Text(
-                              '$commentCount ${commentCount == 1 ? 'تعليق' : 'تعليقات'}',
-                              style: TextStyle(
-                                  color: gold,
-                                  fontSize: 12.5,
-                                  fontWeight: FontWeight.w700),
-                            ),
-                          ],
-                        ),
+                  // Comments count badge — opens bottom sheet
+                  GestureDetector(
+                    onTap: () {
+                      _openCommentsSheet();
+                    },
+                    behavior: HitTestBehavior.opaque,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 7),
+                      decoration: BoxDecoration(
+                        color: gold.withOpacity(0.10),
+                        borderRadius: BorderRadius.circular(20),
+                        border: Border.all(color: gold.withOpacity(0.35)),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(Icons.chat_bubble_outline_rounded,
+                              size: 15, color: gold),
+                          const SizedBox(width: 6),
+                          Text(
+                            commentCount > 0
+                                ? '$commentCount ${commentCount == 1 ? 'تعليق' : 'تعليقات'}'
+                                : 'تعليق',
+                            style: TextStyle(
+                                color: gold,
+                                fontSize: 12.5,
+                                fontWeight: FontWeight.w700),
+                          ),
+                        ],
                       ),
                     ),
+                  ),
                 ],
               ),
             ),
@@ -1233,6 +1282,7 @@ class _PostCardState extends State<_PostCard> {
             ),
           ],
         ),
+      ),
       ),
     );
   }
@@ -1266,18 +1316,22 @@ class _CommentInputBox extends StatelessWidget {
     final hintColor = isDark ? Colors.white38 : Colors.black38;
 
     return Row(
+      textDirection: TextDirection.rtl,
       crossAxisAlignment: CrossAxisAlignment.end,
       children: [
-        // User Avatar
-        CircleAvatar(
-          radius: 18,
-          backgroundImage: user.photoURL != null
-              ? NetworkImage(user.photoURL!)
-              : null,
-          backgroundColor: gold.withOpacity(0.2),
-          child: user.photoURL == null
-              ? Icon(Icons.person_rounded, color: gold, size: 18)
-              : null,
+// User Avatar (يمين)
+        Padding(
+          padding: const EdgeInsets.only(bottom: 2), // ← زد أو نقص هذا الرقم
+          child: CircleAvatar(
+            radius: 21,
+            backgroundImage: user.photoURL != null
+                ? NetworkImage(user.photoURL!)
+                : null,
+            backgroundColor: gold.withOpacity(0.2),
+            child: user.photoURL == null
+                ? Icon(Icons.person_rounded, color: gold, size: 18)
+                : null,
+          ),
         ),
         const SizedBox(width: 8),
 
@@ -1293,6 +1347,31 @@ class _CommentInputBox extends StatelessWidget {
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
+// Send button (يمين البوكس)
+                Padding(
+                  padding: const EdgeInsets.only(left: 9, right: 6, bottom: 7),
+                  child: GestureDetector(
+                    onTap: sending ? null : onSend,
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 200),
+                      width: 34,
+                      height: 34,
+                      decoration: BoxDecoration(
+                        color: sending ? gold.withOpacity(0.4) : gold,
+                        shape: BoxShape.circle,
+                      ),
+                      child: sending
+                          ? const Padding(
+                              padding: EdgeInsets.all(8),
+                              child: CircularProgressIndicator(
+                                  color: Colors.white, strokeWidth: 2),
+                            )
+                          : const Icon(Icons.send_rounded,
+                              color: Colors.white, size: 16),
+                    ),
+                  ),
+                ),
+                // Text field
                 Expanded(
                   child: TextField(
                     controller: controller,
@@ -1315,32 +1394,6 @@ class _CommentInputBox extends StatelessWidget {
                       contentPadding: const EdgeInsets.symmetric(
                           horizontal: 14, vertical: 10),
                       border: InputBorder.none,
-                    ),
-                  ),
-                ),
-                // Send button
-                Padding(
-                  padding: const EdgeInsets.only(left: 6, right: 4, bottom: 5),
-                  child: GestureDetector(
-                    onTap: sending ? null : onSend,
-                    child: AnimatedContainer(
-                      duration: const Duration(milliseconds: 200),
-                      width: 34,
-                      height: 34,
-                      decoration: BoxDecoration(
-                        color: sending
-                            ? gold.withOpacity(0.4)
-                            : gold,
-                        shape: BoxShape.circle,
-                      ),
-                      child: sending
-                          ? const Padding(
-                              padding: EdgeInsets.all(8),
-                              child: CircularProgressIndicator(
-                                  color: Colors.white, strokeWidth: 2),
-                            )
-                          : const Icon(Icons.send_rounded,
-                              color: Colors.white, size: 16),
                     ),
                   ),
                 ),
@@ -1419,7 +1472,443 @@ class _LockedCommentBox extends StatelessWidget {
 // ─────────────────────────────────────────────────────────────────────────────
 // Login Bottom Sheet
 // ─────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// Comments Bottom Sheet
+// ─────────────────────────────────────────────────────────────────────────────
 
+class _CommentsBottomSheet extends StatefulWidget {
+  final _PublicationPost post;
+  final bool isDark;
+  final List<_Comment> comments;
+  final bool loadingComments;
+  final bool commentsLoaded;
+  final TextEditingController commentCtrl;
+  final bool sendingComment;
+  final VoidCallback onSend;
+  final VoidCallback onLoginTap;
+  final Future<void> Function() onReload;
+  final Future<void> Function(int, String) onEdit;
+  final Future<void> Function(int) onDelete;
+
+  const _CommentsBottomSheet({
+    required this.onReload,
+    required this.post,
+    required this.isDark,
+    required this.comments,
+    required this.loadingComments,
+    required this.commentsLoaded,
+    required this.commentCtrl,
+    required this.sendingComment,
+    required this.onSend,
+    required this.onLoginTap,
+    required this.onEdit,
+    required this.onDelete,
+  });
+
+  @override
+  State<_CommentsBottomSheet> createState() => _CommentsBottomSheetState();
+}
+
+class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
+  static const gold = Color(0xFFD4A017);
+@override
+  void initState() {
+    super.initState();
+    if (!widget.commentsLoaded) widget.onReload();
+  }
+  @override
+  Widget build(BuildContext context) {
+    final isDark = widget.isDark;
+    final sheetBg = isDark ? const Color(0xFF181818) : Colors.white;
+    final textPrimary = isDark ? Colors.white : const Color(0xFF1A1000);
+    final textSub = isDark ? Colors.white60 : Colors.black54;
+    final dividerColor = isDark
+        ? Colors.white.withOpacity(0.08)
+        : Colors.black.withOpacity(0.07);
+    final currentUser = FirebaseAuth.instance.currentUser;
+    final handleColor = isDark ? Colors.white24 : Colors.black12;
+
+    return DraggableScrollableSheet(
+      initialChildSize: 0.55,
+      minChildSize: 0.35,
+      maxChildSize: 1.0,
+      expand: false,
+      builder: (context, scrollController) {
+        return Container(
+          width: double.infinity,
+          decoration: BoxDecoration(
+            color: sheetBg,
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.18),
+                blurRadius: 24,
+                offset: const Offset(0, -4),
+              ),
+            ],
+          ),
+          child: Column(
+            children: [
+              // Handle bar
+              Padding(
+                padding: const EdgeInsets.only(top: 12, bottom: 4),
+                child: Container(
+                  width: 44,
+                  height: 4.5,
+                  decoration: BoxDecoration(
+                    color: handleColor,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                ),
+              ),
+
+              // Header
+              Padding(
+                padding: const EdgeInsets.fromLTRB(18, 8, 18, 10),
+                child: Row(
+                  children: [
+                    GestureDetector(
+                      onTap: () => Navigator.pop(context),
+                      child: Icon(Icons.close_rounded,
+                          color: isDark ? Colors.white54 : Colors.black38,
+                          size: 22),
+                    ),
+                    const Spacer(),
+                    Text(
+                      widget.comments.isNotEmpty
+                          ? 'التعليقات (${widget.comments.length})'
+                          : 'التعليقات',
+                      textDirection: TextDirection.rtl,
+                      style: TextStyle(
+                        color: textPrimary,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const Spacer(),
+                    const SizedBox(width: 22),
+                  ],
+                ),
+              ),
+
+              Divider(height: 1, thickness: 0.5, color: dividerColor),
+
+              // Comments list
+              Expanded(
+                child: widget.loadingComments
+                    ? const Center(
+                        child: CircularProgressIndicator(
+                            color: gold, strokeWidth: 2.5))
+                    : widget.comments.isEmpty
+                        ? Center(
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(Icons.chat_bubble_outline_rounded,
+                                    size: 44,
+                                    color: gold.withOpacity(0.4)),
+                                const SizedBox(height: 12),
+                                Text(
+                                  'لا توجد تعليقات بعد\nكن أول من يعلّق!',
+                                  textAlign: TextAlign.center,
+                                  textDirection: TextDirection.rtl,
+                                  style: TextStyle(
+                                      color: textSub,
+                                      fontSize: 14,
+                                      height: 1.7),
+                                ),
+                              ],
+                            ),
+                          )
+                        : ListView.separated(
+                            controller: scrollController,
+                            padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+                            itemCount: widget.comments.length,
+                           separatorBuilder: (_, __) =>
+                                Divider(height: 28, color: isDark ? Color.fromARGB(1, 49, 49, 49).withOpacity(0.05) : Color.fromARGB(6, 190, 190, 190).withOpacity(0.06)),
+                            itemBuilder: (context, i) {
+                              final c = widget.comments[i];
+                              if (c.text.isEmpty) {
+                                return const SizedBox.shrink();
+                              }
+                              return _CommentTile(
+                                comment: c,
+                                isDark: isDark,
+                                onEdit: widget.onEdit,
+                                onDelete: widget.onDelete,
+                              );
+                            },
+                          ),
+              ),
+
+              // Input box
+              Divider(height: 1, thickness: 0.5, color: dividerColor),
+              Padding(
+                padding: EdgeInsets.fromLTRB(
+                    12,
+                    10,
+                    12,
+                    10 + MediaQuery.of(context).viewInsets.bottom),
+                child: currentUser != null
+                    ? _CommentInputBox(
+                        isDark: isDark,
+                        user: currentUser,
+                        controller: widget.commentCtrl,
+                        sending: widget.sendingComment,
+                        onSend: () {
+                          widget.onSend();
+                          setState(() {});
+                        },
+                      )
+                    : _LockedCommentBox(
+                        isDark: isDark,
+                        onLoginTap: widget.onLoginTap,
+                      ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Comment Tile (used inside sheet)
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _CommentTile extends StatefulWidget {
+  final _Comment comment;
+  final bool isDark;
+  final Future<void> Function(int, String)? onEdit;
+  final Future<void> Function(int)? onDelete;
+
+  const _CommentTile({
+    required this.comment,
+    required this.isDark,
+    this.onEdit,
+    this.onDelete,
+  });
+
+  @override
+  State<_CommentTile> createState() => _CommentTileState();
+}
+
+class _CommentTileState extends State<_CommentTile> {
+  static const gold = Color(0xFFD4A017);
+  bool _editing = false;
+  late TextEditingController _editCtrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _editCtrl = TextEditingController(text: widget.comment.text);
+  }
+
+  @override
+  void dispose() {
+    _editCtrl.dispose();
+    super.dispose();
+  }
+
+  bool get _isOwner {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return false;
+    return user.displayName == widget.comment.userName ||
+        user.email == widget.comment.userName;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = widget.isDark;
+    final textPrimary = isDark ? Colors.white : const Color(0xFF1A1000);
+    final textSub = isDark ? Colors.white54 : Colors.black45;
+    final fieldBg = isDark ? const Color(0xFF2A2A2A) : const Color(0xFFF0EBE0);
+
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      textDirection: TextDirection.rtl,
+      children: [
+        // Avatar
+        CircleAvatar(
+          radius: 18,
+          backgroundColor: gold.withOpacity(0.18),
+          backgroundImage: widget.comment.userAvatar.isNotEmpty
+              ? NetworkImage(widget.comment.userAvatar)
+              : null,
+          child: widget.comment.userAvatar.isEmpty
+              ? Icon(Icons.person_rounded, color: gold, size: 18)
+              : null,
+        ),
+        const SizedBox(width: 10),
+
+        // Name + time + comment text + actions
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              // Name + time
+              Row(
+                textDirection: TextDirection.rtl,
+                children: [
+                  Text(
+                    widget.comment.userName,
+                    textDirection: TextDirection.rtl,
+                    style: TextStyle(
+                      color: isDark
+                          ? const Color.fromARGB(253, 177, 171, 155)
+                          : const Color(0xFF8B5E00),
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  if (widget.comment.timeAgo.isNotEmpty) ...[
+                    const SizedBox(width: 6),
+                    Text(
+                      widget.comment.timeAgo,
+                      style: TextStyle(color: textSub, fontSize: 11),
+                    ),
+                  ],
+                ],
+              ),
+              const SizedBox(height: 4),
+
+              // Comment text أو حقل التعديل
+              _editing
+                  ? Container(
+                      decoration: BoxDecoration(
+                        color: fieldBg,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: gold.withOpacity(0.3)),
+                      ),
+                      child: TextField(
+                        controller: _editCtrl,
+                        textDirection: TextDirection.rtl,
+                        textAlign: TextAlign.right,
+                        maxLines: 4,
+                        minLines: 1,
+                        style: TextStyle(color: textPrimary, fontSize: 13.5),
+                        decoration: const InputDecoration(
+                          contentPadding: EdgeInsets.symmetric(
+                              horizontal: 12, vertical: 8),
+                          border: InputBorder.none,
+                        ),
+                      ),
+                    )
+                  : Text(
+                      widget.comment.text,
+                      textDirection: TextDirection.rtl,
+                      style: TextStyle(
+                        color: textPrimary,
+                        fontSize: 13.5,
+                        height: 1.6,
+                      ),
+                    ),
+
+              // أزرار التعديل والحذف (فقط لصاحب التعليق)
+              if (_isOwner) ...[
+                const SizedBox(height: 6),
+                Row(
+                  textDirection: TextDirection.rtl,
+                  children: [
+                    if (_editing) ...[
+                      GestureDetector(
+                        onTap: () async {
+                          final newText = _editCtrl.text.trim();
+                          if (newText.isEmpty) return;
+                          await widget.onEdit
+                              ?.call(widget.comment.id, newText);
+                          if (mounted) setState(() => _editing = false);
+                        },
+                        child: Text(
+                          'حفظ',
+                          style: TextStyle(
+                              color: gold,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      GestureDetector(
+                        onTap: () {
+                          _editCtrl.text = widget.comment.text;
+                          setState(() => _editing = false);
+                        },
+                        child: Text(
+                          'إلغاء',
+                          style: TextStyle(
+                              color: textSub,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600),
+                        ),
+                      ),
+                    ] else ...[
+                      GestureDetector(
+                        onTap: () => setState(() => _editing = true),
+                        child: Text(
+                          'تعديل',
+                          style: TextStyle(
+                              color: gold,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      GestureDetector(
+                        onTap: () async {
+                          final confirm = await showDialog<bool>(
+                            context: context,
+                            builder: (_) => AlertDialog(
+                              backgroundColor: isDark
+                                  ? const Color(0xFF222222)
+                                  : Colors.white,
+                              title: Text('حذف التعليق',
+                                  textDirection: TextDirection.rtl,
+                                  style: TextStyle(color: textPrimary)),
+                              content: Text('هل أنت متأكد من حذف التعليق؟',
+                                  textDirection: TextDirection.rtl,
+                                  style: TextStyle(color: textSub)),
+                              actions: [
+                                TextButton(
+                                  onPressed: () =>
+                                      Navigator.pop(context, false),
+                                  child: Text('إلغاء',
+                                      style: TextStyle(color: textSub)),
+                                ),
+                                TextButton(
+                                  onPressed: () =>
+                                      Navigator.pop(context, true),
+                                  child: const Text('حذف',
+                                      style:
+                                          TextStyle(color: Colors.red)),
+                                ),
+                              ],
+                            ),
+                          );
+                          if (confirm == true) {
+                            await widget.onDelete
+                                ?.call(widget.comment.id);
+                          }
+                        },
+                        child: const Text(
+                          'حذف',
+                          style: TextStyle(
+                              color: Colors.red,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ],
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
 class _LoginSheet extends StatefulWidget {
   final bool isDark;
   final VoidCallback onLoggedIn;
@@ -1631,9 +2120,14 @@ class _PostDetailPageState extends State<_PostDetailPage> {
       'https://majidalbana.com/admin/comments/load_comments.php';
   static const String _addCommentApi =
       'https://majidalbana.com/admin/comments/add_comment.php';
+  static const String _editCommentApi =
+      'https://majidalbana.com/admin/comments/edit_comment.php';
+  static const String _deleteCommentApi =
+      'https://majidalbana.com/admin/comments/delete_comment.php';
 
   List<_Comment> _comments = [];
   bool _loadingComments = true;
+  bool _commentsLoaded = false;
   bool _sendingComment = false;
   final _commentCtrl = TextEditingController();
   final _scrollCtrl = ScrollController();
@@ -1741,7 +2235,48 @@ if (res.statusCode == 200) {
       if (mounted) setState(() => _sendingComment = false);
     }
   }
+Future<void> _editComment(int commentId, String newText) async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+    try {
+      final res = await http.post(
+        Uri.parse(_editCommentApi),
+        body: {
+          'comment_id': '$commentId',
+          'comment_text': newText,
+          'user_email': user.email ?? '',
+        },
+      ).timeout(const Duration(seconds: 15));
+      if (!mounted) return;
+      if (res.statusCode == 200) {
+        final data = jsonDecode(utf8.decode(res.bodyBytes));
+        if (data['success'] == true) {
+          await _loadComments();
+        }
+      }
+    } catch (_) {}
+  }
 
+  Future<void> _deleteComment(int commentId) async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+    try {
+      final res = await http.post(
+        Uri.parse(_deleteCommentApi),
+        body: {
+          'comment_id': '$commentId',
+          'user_email': user.email ?? '',
+        },
+      ).timeout(const Duration(seconds: 15));
+      if (!mounted) return;
+      if (res.statusCode == 200) {
+        final data = jsonDecode(utf8.decode(res.bodyBytes));
+        if (data['success'] == true) {
+          await _loadComments();
+        }
+      }
+    } catch (_) {}
+  }
   void _showLoginSheet() {
     showModalBottomSheet(
       context: context,
@@ -1942,6 +2477,8 @@ if (res.statusCode == 200) {
                     .map((c) => _CommentBubble(
                           comment: c,
                           isDark: isDark,
+                          onEdit: _editComment,
+                          onDelete: _deleteComment,
                         )),
               ],
             ),
@@ -1986,19 +2523,54 @@ if (res.statusCode == 200) {
 // Comment Bubble
 // ─────────────────────────────────────────────────────────────────────────────
 
-class _CommentBubble extends StatelessWidget {
+class _CommentBubble extends StatefulWidget {
   final _Comment comment;
   final bool isDark;
+  final Future<void> Function(int, String)? onEdit;
+  final Future<void> Function(int)? onDelete;
 
-  const _CommentBubble({required this.comment, required this.isDark});
+  const _CommentBubble({
+    required this.comment,
+    required this.isDark,
+    this.onEdit,
+    this.onDelete,
+  });
 
+  @override
+  State<_CommentBubble> createState() => _CommentBubbleState();
+}
+
+class _CommentBubbleState extends State<_CommentBubble> {
   static const gold = Color(0xFFD4A017);
+  bool _editing = false;
+  late TextEditingController _editCtrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _editCtrl = TextEditingController(text: widget.comment.text);
+  }
+
+  @override
+  void dispose() {
+    _editCtrl.dispose();
+    super.dispose();
+  }
+
+  bool get _isOwner {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return false;
+    return user.displayName == widget.comment.userName ||
+        user.email == widget.comment.userName;
+  }
 
   @override
   Widget build(BuildContext context) {
+    final isDark = widget.isDark;
     final bubbleBg = isDark ? const Color(0xFF222222) : const Color(0xFFFAF6EF);
     final textPrimary = isDark ? Colors.white : const Color(0xFF1A1000);
     final textSub = isDark ? Colors.white54 : Colors.black45;
+    final fieldBg = isDark ? const Color(0xFF2A2A2A) : const Color(0xFFF0EBE0);
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
@@ -2008,14 +2580,14 @@ class _CommentBubble extends StatelessWidget {
           // User Avatar
           CircleAvatar(
             radius: 19,
-            backgroundImage: comment.userAvatar.isNotEmpty
-                ? NetworkImage(comment.userAvatar)
+            backgroundImage: widget.comment.userAvatar.isNotEmpty
+                ? NetworkImage(widget.comment.userAvatar)
                 : null,
             backgroundColor: gold.withOpacity(0.2),
-            child: comment.userAvatar.isEmpty
+            child: widget.comment.userAvatar.isEmpty
                 ? Text(
-                    comment.userName.isNotEmpty
-                        ? comment.userName[0].toUpperCase()
+                    widget.comment.userName.isNotEmpty
+                        ? widget.comment.userName[0].toUpperCase()
                         : '?',
                     style: TextStyle(
                         color: gold,
@@ -2048,7 +2620,7 @@ class _CommentBubble extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        comment.userName,
+                        widget.comment.userName,
                         style: TextStyle(
                           color: gold,
                           fontSize: 12.5,
@@ -2056,23 +2628,93 @@ class _CommentBubble extends StatelessWidget {
                         ),
                       ),
                       const SizedBox(height: 4),
-                      Text(
-                        comment.text,
-                        textDirection: TextDirection.rtl,
-                        style: TextStyle(
-                          color: textPrimary,
-                          fontSize: 13.5,
-                          height: 1.55,
-                        ),
-                      ),
+                      _editing
+                          ? Container(
+                              decoration: BoxDecoration(
+                                color: fieldBg,
+                                borderRadius: BorderRadius.circular(8),
+                                border: Border.all(color: gold.withOpacity(0.3)),
+                              ),
+                              child: TextField(
+                                controller: _editCtrl,
+                                textDirection: TextDirection.rtl,
+                                textAlign: TextAlign.right,
+                                maxLines: 4,
+                                minLines: 1,
+                                style: TextStyle(color: textPrimary, fontSize: 13.5),
+                                decoration: const InputDecoration(
+                                  contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                                  border: InputBorder.none,
+                                ),
+                              ),
+                            )
+                          : Text(
+                              widget.comment.text,
+                              textDirection: TextDirection.rtl,
+                              style: TextStyle(
+                                color: textPrimary,
+                                fontSize: 13.5,
+                                height: 1.55,
+                              ),
+                            ),
                     ],
                   ),
                 ),
+                if (_isOwner) ...[
+                  const SizedBox(height: 4),
+                  Row(
+                    children: [
+                      if (_editing) ...[
+                        GestureDetector(
+                          onTap: () async {
+                            final newText = _editCtrl.text.trim();
+                            if (newText.isEmpty) return;
+                            await widget.onEdit?.call(widget.comment.id, newText);
+                            if (mounted) setState(() => _editing = false);
+                          },
+                          child: Text('حفظ', style: TextStyle(color: gold, fontSize: 12, fontWeight: FontWeight.w700)),
+                        ),
+                        const SizedBox(width: 12),
+                        GestureDetector(
+                          onTap: () {
+                            _editCtrl.text = widget.comment.text;
+                            setState(() => _editing = false);
+                          },
+                          child: Text('إلغاء', style: TextStyle(color: textSub, fontSize: 12)),
+                        ),
+                      ] else ...[
+                        GestureDetector(
+                          onTap: () => setState(() => _editing = true),
+                          child: Text('تعديل', style: TextStyle(color: gold, fontSize: 12, fontWeight: FontWeight.w600)),
+                        ),
+                        const SizedBox(width: 12),
+                        GestureDetector(
+                          onTap: () async {
+                            final confirm = await showDialog<bool>(
+                              context: context,
+                              builder: (_) => AlertDialog(
+                                backgroundColor: isDark ? const Color(0xFF222222) : Colors.white,
+                                title: Text('حذف التعليق', textDirection: TextDirection.rtl, style: TextStyle(color: textPrimary)),
+                                content: Text('هل أنت متأكد من حذف التعليق؟', textDirection: TextDirection.rtl, style: TextStyle(color: textSub)),
+                                actions: [
+                                  TextButton(onPressed: () => Navigator.pop(context, false), child: Text('إلغاء', style: TextStyle(color: textSub))),
+                                  TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('حذف', style: TextStyle(color: Colors.red))),
+                                ],
+                              ),
+                            );
+                            if (confirm == true) await widget.onDelete?.call(widget.comment.id);
+                          },
+                          child: const Text('حذف', style: TextStyle(color: Colors.red, fontSize: 12, fontWeight: FontWeight.w600)),
+                        ),
+                      ],
+                    ],
+                  ),
+                ],
                 const SizedBox(height: 4),
                 Padding(
                   padding: const EdgeInsets.only(right: 4),
                   child: Text(
-                    comment.timeAgo,
+                    widget.comment.timeAgo,
                     style: TextStyle(color: textSub, fontSize: 11),
                   ),
                 ),
@@ -2450,16 +3092,14 @@ class _PostImageState extends State<_PostImage> {
     );
   }
 
-  @override
+@override
   Widget build(BuildContext context) {
     final isDark = widget.isDark;
     final double ratio = (_aspectRatio != null && _aspectRatio! < 0.9)
         ? 1.0
         : (_aspectRatio ?? 16 / 9);
 
-    return GestureDetector(
-      onTap: () => _openFullScreen(context),
-      child: AspectRatio(
+    return AspectRatio(
         aspectRatio: ratio,
         child: Image.network(
           widget.imageUrl,
@@ -2485,7 +3125,6 @@ class _PostImageState extends State<_PostImage> {
                 color: Colors.black38, size: 42),
           ),
         ),
-      ),
     );
   }
 
