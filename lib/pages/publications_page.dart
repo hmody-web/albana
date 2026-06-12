@@ -1,16 +1,16 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-
+import 'package:share_plus/share_plus.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart' show ImagePicker, ImageSource, XFile;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:google_sign_in/google_sign_in.dart';
-
+import 'package:path_provider/path_provider.dart';
 import '../widgets/shared_widgets.dart';
-
+import 'package:flutter_svg/flutter_svg.dart';
 class PublicationsPage extends StatefulWidget {
   final bool isDark;
   const PublicationsPage({super.key, required this.isDark});
@@ -272,7 +272,7 @@ class _AdminPublishBox extends StatefulWidget {
 class _AdminPublishBoxState extends State<_AdminPublishBox> {
   static const gold = Color(0xFFD4A017);
   final _contentCtrl = TextEditingController();
-  File? _pickedImage;
+  List<File> _pickedImages = [];
   bool _publishing = false;
   bool _expanded = false;
 
@@ -282,15 +282,25 @@ class _AdminPublishBoxState extends State<_AdminPublishBox> {
     super.dispose();
   }
 
-  Future<void> _pickImage() async {
+  Future<void> _pickImages() async {
+    final remaining = 4 - _pickedImages.length;
+    if (remaining <= 0) return;
     final picker = ImagePicker();
-    final picked =
-        await picker.pickImage(source: ImageSource.gallery, imageQuality: 85);
-    if (picked != null) setState(() => _pickedImage = File(picked.path));
+    final picked = await picker.pickMultiImage(imageQuality: 85);
+    if (picked.isEmpty) return;
+    setState(() {
+      _pickedImages.addAll(
+        picked.take(remaining).map((x) => File(x.path)),
+      );
+    });
+  }
+
+  void _removeImage(int index) {
+    setState(() => _pickedImages.removeAt(index));
   }
 
   Future<void> _publish() async {
-    if (_pickedImage == null) {
+    if (_pickedImages.isEmpty) {
       _showSnack('الصورة مطلوبة للنشر');
       return;
     }
@@ -299,15 +309,17 @@ class _AdminPublishBoxState extends State<_AdminPublishBox> {
       final request =
           http.MultipartRequest('POST', Uri.parse(widget.addPostApi));
       request.fields['content'] = _contentCtrl.text.trim();
-      request.files.add(
-        await http.MultipartFile.fromPath('image', _pickedImage!.path),
-      );
+      for (final img in _pickedImages) {
+        request.files.add(
+          await http.MultipartFile.fromPath('images[]', img.path),
+        );
+      }
       final streamed =
           await request.send().timeout(const Duration(seconds: 30));
       if (streamed.statusCode == 200 || streamed.statusCode == 302) {
         _contentCtrl.clear();
         setState(() {
-          _pickedImage = null;
+          _pickedImages = [];
           _expanded = false;
           _publishing = false;
         });
@@ -430,103 +442,15 @@ class _AdminPublishBoxState extends State<_AdminPublishBox> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    // Image picker
-                    GestureDetector(
-                      onTap: _pickedImage == null ? _pickImage : null,
-                      child: AnimatedContainer(
-                        duration: const Duration(milliseconds: 200),
-                        height: _pickedImage != null ? 200 : 110,
-                        decoration: BoxDecoration(
-                          color: fieldBg,
-                          borderRadius: BorderRadius.circular(16),
-                          border: Border.all(
-                            color: _pickedImage != null
-                                ? gold.withOpacity(0.5)
-                                : borderColor,
-                            width: 1.5,
-                          ),
-                        ),
-                        child: _pickedImage != null
-                            ? Stack(
-                                fit: StackFit.expand,
-                                children: [
-                                  ClipRRect(
-                                    borderRadius: BorderRadius.circular(15),
-                                    child: Image.file(_pickedImage!,
-                                        fit: BoxFit.cover),
-                                  ),
-                                  Positioned(
-                                    top: 8,
-                                    left: 8,
-                                    child: GestureDetector(
-                                      onTap: _pickImage,
-                                      child: Container(
-                                        padding: const EdgeInsets.symmetric(
-                                            horizontal: 10, vertical: 6),
-                                        decoration: BoxDecoration(
-                                          color:
-                                              Colors.black.withOpacity(0.65),
-                                          borderRadius:
-                                              BorderRadius.circular(20),
-                                        ),
-                                        child: const Row(
-                                          mainAxisSize: MainAxisSize.min,
-                                          children: [
-                                            Icon(Icons.swap_horiz_rounded,
-                                                color: Colors.white,
-                                                size: 14),
-                                            SizedBox(width: 5),
-                                            Text('تغيير الصورة',
-                                                style: TextStyle(
-                                                    color: Colors.white,
-                                                    fontSize: 11.5,
-                                                    fontWeight:
-                                                        FontWeight.w700)),
-                                          ],
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                  Positioned(
-                                    top: 8,
-                                    right: 8,
-                                    child: GestureDetector(
-                                      onTap: () => setState(
-                                          () => _pickedImage = null),
-                                      child: Container(
-                                        width: 28,
-                                        height: 28,
-                                        decoration: BoxDecoration(
-                                          color:
-                                              Colors.red.withOpacity(0.8),
-                                          shape: BoxShape.circle,
-                                        ),
-                                        child: const Icon(
-                                            Icons.close_rounded,
-                                            color: Colors.white,
-                                            size: 16),
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              )
-                            : Column(
-                                mainAxisAlignment:
-                                    MainAxisAlignment.center,
-                                children: [
-                                  Icon(
-                                      Icons.add_photo_alternate_rounded,
-                                      color: gold.withOpacity(0.7),
-                                      size: 32),
-                                  const SizedBox(height: 7),
-                                  Text('اضغط لإرفاق صورة',
-                                      style: TextStyle(
-                                          color: hintColor,
-                                          fontSize: 13,
-                                          fontWeight: FontWeight.w600)),
-                                ],
-                              ),
-                      ),
+                    // Image picker (up to 4 images)
+                    _ImagesPickerGrid(
+                      images: _pickedImages,
+                      onAdd: _pickImages,
+                      onRemove: _removeImage,
+                      fieldBg: fieldBg,
+                      borderColor: borderColor,
+                      hintColor: hintColor,
+                      gold: gold,
                     ),
                     const SizedBox(height: 12),
                     // Content field
@@ -608,26 +532,187 @@ class _AdminPublishBoxState extends State<_AdminPublishBox> {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Images Picker Grid (up to 4 images)
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _ImagesPickerGrid extends StatelessWidget {
+  final List<File> images;
+  final VoidCallback onAdd;
+  final void Function(int) onRemove;
+  final Color fieldBg;
+  final Color borderColor;
+  final Color hintColor;
+  final Color gold;
+
+  const _ImagesPickerGrid({
+    required this.images,
+    required this.onAdd,
+    required this.onRemove,
+    required this.fieldBg,
+    required this.borderColor,
+    required this.hintColor,
+    required this.gold,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    if (images.isEmpty) {
+      return GestureDetector(
+        onTap: onAdd,
+        child: Container(
+          height: 110,
+          decoration: BoxDecoration(
+            color: fieldBg,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: borderColor, width: 1.5),
+          ),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(Icons.add_photo_alternate_rounded,
+                  color: gold.withOpacity(0.7), size: 32),
+              const SizedBox(height: 7),
+              Text('اضغط لإرفاق صور (حتى 4)',
+                  style: TextStyle(
+                      color: hintColor,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600)),
+            ],
+          ),
+        ),
+      );
+    }
+
+    final canAddMore = images.length < 4;
+
+    return GridView.builder(
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      itemCount: images.length + (canAddMore ? 1 : 0),
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 2,
+        crossAxisSpacing: 8,
+        mainAxisSpacing: 8,
+        childAspectRatio: 1.3,
+      ),
+      itemBuilder: (context, index) {
+        if (index == images.length) {
+          // Add-more tile
+          return GestureDetector(
+            onTap: onAdd,
+            child: Container(
+              decoration: BoxDecoration(
+                color: fieldBg,
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: borderColor, width: 1.5),
+              ),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.add_photo_alternate_rounded,
+                      color: gold.withOpacity(0.7), size: 26),
+                  const SizedBox(height: 5),
+                  Text('إضافة صورة',
+                      style: TextStyle(
+                          color: hintColor,
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w600)),
+                ],
+              ),
+            ),
+          );
+        }
+
+        final img = images[index];
+        return Stack(
+          fit: StackFit.expand,
+          children: [
+            ClipRRect(
+              borderRadius: BorderRadius.circular(14),
+              child: Image.file(img, fit: BoxFit.cover),
+            ),
+            Positioned(
+              top: 6,
+              right: 6,
+              child: GestureDetector(
+                onTap: () => onRemove(index),
+                child: Container(
+                  width: 26,
+                  height: 26,
+                  decoration: BoxDecoration(
+                    color: Colors.red.withOpacity(0.85),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(Icons.close_rounded,
+                      color: Colors.white, size: 15),
+                ),
+              ),
+            ),
+            if (index == 0)
+              Positioned(
+                bottom: 6,
+                right: 6,
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: gold.withOpacity(0.9),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: const Text('الرئيسية',
+                      style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 10.5,
+                          fontWeight: FontWeight.w700)),
+                ),
+              ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Model
 // ─────────────────────────────────────────────────────────────────────────────
 
 class _PublicationPost {
   final int id;
   final String image;
+  final List<String> images;
   final String content;
   final String createdAt;
 
   const _PublicationPost({
     required this.id,
     required this.image,
+    this.images = const [],
     required this.content,
     required this.createdAt,
   });
 
   factory _PublicationPost.fromJson(Map<String, dynamic> json) {
+    final image = '${json['image'] ?? ''}';
+    List<String> images = [];
+    final rawImages = json['images'];
+    if (rawImages is String && rawImages.trim().isNotEmpty) {
+      try {
+        final decoded = jsonDecode(rawImages);
+        if (decoded is List) {
+          images = decoded.map((e) => '$e').where((e) => e.isNotEmpty).toList();
+        }
+      } catch (_) {}
+    } else if (rawImages is List) {
+      images = rawImages.map((e) => '$e').where((e) => e.isNotEmpty).toList();
+    }
+    if (images.isEmpty && image.isNotEmpty) {
+      images = [image];
+    }
     return _PublicationPost(
       id: int.tryParse('${json['id'] ?? 0}') ?? 0,
-      image: '${json['image'] ?? ''}',
+      image: image,
+      images: images,
       content: _cleanText('${json['content'] ?? ''}'),
       createdAt: '${json['created_at'] ?? ''}',
     );
@@ -636,14 +721,16 @@ class _PublicationPost {
   Map<String, dynamic> toJson() => {
         'id': id,
         'image': image,
+        'images': images,
         'content': content,
         'created_at': createdAt,
       };
 
-  _PublicationPost copyWith({String? content, String? image}) {
+  _PublicationPost copyWith({String? content, String? image, List<String>? images}) {
     return _PublicationPost(
       id: id,
       image: image ?? this.image,
+      images: images ?? this.images,
       content: content ?? this.content,
       createdAt: createdAt,
     );
@@ -666,12 +753,21 @@ class _PublicationPost {
     return 'https://majidalbana.com/uploads/$image';
   }
 
+  List<String> get imageUrls {
+    final list = images.isNotEmpty ? images : (image.isNotEmpty ? [image] : <String>[]);
+    return list.map((img) {
+      if (img.startsWith('http://') || img.startsWith('https://')) return img;
+      return 'https://majidalbana.com/uploads/$img';
+    }).toList();
+  }
+
   String get formattedDate {
     if (createdAt.isEmpty) return 'منشور حديث';
     final parts = createdAt.split(RegExp(r'[ T]'));
     return parts.first;
   }
 }
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Comment Model
@@ -755,27 +851,142 @@ class _PostCardState extends State<_PostCard> {
 
   bool _expanded = false;
   bool _liked = false;
+  int _likesCount = 0;
+  bool _likeLoading = false;
+  static const String _toggleLikeApi =
+      'https://majidalbana.com/admin/posts/toggle_like.php';
+  static const String _getLikesApi =
+      'https://majidalbana.com/admin/posts/get_likes.php';
   final _commentCtrl = TextEditingController();
   bool _sendingComment = false;
   List<_Comment> _comments = [];
   bool _loadingComments = false;
   bool _commentsLoaded = false;
+  Timer? _commentsPollingTimer;
+  bool _sheetOpen = false;
 
   @override
   void initState() {
     super.initState();
     _loadCommentCount();
+    _loadLikes();
+  }
+
+  Future<void> _loadLikes() async {
+    try {
+      final user = FirebaseAuth.instance.currentUser;
+      final email = user?.email ?? '';
+      final uri = Uri.parse(_getLikesApi).replace(queryParameters: {
+        'post_id': '${widget.post.id}',
+        if (email.isNotEmpty) 'user_email': email,
+      });
+      final res = await http.get(uri).timeout(const Duration(seconds: 15));
+      if (!mounted) return;
+      if (res.statusCode == 200) {
+        final data = jsonDecode(utf8.decode(res.bodyBytes));
+        if (data is Map && data['success'] == true) {
+          setState(() {
+            _likesCount = int.tryParse('${data['likes_count'] ?? 0}') ?? 0;
+            _liked = data['liked'] == true;
+          });
+        }
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _toggleLike() async {
+    if (_likeLoading) return;
+
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null || (user.email ?? '').isEmpty) {
+      _showLoginSheet();
+      return;
+    }
+
+    setState(() {
+      _likeLoading = true;
+      if (_liked) {
+        _liked = false;
+        _likesCount = (_likesCount - 1).clamp(0, 1 << 31);
+      } else {
+        _liked = true;
+        _likesCount += 1;
+      }
+    });
+
+    try {
+      final res = await http.post(
+        Uri.parse(_toggleLikeApi),
+        body: {
+          'post_id': '${widget.post.id}',
+          'user_email': user.email ?? '',
+        },
+      ).timeout(const Duration(seconds: 15));
+
+      if (!mounted) return;
+      if (res.statusCode == 200) {
+        final data = jsonDecode(utf8.decode(res.bodyBytes));
+        if (data is Map && data['success'] == true) {
+          setState(() {
+            _liked = data['liked'] == true;
+            _likesCount =
+                int.tryParse('${data['likes_count'] ?? _likesCount}') ??
+                    _likesCount;
+          });
+        } else {
+          await _loadLikes();
+        }
+      } else {
+        await _loadLikes();
+      }
+    } catch (_) {
+      if (mounted) await _loadLikes();
+    } finally {
+      if (mounted) setState(() => _likeLoading = false);
+    }
   }
 
   @override
   void dispose() {
+    _commentsPollingTimer?.cancel();
     _commentCtrl.dispose();
     super.dispose();
   }
 
   Future<void> _loadCommentCount() async {
-    // نحمّل التعليقات الكاملة مباشرة بدل count_only حتى تكون جاهزة فوراً
     await _loadComments();
+  }
+
+  void _startCommentsPolling() {
+    _commentsPollingTimer?.cancel();
+    _commentsPollingTimer = Timer.periodic(const Duration(seconds: 5), (_) {
+      if (_sheetOpen) _silentReloadComments();
+    });
+  }
+
+  void _stopCommentsPolling() {
+    _commentsPollingTimer?.cancel();
+    _commentsPollingTimer = null;
+  }
+
+  Future<void> _silentReloadComments() async {
+    try {
+      final res = await http.get(
+        Uri.parse('$_commentsApi?post_id=${widget.post.id}'),
+      ).timeout(const Duration(seconds: 10));
+      if (!mounted) return;
+      if (res.statusCode == 200) {
+        final body = utf8.decode(res.bodyBytes);
+        final data = jsonDecode(body);
+        if (data is List) {
+          final loaded = data
+              .whereType<Map>()
+              .map((e) => _Comment.fromJson(Map<String, dynamic>.from(e)))
+              .toList();
+          if (mounted) setState(() => _comments = loaded);
+        }
+      }
+    } catch (_) {}
   }
 
   Future<void> _loadComments() async {
@@ -876,23 +1087,43 @@ Future<void> _editComment(int commentId, String newText) async {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) return;
     try {
+      debugPrint('### EDIT HTTP START id=$commentId ###');
       final res = await http.post(
         Uri.parse('https://majidalbana.com/admin/comments/edit_comment.php'),
+        headers: {'Content-Type': 'application/x-www-form-urlencoded'},
         body: {
           'comment_id': '$commentId',
           'comment_text': newText,
           'user_email': user.email ?? '',
         },
       ).timeout(const Duration(seconds: 15));
+      debugPrint('### EDIT STATUS: ${res.statusCode} ###');
+      debugPrint('### EDIT BODY: ${utf8.decode(res.bodyBytes)} ###');
       if (!mounted) return;
       if (res.statusCode == 200) {
         final data = jsonDecode(utf8.decode(res.bodyBytes));
         if (data['success'] == true) {
+          setState(() {
+            final idx = _comments.indexWhere((c) => c.id == commentId);
+            if (idx != -1) {
+              _comments[idx] = _Comment(
+                id: _comments[idx].id,
+                postId: _comments[idx].postId,
+                userName: _comments[idx].userName,
+                userAvatar: _comments[idx].userAvatar,
+                text: newText,
+                createdAt: _comments[idx].createdAt,
+              );
+            }
+          });
+        } else {
           _commentsLoaded = false;
           await _loadComments();
         }
       }
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('### EDIT ERROR: $e ###');
+    }
   }
 
   Future<void> _deleteComment(int commentId) async {
@@ -907,8 +1138,11 @@ Future<void> _editComment(int commentId, String newText) async {
         },
       ).timeout(const Duration(seconds: 15));
       if (!mounted) return;
+      debugPrint('EDIT STATUS: ${res.statusCode}');
+      debugPrint('EDIT BODY: ${utf8.decode(res.bodyBytes)}');
       if (res.statusCode == 200) {
         final data = jsonDecode(utf8.decode(res.bodyBytes));
+        debugPrint('EDIT DATA: $data');
         if (data['success'] == true) {
           _commentsLoaded = false;
           await _loadComments();
@@ -959,41 +1193,61 @@ Future<void> _editComment(int commentId, String newText) async {
       ),
     );
   }
-void _openCommentsSheet() {
+void _openCommentsSheet({bool autoFocus = false}) {
+    _sheetOpen = true;
+    _startCommentsPolling();
+
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
       backgroundColor: Colors.transparent,
       builder: (_) => StatefulBuilder(
-        builder: (context, setSheetState) => _CommentsBottomSheet(
-          post: widget.post,
-          isDark: widget.isDark,
-          comments: _comments,
-          loadingComments: _loadingComments,
-          commentsLoaded: _commentsLoaded,
-          commentCtrl: _commentCtrl,
-          sendingComment: _sendingComment,
-          onSend: () async {
-            await _sendComment();
-            setSheetState(() {});
-          },
-          onLoginTap: _showLoginSheet,
-          onReload: () async {
-            await _loadComments();
-            setSheetState(() {});
-          },
-          onEdit: (id, newText) async {
-            await _editComment(id, newText);
-            setSheetState(() {});
-          },
-          onDelete: (id) async {
-            await _deleteComment(id);
-            setSheetState(() {});
-          },
-        ),
+        builder: (context, setSheetState) {
+          _commentsPollingTimer?.cancel();
+          _commentsPollingTimer = Timer.periodic(const Duration(seconds: 5), (_) {
+            if (!_sheetOpen) return;
+            _silentReloadComments().then((_) {
+              if (mounted) setSheetState(() {});
+            });
+          });
+
+          return _CommentsBottomSheet(
+            post: widget.post,
+            isDark: widget.isDark,
+            comments: _comments,
+            loadingComments: _loadingComments,
+            commentsLoaded: _commentsLoaded,
+            commentCtrl: _commentCtrl,
+            sendingComment: _sendingComment,
+            autoFocus: autoFocus,
+            onSend: () async {
+              await _sendComment();
+              if (mounted) setState(() {});
+              setSheetState(() {});
+            },
+            onLoginTap: _showLoginSheet,
+            onReload: () async {
+              await _loadComments();
+              setSheetState(() {});
+            },
+            onEdit: (id, newText) async {
+              await _editComment(id, newText);
+              if (mounted) setState(() {});
+              setSheetState(() {});
+            },
+            onDelete: (id) async {
+              await _deleteComment(id);
+              if (mounted) setState(() {});
+              setSheetState(() {});
+            },
+          );
+        },
       ),
-    );
+    ).whenComplete(() {
+      _sheetOpen = false;
+      _stopCommentsPolling();
+    });
   }
   @override
   Widget build(BuildContext context) {
@@ -1030,8 +1284,12 @@ void _openCommentsSheet() {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            if (p.image.trim().isNotEmpty)
-              _PostImage(imageUrl: p.imageUrl, isDark: isDark),
+            if (p.imageUrls.isNotEmpty)
+              _PostImageGallery(
+                imageUrls: p.imageUrls,
+                isDark: isDark,
+                onImageTap: _openPostDetail,
+              ),
 
             if (widget.showOfflineBanner)
               Container(
@@ -1189,7 +1447,7 @@ void _openCommentsSheet() {
                 children: [
                   // Like button
                   GestureDetector(
-                    onTap: () => setState(() => _liked = !_liked),
+                    onTap: _toggleLike,
                     behavior: HitTestBehavior.opaque,
                     child: AnimatedContainer(
                       duration: const Duration(milliseconds: 200),
@@ -1197,11 +1455,11 @@ void _openCommentsSheet() {
                           horizontal: 14, vertical: 7),
                       decoration: BoxDecoration(
                         color: _liked
-                            ? gold.withOpacity(0.15)
+                            ? Colors.red.withOpacity(0.15)
                             : Colors.transparent,
                         borderRadius: BorderRadius.circular(20),
                         border: Border.all(
-                          color: _liked ? gold : gold.withOpacity(0.3),
+                          color: _liked ? Colors.red : gold.withOpacity(0.3),
                         ),
                       ),
                       child: Row(
@@ -1210,11 +1468,66 @@ void _openCommentsSheet() {
                             _liked
                                 ? Icons.favorite_rounded
                                 : Icons.favorite_border_rounded,
-                            size: 16,
-                            color: gold,
+                            size: 20,
+                            color: _liked ? Colors.red : gold,
                           ),
+                          if (_likesCount > 0) ...[
+                            const SizedBox(width: 6),
+                            Text(
+                              '$_likesCount',
+                              style: TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600,
+                                color: _liked ? Colors.red : gold,
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                  ),
+
+                  const SizedBox(width: 8),
+
+                  // Share button
+                  GestureDetector(
+                    onTap: () async {
+                      final url = 'https://majidalbana.com/post/${widget.post.id}';
+                      final text = widget.post.content.isNotEmpty
+                          ? '${widget.post.content.substring(0, widget.post.content.length.clamp(0, 200))}..\n\nادخل على الرابط لقراءة المقال:\n$url'
+                          : 'منشور د.ماجد البنا\n\nادخل على الرابط لقراءة المقال:\n$url';
+
+                      if (widget.post.image.trim().isNotEmpty) {
+                        try {
+                          final response = await http.get(Uri.parse(widget.post.imageUrl));
+                          final tempDir = await getTemporaryDirectory();
+                          final file = File('${tempDir.path}/share_image.jpg');
+                          await file.writeAsBytes(response.bodyBytes);
+                          await Share.shareXFiles(
+                            [XFile(file.path)],
+                            text: text,
+                          );
+                        } catch (_) {
+                          await Share.share(text);
+                        }
+                      } else {
+                        await Share.share(text);
+                      }
+                    },
+                    behavior: HitTestBehavior.opaque,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 14, vertical: 7),
+                      decoration: BoxDecoration(
+                        color: Colors.transparent,
+                        borderRadius: BorderRadius.circular(20),
+                        border: Border.all(color: gold.withOpacity(0.3)),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(Icons.share_rounded, size: 16, color: gold),
                           const SizedBox(width: 6),
-                          Text('إعجاب',
+                          Text('مشاركة',
                               style: TextStyle(
                                   color: textPrimary,
                                   fontSize: 12.5,
@@ -1268,12 +1581,19 @@ void _openCommentsSheet() {
             Padding(
               padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
               child: currentUser != null
-                  ? _CommentInputBox(
-                      isDark: isDark,
-                      user: currentUser,
-                      controller: _commentCtrl,
-                      sending: _sendingComment,
-                      onSend: _sendComment,
+                  ? GestureDetector(
+                      onTap: () {
+                        _openCommentsSheet(autoFocus: true);
+                      },
+                      child: AbsorbPointer(
+                        child: _CommentInputBox(
+                          isDark: isDark,
+                          user: currentUser,
+                          controller: _commentCtrl,
+                          sending: _sendingComment,
+                          onSend: _sendComment,
+                        ),
+                      ),
                     )
                   : _LockedCommentBox(
                       isDark: isDark,
@@ -1298,6 +1618,7 @@ class _CommentInputBox extends StatelessWidget {
   final TextEditingController controller;
   final bool sending;
   final VoidCallback onSend;
+  final FocusNode? focusNode;
 
   const _CommentInputBox({
     required this.isDark,
@@ -1305,6 +1626,7 @@ class _CommentInputBox extends StatelessWidget {
     required this.controller,
     required this.sending,
     required this.onSend,
+    this.focusNode,
   });
 
   static const gold = Color(0xFFD4A017);
@@ -1375,6 +1697,7 @@ class _CommentInputBox extends StatelessWidget {
                 Expanded(
                   child: TextField(
                     controller: controller,
+                    focusNode: focusNode,
                     textDirection: TextDirection.rtl,
                     textAlign: TextAlign.right,
                     maxLines: 4,
@@ -1489,6 +1812,7 @@ class _CommentsBottomSheet extends StatefulWidget {
   final Future<void> Function() onReload;
   final Future<void> Function(int, String) onEdit;
   final Future<void> Function(int) onDelete;
+  final bool autoFocus;
 
   const _CommentsBottomSheet({
     required this.onReload,
@@ -1503,6 +1827,7 @@ class _CommentsBottomSheet extends StatefulWidget {
     required this.onLoginTap,
     required this.onEdit,
     required this.onDelete,
+    this.autoFocus = false,
   });
 
   @override
@@ -1511,10 +1836,25 @@ class _CommentsBottomSheet extends StatefulWidget {
 
 class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
   static const gold = Color(0xFFD4A017);
-@override
+  final FocusNode _inputFocusNode = FocusNode();
+
+  @override
   void initState() {
     super.initState();
     if (!widget.commentsLoaded) widget.onReload();
+    if (widget.autoFocus) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        Future.delayed(const Duration(milliseconds: 300), () {
+          if (mounted) _inputFocusNode.requestFocus();
+        });
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _inputFocusNode.dispose();
+    super.dispose();
   }
   @override
   Widget build(BuildContext context) {
@@ -1528,11 +1868,21 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
     final currentUser = FirebaseAuth.instance.currentUser;
     final handleColor = isDark ? Colors.white24 : Colors.black12;
 
-    return DraggableScrollableSheet(
-      initialChildSize: 0.55,
+    final keyboardOpen = MediaQuery.of(context).viewInsets.bottom > 0;
+
+    return GestureDetector(
+      onTap: () => FocusScope.of(context).unfocus(),
+      child: AnimatedContainer(
+      duration: const Duration(milliseconds: 300),
+      curve: Curves.easeInOut,
+      child: DraggableScrollableSheet(
+      initialChildSize: keyboardOpen ? 0.92 : 0.55,
       minChildSize: 0.35,
       maxChildSize: 1.0,
       expand: false,
+      snap: true,
+      snapSizes: const [0.35, 0.55, 0.92, 1.0],
+      controller: DraggableScrollableController(),
       builder: (context, scrollController) {
         return Container(
           width: double.infinity,
@@ -1549,18 +1899,27 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
           ),
           child: Column(
             children: [
-              // Handle bar
-              Padding(
-                padding: const EdgeInsets.only(top: 12, bottom: 4),
-                child: Container(
-                  width: 44,
-                  height: 4.5,
-                  decoration: BoxDecoration(
-                    color: handleColor,
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                ),
-              ),
+              // Handle bar + Header قابل للسحب
+              GestureDetector(
+                onVerticalDragUpdate: (details) {
+                  scrollController.position.moveTo(
+                    scrollController.offset - details.delta.dy,
+                    clamp: false,
+                  );
+                },
+                child: Column(
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.only(top: 12, bottom: 4),
+                      child: Container(
+                        width: 44,
+                        height: 4.5,
+                        decoration: BoxDecoration(
+                          color: handleColor,
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                      ),
+                    ),
 
               // Header
               Padding(
@@ -1588,6 +1947,9 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
                     const Spacer(),
                     const SizedBox(width: 22),
                   ],
+                ),
+              ),
+],
                 ),
               ),
 
@@ -1655,6 +2017,7 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
                         user: currentUser,
                         controller: widget.commentCtrl,
                         sending: widget.sendingComment,
+                        focusNode: _inputFocusNode,
                         onSend: () {
                           widget.onSend();
                           setState(() {});
@@ -1669,6 +2032,8 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
           ),
         );
       },
+    ),
+    ),
     );
   }
 }
@@ -1816,8 +2181,10 @@ class _CommentTileState extends State<_CommentTile> {
                         onTap: () async {
                           final newText = _editCtrl.text.trim();
                           if (newText.isEmpty) return;
-                          await widget.onEdit
-                              ?.call(widget.comment.id, newText);
+                          debugPrint('### SAVE TAPPED id=${widget.comment.id} newText=$newText ###');
+                          if (widget.onEdit != null) {
+                            await widget.onEdit!(widget.comment.id, newText);
+                          }
                           if (mounted) setState(() => _editing = false);
                         },
                         child: Text(
@@ -2079,13 +2446,37 @@ class _LoginSheetState extends State<_LoginSheet> {
                                 ),
                               ),
                               const SizedBox(width: 12),
-                              Text(
-                                'تسجيل الدخول بـ Google',
-                                style: TextStyle(
-                                  color: textPrimary,
-                                  fontSize: 15,
-                                  fontWeight: FontWeight.w700,
-                                ),
+                              Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Text(
+                                    'تسجيل الدخول بـ Google',
+                                    textDirection: TextDirection.rtl,
+                                    style: TextStyle(
+                                      color: textPrimary,
+                                      fontSize: 15,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 10),
+                                  Transform.translate(
+                                    offset: const Offset(0, -2), // ← غيّر الأرقام: (يمين/يسار, أعلى/أسفل)
+                                    child: Container(
+                                      width: 28,
+                                      height: 28,
+                                      decoration: const BoxDecoration(
+                                        color: Colors.white,
+                                        shape: BoxShape.circle,
+                                      ),
+                                      padding: const EdgeInsets.all(4),
+                                      child: SvgPicture.network(
+                                        'https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg',
+                                        width: 20,
+                                        height: 20,
+                                      ),
+                                    ),
+                                  ),
+                                ],
                               ),
                             ],
                           ),
@@ -2124,6 +2515,10 @@ class _PostDetailPageState extends State<_PostDetailPage> {
       'https://majidalbana.com/admin/comments/edit_comment.php';
   static const String _deleteCommentApi =
       'https://majidalbana.com/admin/comments/delete_comment.php';
+  static const String _toggleLikeApi =
+      'https://majidalbana.com/admin/posts/toggle_like.php';
+  static const String _getLikesApi =
+      'https://majidalbana.com/admin/posts/get_likes.php';
 
   List<_Comment> _comments = [];
   bool _loadingComments = true;
@@ -2131,11 +2526,89 @@ class _PostDetailPageState extends State<_PostDetailPage> {
   bool _sendingComment = false;
   final _commentCtrl = TextEditingController();
   final _scrollCtrl = ScrollController();
+  bool _liked = false;
+  int _likesCount = 0;
+  bool _likeLoading = false;
 
   @override
   void initState() {
     super.initState();
     _loadComments();
+    _loadLikes();
+  }
+
+  Future<void> _loadLikes() async {
+    try {
+      final user = FirebaseAuth.instance.currentUser;
+      final email = user?.email ?? '';
+      final uri = Uri.parse(_getLikesApi).replace(queryParameters: {
+        'post_id': '${widget.post.id}',
+        if (email.isNotEmpty) 'user_email': email,
+      });
+      final res = await http.get(uri).timeout(const Duration(seconds: 15));
+      if (!mounted) return;
+      if (res.statusCode == 200) {
+        final data = jsonDecode(utf8.decode(res.bodyBytes));
+        if (data is Map && data['success'] == true) {
+          setState(() {
+            _likesCount = int.tryParse('${data['likes_count'] ?? 0}') ?? 0;
+            _liked = data['liked'] == true;
+          });
+        }
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _toggleLike() async {
+    if (_likeLoading) return;
+
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null || (user.email ?? '').isEmpty) {
+      _showLoginSheet();
+      return;
+    }
+
+    setState(() {
+      _likeLoading = true;
+      if (_liked) {
+        _liked = false;
+        _likesCount = (_likesCount - 1).clamp(0, 1 << 31);
+      } else {
+        _liked = true;
+        _likesCount += 1;
+      }
+    });
+
+    try {
+      final res = await http.post(
+        Uri.parse(_toggleLikeApi),
+        body: {
+          'post_id': '${widget.post.id}',
+          'user_email': user.email ?? '',
+        },
+      ).timeout(const Duration(seconds: 15));
+
+      if (!mounted) return;
+      if (res.statusCode == 200) {
+        final data = jsonDecode(utf8.decode(res.bodyBytes));
+        if (data is Map && data['success'] == true) {
+          setState(() {
+            _liked = data['liked'] == true;
+            _likesCount =
+                int.tryParse('${data['likes_count'] ?? _likesCount}') ??
+                    _likesCount;
+          });
+        } else {
+          await _loadLikes();
+        }
+      } else {
+        await _loadLikes();
+      }
+    } catch (_) {
+      if (mounted) await _loadLikes();
+    } finally {
+      if (mounted) setState(() => _likeLoading = false);
+    }
   }
 
   @override
@@ -2332,6 +2805,53 @@ Future<void> _editComment(int commentId, String newText) async {
                 color: gold, size: 18),
           ),
         ),
+        actions: [
+          GestureDetector(
+            onTap: () async {
+              final url = 'https://majidalbana.com/post/${p.id}';
+              final text = p.content.isNotEmpty
+                  ? '${p.content.substring(0, p.content.length.clamp(0, 200))}..\n\nادخل على الرابط لقراءة المقال:\n$url'
+                  : 'منشور د.ماجد البنا\n\nادخل على الرابط لقراءة المقال:\n$url';
+
+              if (p.image.trim().isNotEmpty) {
+                try {
+                  final response = await http.get(Uri.parse(p.imageUrl));
+                  final tempDir = await getTemporaryDirectory();
+                  final file = File('${tempDir.path}/share_image.jpg');
+                  await file.writeAsBytes(response.bodyBytes);
+                  await Share.shareXFiles(
+                    [XFile(file.path)],
+                    text: text,
+                  );
+                } catch (_) {
+                  await Share.share(text);
+                }
+              } else {
+                await Share.share(text);
+              }
+            },
+            child: Container(
+              margin: const EdgeInsets.only(right: 12),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+              decoration: BoxDecoration(
+                color: gold.withOpacity(0.10),
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: gold.withOpacity(0.3)),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.share_rounded, size: 16, color: gold),
+                  const SizedBox(width: 6),
+                  Text('مشاركة',
+                      style: TextStyle(
+                          color: textPrimary,
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w600)),
+                ],
+              ),
+            ),
+          ),
+        ],
         bottom: PreferredSize(
           preferredSize: const Size.fromHeight(1),
           child: Divider(height: 1, color: dividerColor),
@@ -2346,8 +2866,8 @@ Future<void> _editComment(int commentId, String newText) async {
               padding: const EdgeInsets.only(bottom: 16),
               children: [
                 // Post Image
-                if (p.image.trim().isNotEmpty)
-                  _PostImage(imageUrl: p.imageUrl, isDark: isDark),
+                if (p.imageUrls.isNotEmpty)
+                  _PostImageGallery(imageUrls: p.imageUrls, isDark: isDark),
 
                 // Post Content Card
                 Container(
@@ -2369,7 +2889,8 @@ Future<void> _editComment(int commentId, String newText) async {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       // Author
-                      Row(
+    Row(
+                        textDirection: TextDirection.rtl,
                         children: [
                           CircleAvatar(
                             radius: 22,
@@ -2379,14 +2900,17 @@ Future<void> _editComment(int commentId, String newText) async {
                           ),
                           const SizedBox(width: 12),
                           Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
+                            crossAxisAlignment: CrossAxisAlignment.end,
                             children: [
-                              Text('د.ماجد البنا',
+                              Text(
+                                  'د.ماجد البنا',
+                                  textDirection: TextDirection.rtl,
                                   style: TextStyle(
                                       color: textPrimary,
                                       fontSize: 15,
                                       fontWeight: FontWeight.w700)),
                               Row(
+                                textDirection: TextDirection.rtl,
                                 children: [
                                   Icon(Icons.calendar_month_rounded,
                                       size: 12, color: textSub),
@@ -2397,6 +2921,38 @@ Future<void> _editComment(int commentId, String newText) async {
                                 ],
                               ),
                             ],
+                          ),
+                          const Spacer(),
+                          // Like button
+                          GestureDetector(
+                            onTap: _toggleLike,
+                            behavior: HitTestBehavior.opaque,
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 8, vertical: 6),
+                              child: Row(
+                                children: [
+                                  Icon(
+                                    _liked
+                                        ? Icons.favorite_rounded
+                                        : Icons.favorite_border_rounded,
+                                    size: 24,
+                                    color: _liked ? Colors.red : gold,
+                                  ),
+                                  if (_likesCount > 0) ...[
+                                    const SizedBox(width: 6),
+                                    Text(
+                                      '$_likesCount',
+                                      style: TextStyle(
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.w600,
+                                        color: _liked ? Colors.red : gold,
+                                      ),
+                                    ),
+                                  ],
+                                ],
+                              ),
+                            ),
                           ),
                         ],
                       ),
@@ -2423,6 +2979,7 @@ Future<void> _editComment(int commentId, String newText) async {
                 Padding(
                   padding: const EdgeInsets.fromLTRB(16, 20, 16, 12),
                   child: Row(
+                    textDirection: TextDirection.rtl,
                     children: [
                       Container(
                         width: 4,
@@ -2435,9 +2992,10 @@ Future<void> _editComment(int commentId, String newText) async {
                       const SizedBox(width: 10),
                       Text(
                         'التعليقات${_comments.isNotEmpty ? ' (${_comments.length})' : ''}',
+                        textDirection: TextDirection.rtl,
                         style: TextStyle(
                           color: textPrimary,
-                          fontSize: 16,
+                          fontSize: 18,
                           fontWeight: FontWeight.w800,
                         ),
                       ),
@@ -2452,6 +3010,7 @@ Future<void> _editComment(int commentId, String newText) async {
                     ],
                   ),
                 ),
+                        const SizedBox(height: 14),
 
                 if (!_loadingComments && _comments.isEmpty)
                   Padding(
@@ -2474,12 +3033,26 @@ Future<void> _editComment(int commentId, String newText) async {
 
                 ..._comments
                     .where((c) => c.text.isNotEmpty)
-                    .map((c) => _CommentBubble(
-                          comment: c,
-                          isDark: isDark,
-                          onEdit: _editComment,
-                          onDelete: _deleteComment,
+                    .map((c) => Column(
+                          children: [
+                            _CommentBubble(
+                              comment: c,
+                              isDark: isDark,
+                              onEdit: _editComment,
+                              onDelete: _deleteComment,
+                            ),
+                            Divider(
+                              height: 1,
+                              thickness: 0.5,
+                              indent: 16,
+                              endIndent: 16,
+                              color: isDark
+                                  ? Colors.white.withOpacity(0.06)
+                                  : Colors.black.withOpacity(0.06),
+                            ),
+                          ],
                         )),
+                        
               ],
             ),
           ),
@@ -2573,11 +3146,12 @@ class _CommentBubbleState extends State<_CommentBubble> {
     final fieldBg = isDark ? const Color(0xFF2A2A2A) : const Color(0xFFF0EBE0);
 
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+      padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
+        textDirection: TextDirection.rtl,
         children: [
-          // User Avatar
+          // Avatar (يمين)
           CircleAvatar(
             radius: 19,
             backgroundImage: widget.comment.userAvatar.isNotEmpty
@@ -2601,28 +3175,16 @@ class _CommentBubbleState extends State<_CommentBubble> {
           // Bubble
           Expanded(
             child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+              crossAxisAlignment: CrossAxisAlignment.end,
               children: [
-                Container(
-                  padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
-                  decoration: BoxDecoration(
-                    color: bubbleBg,
-                    borderRadius: const BorderRadius.only(
-                      topLeft: Radius.circular(18),
-                      topRight: Radius.circular(4),
-                      bottomLeft: Radius.circular(18),
-                      bottomRight: Radius.circular(18),
-                    ),
-                    border: Border.all(
-                        color: gold.withOpacity(0.1), width: 0.8),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+                Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
                     children: [
                       Text(
                         widget.comment.userName,
+                        textDirection: TextDirection.rtl,
                         style: TextStyle(
-                          color: gold,
+                          color: const Color.fromARGB(255, 82, 106, 143),
                           fontSize: 12.5,
                           fontWeight: FontWeight.w800,
                         ),
@@ -2651,6 +3213,7 @@ class _CommentBubbleState extends State<_CommentBubble> {
                           : Text(
                               widget.comment.text,
                               textDirection: TextDirection.rtl,
+                              textAlign: TextAlign.right,
                               style: TextStyle(
                                 color: textPrimary,
                                 fontSize: 13.5,
@@ -2659,12 +3222,14 @@ class _CommentBubbleState extends State<_CommentBubble> {
                             ),
                     ],
                   ),
-                ),
                 if (_isOwner) ...[
                   const SizedBox(height: 4),
                   Row(
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    
                     children: [
-                      if (_editing) ...[
+                      
+                      if (_editing) ...[                      
                         GestureDetector(
                           onTap: () async {
                             final newText = _editCtrl.text.trim();
@@ -2672,22 +3237,22 @@ class _CommentBubbleState extends State<_CommentBubble> {
                             await widget.onEdit?.call(widget.comment.id, newText);
                             if (mounted) setState(() => _editing = false);
                           },
-                          child: Text('حفظ', style: TextStyle(color: gold, fontSize: 12, fontWeight: FontWeight.w700)),
+                          child: Icon(Icons.check_circle_rounded, color: gold, size: 20),
                         ),
-                        const SizedBox(width: 12),
+                        const SizedBox(width: 10),
                         GestureDetector(
                           onTap: () {
                             _editCtrl.text = widget.comment.text;
                             setState(() => _editing = false);
                           },
-                          child: Text('إلغاء', style: TextStyle(color: textSub, fontSize: 12)),
+                          child: Icon(Icons.cancel_rounded, color: textSub, size: 20),
                         ),
                       ] else ...[
                         GestureDetector(
                           onTap: () => setState(() => _editing = true),
-                          child: Text('تعديل', style: TextStyle(color: gold, fontSize: 12, fontWeight: FontWeight.w600)),
+                          child: Icon(Icons.edit_rounded, color: const Color.fromARGB(255, 104, 107, 109), size: 17),
                         ),
-                        const SizedBox(width: 12),
+                        const SizedBox(width: 6),
                         GestureDetector(
                           onTap: () async {
                             final confirm = await showDialog<bool>(
@@ -2704,7 +3269,7 @@ class _CommentBubbleState extends State<_CommentBubble> {
                             );
                             if (confirm == true) await widget.onDelete?.call(widget.comment.id);
                           },
-                          child: const Text('حذف', style: TextStyle(color: Colors.red, fontSize: 12, fontWeight: FontWeight.w600)),
+                          child: Icon(Icons.delete_rounded, color: const Color.fromARGB(255, 99, 86, 85), size: 17),
                         ),
                       ],
                     ],
@@ -2712,9 +3277,10 @@ class _CommentBubbleState extends State<_CommentBubble> {
                 ],
                 const SizedBox(height: 4),
                 Padding(
-                  padding: const EdgeInsets.only(right: 4),
+                  padding: const EdgeInsets.only(left: 4),
                   child: Text(
                     widget.comment.timeAgo,
+                    textDirection: TextDirection.rtl,
                     style: TextStyle(color: textSub, fontSize: 11),
                   ),
                 ),
@@ -3060,16 +3626,21 @@ class _EditPostSheetState extends State<_EditPostSheet> {
 // Post Image
 // ─────────────────────────────────────────────────────────────────────────────
 
-class _PostImage extends StatefulWidget {
-  final String imageUrl;
+class _PostImageGallery extends StatefulWidget {
+  final List<String> imageUrls;
   final bool isDark;
-  const _PostImage({required this.imageUrl, required this.isDark});
+  final VoidCallback? onImageTap;
+  const _PostImageGallery({
+    required this.imageUrls,
+    required this.isDark,
+    this.onImageTap,
+  });
 
   @override
-  State<_PostImage> createState() => _PostImageState();
+  State<_PostImageGallery> createState() => _PostImageGalleryState();
 }
 
-class _PostImageState extends State<_PostImage> {
+class _PostImageGalleryState extends State<_PostImageGallery> {
   static const gold = Color(0xFFD4A017);
   double? _aspectRatio;
 
@@ -3080,7 +3651,8 @@ class _PostImageState extends State<_PostImage> {
   }
 
   void _resolveAspect() {
-    final imageProvider = NetworkImage(widget.imageUrl);
+    if (widget.imageUrls.isEmpty) return;
+    final imageProvider = NetworkImage(widget.imageUrls.first);
     final stream = imageProvider.resolve(ImageConfiguration.empty);
     stream.addListener(
       ImageStreamListener((info, _) {
@@ -3092,77 +3664,198 @@ class _PostImageState extends State<_PostImage> {
     );
   }
 
-@override
-  Widget build(BuildContext context) {
-    final isDark = widget.isDark;
-    final double ratio = (_aspectRatio != null && _aspectRatio! < 0.9)
-        ? 1.0
-        : (_aspectRatio ?? 16 / 9);
-
-    return AspectRatio(
-        aspectRatio: ratio,
-        child: Image.network(
-          widget.imageUrl,
-          fit: BoxFit.cover,
-          headers: const {'Accept': 'image/*'},
-          loadingBuilder: (context, child, progress) {
-            if (progress == null) return child;
-            return Container(
-              color: isDark
-                  ? const Color(0xFF222222)
-                  : const Color(0xFFEFE7D8),
-              child: const Center(
-                child: CircularProgressIndicator(
-                    color: gold, strokeWidth: 2),
-              ),
-            );
-          },
-          errorBuilder: (_, __, ___) => Container(
-            color: isDark
-                ? const Color(0xFF222222)
-                : const Color(0xFFEFE7D8),
-            child: Icon(Icons.broken_image_outlined,
-                color: Colors.black38, size: 42),
-          ),
-        ),
-    );
-  }
-
-  void _openFullScreen(BuildContext context) {
+  void _openFullScreen(BuildContext context, int initialIndex) {
+    if (widget.onImageTap != null) {
+      widget.onImageTap!();
+      return;
+    }
     Navigator.of(context).push(
       PageRouteBuilder(
         opaque: false,
         barrierColor: Colors.transparent,
         pageBuilder: (_, animation, __) => FadeTransition(
           opacity: animation,
-          child: _FullScreenImage(imageUrl: widget.imageUrl),
+          child: _FullScreenGallery(
+            imageUrls: widget.imageUrls,
+            initialIndex: initialIndex,
+          ),
         ),
+      ),
+    );
+  }
+
+  Widget _img(String url, {BoxFit fit = BoxFit.cover}) {
+    final isDark = widget.isDark;
+    return Image.network(
+      url,
+      fit: fit,
+      headers: const {'Accept': 'image/*'},
+      loadingBuilder: (context, child, progress) {
+        if (progress == null) return child;
+        return Container(
+          color: isDark ? const Color(0xFF222222) : const Color(0xFFEFE7D8),
+          child: const Center(
+            child: CircularProgressIndicator(color: gold, strokeWidth: 2),
+          ),
+        );
+      },
+      errorBuilder: (_, __, ___) => Container(
+        color: isDark ? const Color(0xFF222222) : const Color(0xFFEFE7D8),
+        child: const Icon(Icons.broken_image_outlined,
+            color: Colors.black38, size: 42),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final urls = widget.imageUrls;
+    final isDark = widget.isDark;
+    final double ratio = (_aspectRatio != null && _aspectRatio! < 0.9)
+        ? 1.0
+        : (_aspectRatio ?? 16 / 9);
+
+    if (urls.length == 1) {
+      return GestureDetector(
+        onTap: () => _openFullScreen(context, 0),
+        child: AspectRatio(
+          aspectRatio: ratio,
+          child: _img(urls[0]),
+        ),
+      );
+    }
+
+    if (urls.length == 2) {
+      return AspectRatio(
+        aspectRatio: 16 / 9,
+        child: Row(
+          children: [
+            for (int i = 0; i < 2; i++) ...[
+              if (i == 1) const SizedBox(width: 2),
+              Expanded(
+                child: GestureDetector(
+                  onTap: () => _openFullScreen(context, i),
+                  child: _img(urls[i]),
+                ),
+              ),
+            ],
+          ],
+        ),
+      );
+    }
+
+    if (urls.length == 3) {
+      return AspectRatio(
+        aspectRatio: 16 / 9,
+        child: Row(
+          children: [
+            Expanded(
+              child: GestureDetector(
+                onTap: () => _openFullScreen(context, 0),
+                child: _img(urls[0]),
+              ),
+            ),
+            const SizedBox(width: 2),
+            Expanded(
+              child: Column(
+                children: [
+                  Expanded(
+                    child: GestureDetector(
+                      onTap: () => _openFullScreen(context, 1),
+                      child: _img(urls[1]),
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Expanded(
+                    child: GestureDetector(
+                      onTap: () => _openFullScreen(context, 2),
+                      child: _img(urls[2]),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    // 4 images — 2x2 grid
+    return AspectRatio(
+      aspectRatio: 1,
+      child: Column(
+        children: [
+          Expanded(
+            child: Row(
+              children: [
+                Expanded(
+                  child: GestureDetector(
+                    onTap: () => _openFullScreen(context, 0),
+                    child: _img(urls[0]),
+                  ),
+                ),
+                const SizedBox(width: 2),
+                Expanded(
+                  child: GestureDetector(
+                    onTap: () => _openFullScreen(context, 1),
+                    child: _img(urls[1]),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 2),
+          Expanded(
+            child: Row(
+              children: [
+                Expanded(
+                  child: GestureDetector(
+                    onTap: () => _openFullScreen(context, 2),
+                    child: _img(urls[2]),
+                  ),
+                ),
+                const SizedBox(width: 2),
+                Expanded(
+                  child: GestureDetector(
+                    onTap: () => _openFullScreen(context, 3),
+                    child: _img(urls[3]),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Full Screen Image Viewer
+// Full Screen Image Gallery (swipeable)
 // ─────────────────────────────────────────────────────────────────────────────
 
-class _FullScreenImage extends StatefulWidget {
-  final String imageUrl;
-  const _FullScreenImage({required this.imageUrl});
+class _FullScreenGallery extends StatefulWidget {
+  final List<String> imageUrls;
+  final int initialIndex;
+  const _FullScreenGallery({required this.imageUrls, required this.initialIndex});
 
   @override
-  State<_FullScreenImage> createState() => _FullScreenImageState();
+  State<_FullScreenGallery> createState() => _FullScreenGalleryState();
 }
 
-class _FullScreenImageState extends State<_FullScreenImage>
+class _FullScreenGalleryState extends State<_FullScreenGallery>
     with SingleTickerProviderStateMixin {
   late AnimationController _controller;
+  late PageController _pageController;
+  late int _currentIndex;
   double _dragOffset = 0;
   bool _dismissed = false;
 
   @override
   void initState() {
     super.initState();
+    _currentIndex = widget.initialIndex;
+    _pageController = PageController(initialPage: widget.initialIndex);
     _controller = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 250),
@@ -3173,6 +3866,7 @@ class _FullScreenImageState extends State<_FullScreenImage>
   @override
   void dispose() {
     _controller.dispose();
+    _pageController.dispose();
     super.dispose();
   }
 
@@ -3187,6 +3881,7 @@ class _FullScreenImageState extends State<_FullScreenImage>
   @override
   Widget build(BuildContext context) {
     final opacity = (1.0 - (_dragOffset.abs() / 300)).clamp(0.0, 1.0);
+    final urls = widget.imageUrls;
 
     return AnimatedBuilder(
       animation: _controller,
@@ -3196,31 +3891,74 @@ class _FullScreenImageState extends State<_FullScreenImage>
         onTap: _dismiss,
         child: Scaffold(
           backgroundColor: Colors.black.withOpacity(opacity),
-          body: GestureDetector(
-            onVerticalDragUpdate: (d) {
-              setState(() => _dragOffset += d.delta.dy);
-            },
-            onVerticalDragEnd: (d) {
-              if (_dragOffset.abs() > 100 ||
-                  d.primaryVelocity!.abs() > 600) {
-                _dismiss();
-              } else {
-                setState(() => _dragOffset = 0);
-              }
-            },
-            onTap: () {},
-            child: Transform.translate(
-              offset: Offset(0, _dragOffset),
-              child: Center(
-                child: InteractiveViewer(
-                  child: Image.network(
-                    widget.imageUrl,
-                    fit: BoxFit.contain,
-                    headers: const {'Accept': 'image/*'},
+          body: Stack(
+            children: [
+              GestureDetector(
+                onVerticalDragUpdate: (d) {
+                  setState(() => _dragOffset += d.delta.dy);
+                },
+                onVerticalDragEnd: (d) {
+                  if (_dragOffset.abs() > 100 ||
+                      d.primaryVelocity!.abs() > 600) {
+                    _dismiss();
+                  } else {
+                    setState(() => _dragOffset = 0);
+                  }
+                },
+                onTap: () {},
+                child: Transform.translate(
+                  offset: Offset(0, _dragOffset),
+                  child: PageView.builder(
+                    controller: _pageController,
+                    itemCount: urls.length,
+                    onPageChanged: (i) => setState(() => _currentIndex = i),
+                    itemBuilder: (context, index) => Center(
+                      child: InteractiveViewer(
+                        child: Image.network(
+                          urls[index],
+                          fit: BoxFit.contain,
+                          headers: const {'Accept': 'image/*'},
+                        ),
+                      ),
+                    ),
                   ),
                 ),
               ),
-            ),
+              if (urls.length > 1)
+                Positioned(
+                  bottom: 32,
+                  left: 0,
+                  right: 0,
+                  child: Center(
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 14, vertical: 8),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withOpacity(0.5),
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: List.generate(urls.length, (i) {
+                          final active = i == _currentIndex;
+                          return AnimatedContainer(
+                            duration: const Duration(milliseconds: 200),
+                            margin: const EdgeInsets.symmetric(horizontal: 3),
+                            width: active ? 10 : 7,
+                            height: 7,
+                            decoration: BoxDecoration(
+                              color: active
+                                  ? const Color(0xFFD4A017)
+                                  : Colors.white.withOpacity(0.5),
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                          );
+                        }),
+                      ),
+                    ),
+                  ),
+                ),
+            ],
           ),
         ),
       ),
