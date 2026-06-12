@@ -31,6 +31,18 @@
             android:name="flutterEmbedding"
             android:value="2" />
     </application>
+    <queries>
+    <package android:name="com.waze" />
+    <package android:name="com.google.android.apps.maps" />
+    <package android:name="ru.yandex.yandexmaps" />
+    <package android:name="com.here.app.maps" />
+    <package android:name="net.osmand" />
+    <package android:name="com.sygic.aura" />
+    <intent>
+        <action android:name="android.intent.action.VIEW" />
+        <data android:scheme="geo" />
+    </intent>
+</queries>
     <!-- Required to query activities that can process text, see:
          https://developer.android.com/training/package-visibility and
          https://developer.android.com/reference/android/content/Intent#ACTION_PROCESS_TEXT.

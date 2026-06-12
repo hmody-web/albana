@@ -7,6 +7,7 @@ import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart' show ImagePicker, ImageSource, XFile;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:google_sign_in/google_sign_in.dart';
 
 import '../widgets/shared_widgets.dart';
 
@@ -170,8 +171,7 @@ class _PublicationsPageState extends State<PublicationsPage> {
         widget.isDark ? const Color(0xFF101010) : const Color(0xFFF7F4EE);
 
     return CustomScrollView(
-      keyboardDismissBehavior:
-    ScrollViewKeyboardDismissBehavior.onDrag,
+      keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
       physics: const BouncingScrollPhysics(),
       slivers: [
         PremiumAppBar(title: 'المنشورات', isDark: widget.isDark),
@@ -674,6 +674,54 @@ class _PublicationPost {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Comment Model
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _Comment {
+  final int id;
+  final int postId;
+  final String userName;
+  final String userAvatar;
+  final String text;
+  final String createdAt;
+
+  const _Comment({
+    required this.id,
+    required this.postId,
+    required this.userName,
+    required this.userAvatar,
+    required this.text,
+    required this.createdAt,
+  });
+
+  factory _Comment.fromJson(Map<String, dynamic> json) {
+    return _Comment(
+      id: int.tryParse('${json['id'] ?? 0}') ?? 0,
+      postId: int.tryParse('${json['post_id'] ?? 0}') ?? 0,
+      userName: '${json['user_name'] ?? 'مستخدم'}',
+      userAvatar: '${json['user_avatar'] ?? ''}',
+      text: '${json['comment_text'] ?? ''}',
+      createdAt: '${json['created_at'] ?? ''}',
+    );
+  }
+
+  String get timeAgo {
+    if (createdAt.isEmpty) return '';
+    try {
+      final dt = DateTime.parse(createdAt);
+      final diff = DateTime.now().difference(dt);
+      if (diff.inMinutes < 1) return 'الآن';
+      if (diff.inMinutes < 60) return 'منذ ${diff.inMinutes} د';
+      if (diff.inHours < 24) return 'منذ ${diff.inHours} س';
+      if (diff.inDays < 7) return 'منذ ${diff.inDays} يوم';
+      return createdAt.split(' ').first;
+    } catch (_) {
+      return createdAt.split(' ').first;
+    }
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Post Card
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -698,8 +746,183 @@ class _PostCard extends StatefulWidget {
 
 class _PostCardState extends State<_PostCard> {
   static const gold = Color(0xFFD4A017);
+  static const String _commentsApi =
+      'https://majidalbana.com/admin/comments/load_comments.php';
+  static const String _addCommentApi =
+      'https://majidalbana.com/admin/comments/add_comment.php';
+
   bool _expanded = false;
   bool _liked = false;
+  final _commentCtrl = TextEditingController();
+  bool _sendingComment = false;
+  List<_Comment> _comments = [];
+  bool _loadingComments = false;
+  bool _commentsLoaded = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadCommentCount();
+  }
+
+  @override
+  void dispose() {
+    _commentCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadCommentCount() async {
+    try {
+      final res = await http.get(
+        Uri.parse('$_commentsApi?post_id=${widget.post.id}&count_only=1'),
+      ).timeout(const Duration(seconds: 10));
+      if (!mounted) return;
+      if (res.statusCode == 200) {
+        final data = jsonDecode(utf8.decode(res.bodyBytes));
+        final count = int.tryParse('${data['count'] ?? 0}') ?? 0;
+        if (count > 0 && _comments.isEmpty) {
+          setState(() => _comments = List.generate(count, (i) => _Comment(
+            id: i, postId: widget.post.id,
+            userName: '', userAvatar: '', text: '', createdAt: '',
+          )));
+        }
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _loadComments() async {
+    if (_loadingComments) return;
+    setState(() => _loadingComments = true);
+    try {
+      final res = await http.get(
+        Uri.parse('$_commentsApi?post_id=${widget.post.id}'),
+      ).timeout(const Duration(seconds: 15));
+      if (!mounted) return;
+      if (res.statusCode == 200) {
+        final body = utf8.decode(res.bodyBytes);
+        final data = jsonDecode(body);
+        if (data is List) {
+          final loaded = data
+              .whereType<Map>()
+              .map((e) => _Comment.fromJson(Map<String, dynamic>.from(e)))
+              .toList();
+          setState(() {
+            _comments = loaded;
+            _commentsLoaded = true;
+          });
+        } else if (data is Map && data['comments'] is List) {
+          // fallback لو السيرفر يرجع { comments: [...] }
+          final loaded = (data['comments'] as List)
+              .whereType<Map>()
+              .map((e) => _Comment.fromJson(Map<String, dynamic>.from(e)))
+              .toList();
+          setState(() {
+            _comments = loaded;
+            _commentsLoaded = true;
+          });
+        }
+      }
+    } catch (_) {} finally {
+      if (mounted) setState(() => _loadingComments = false);
+    }
+  }
+
+  Future<void> _sendComment() async {
+    print('### _sendComment called ###');
+    final text = _commentCtrl.text.trim();
+    print('### text: $text ###');
+    if (text.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('اكتب تعليقاً أولاً', textDirection: TextDirection.rtl),
+        behavior: SnackBarBehavior.floating,
+      ));
+      return;
+    }
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+
+    setState(() => _sendingComment = true);
+    try {
+      final res = await http.post(
+        Uri.parse(_addCommentApi),
+        body: {
+          'post_id': '${widget.post.id}',
+          'user_name': user.displayName ?? 'مستخدم',
+          'user_avatar': user.photoURL ?? '',
+          'comment_text': text,
+          'user_email': user.email ?? '',
+        },
+      ).timeout(const Duration(seconds: 15));
+
+      if (!mounted) return;
+      print('### status: ${res.statusCode} ###');
+      print('### response: ${utf8.decode(res.bodyBytes)} ###');
+      if (res.statusCode == 200) {
+        final data = jsonDecode(utf8.decode(res.bodyBytes));
+        if (data['success'] == true) {
+          _commentCtrl.clear();
+          _commentsLoaded = false;
+          await _loadComments();
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+              content: const Text('تم إرسال التعليق بنجاح ✓',
+                  textDirection: TextDirection.rtl,
+                  style: TextStyle(fontWeight: FontWeight.w600)),
+              backgroundColor: const Color(0xFF2E7D32),
+              behavior: SnackBarBehavior.floating,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+              margin: const EdgeInsets.all(14),
+            ));
+          }
+        } else {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+              content: Text(
+                'فشل إرسال التعليق: ${data['error'] ?? 'خطأ غير معروف'}',
+                textDirection: TextDirection.rtl,
+                style: const TextStyle(fontWeight: FontWeight.w600),
+              ),
+              backgroundColor: Colors.red.shade700,
+              behavior: SnackBarBehavior.floating,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+              margin: const EdgeInsets.all(14),
+            ));
+          }
+        }
+      }
+    } catch (e, stack) {
+      print('ERROR: $e');
+      print('STACK: $stack');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('خطأ: $e',
+              textDirection: TextDirection.rtl,
+              style: const TextStyle(fontWeight: FontWeight.w600)),
+          backgroundColor: Colors.red.shade700,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+          margin: const EdgeInsets.all(14),
+        ));
+      }
+    } finally {
+      if (mounted) setState(() => _sendingComment = false);
+    }
+  }
+
+  void _openPostDetail() {
+    Navigator.of(context).push(
+      PageRouteBuilder(
+        pageBuilder: (_, animation, __) => FadeTransition(
+          opacity: animation,
+          child: _PostDetailPage(
+            post: widget.post,
+            isDark: widget.isDark,
+          ),
+        ),
+        transitionDuration: const Duration(milliseconds: 300),
+      ),
+    );
+  }
 
   void _openEditSheet() {
     showModalBottomSheet(
@@ -714,6 +937,21 @@ class _PostCardState extends State<_PostCard> {
     );
   }
 
+  void _showLoginSheet() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => _LoginSheet(
+        isDark: widget.isDark,
+        onLoggedIn: () {
+          setState(() {});
+          Navigator.pop(context);
+        },
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final p = widget.post;
@@ -724,6 +962,9 @@ class _PostCardState extends State<_PostCard> {
     final dividerColor = isDark
         ? Colors.white.withOpacity(0.08)
         : Colors.black.withOpacity(0.07);
+    final fieldBg = isDark ? const Color(0xFF242424) : const Color(0xFFF5F1EA);
+    final currentUser = FirebaseAuth.instance.currentUser;
+    final commentCount = _comments.length;
 
     return Container(
       margin: const EdgeInsets.only(bottom: 18),
@@ -758,10 +999,10 @@ class _PostCardState extends State<_PostCard> {
                     const Icon(Icons.wifi_off_rounded,
                         size: 14, color: Colors.orange),
                     const SizedBox(width: 7),
-                    Text(
+                    const Text(
                       'لا يوجد اتصال بالإنترنت — المحتوى غير متاح',
                       textDirection: TextDirection.rtl,
-                      style: const TextStyle(
+                      style: TextStyle(
                         color: Colors.orange,
                         fontSize: 12,
                         fontWeight: FontWeight.w600,
@@ -811,7 +1052,6 @@ class _PostCardState extends State<_PostCard> {
                       ],
                     ),
                   ),
-                  // Edit button (supervisor only)
                   if (widget.isSupervisor)
                     GestureDetector(
                       onTap: _openEditSheet,
@@ -827,8 +1067,7 @@ class _PostCardState extends State<_PostCard> {
                         child: Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            Icon(Icons.edit_rounded,
-                                size: 13, color: gold),
+                            Icon(Icons.edit_rounded, size: 13, color: gold),
                             const SizedBox(width: 5),
                             Text('تعديل',
                                 style: TextStyle(
@@ -845,19 +1084,50 @@ class _PostCardState extends State<_PostCard> {
 
             Padding(
               padding: const EdgeInsets.fromLTRB(18, 12, 18, 0),
-              child: Text(
-                p.content.isEmpty ? 'منشور بدون وصف' : p.content,
-                maxLines: _expanded ? null : 4,
-                overflow:
-                    _expanded ? TextOverflow.visible : TextOverflow.ellipsis,
-                textDirection: TextDirection.rtl,
-                style: TextStyle(
-                  color: textPrimary,
-                  fontSize: 14.5,
-                  height: 1.75,
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
+              child: p.content.isEmpty
+                  ? Text(
+                      'منشور بدون وصف',
+                      textDirection: TextDirection.rtl,
+                      style: TextStyle(
+                        color: textPrimary,
+                        fontSize: 14.5,
+                        height: 1.75,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    )
+                  : GestureDetector(
+                      onTap: () => setState(() => _expanded = !_expanded),
+                      child: RichText(
+                        textDirection: TextDirection.rtl,
+                        text: TextSpan(
+                          style: DefaultTextStyle.of(context).style.copyWith(
+                            color: textPrimary,
+                            fontSize: 14.5,
+                            height: 1.75,
+                            fontWeight: FontWeight.w500,
+                          ),
+                          children: [
+                            if (_expanded)
+                              TextSpan(text: p.content)
+                            else ...[
+                              TextSpan(
+                                text: p.content.length > 120
+                                    ? p.content.substring(0, 120)
+                                    : p.content,
+                              ),
+                              if (p.content.length > 120)
+                                TextSpan(
+                                  text: '... اقرأ المزيد',
+                                  style: TextStyle(
+                                    color: gold,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                            ],
+                          ],
+                        ),
+                      ),
+                    ),
             ),
 
             Divider(
@@ -867,11 +1137,12 @@ class _PostCardState extends State<_PostCard> {
                 endIndent: 18,
                 color: dividerColor),
 
+            // ── Like + Comments Count Row ──────────────────────────────────
             Padding(
-              padding: const EdgeInsets.symmetric(
-                  horizontal: 14, vertical: 10),
+              padding: const EdgeInsets.fromLTRB(14, 0, 14, 10),
               child: Row(
                 children: [
+                  // Like button
                   GestureDetector(
                     onTap: () => setState(() => _liked = !_liked),
                     child: AnimatedContainer(
@@ -884,8 +1155,7 @@ class _PostCardState extends State<_PostCard> {
                             : Colors.transparent,
                         borderRadius: BorderRadius.circular(20),
                         border: Border.all(
-                          color:
-                              _liked ? gold : gold.withOpacity(0.3),
+                          color: _liked ? gold : gold.withOpacity(0.3),
                         ),
                       ),
                       child: Row(
@@ -907,44 +1177,909 @@ class _PostCardState extends State<_PostCard> {
                       ),
                     ),
                   ),
+
                   const Spacer(),
-                  GestureDetector(
-                    onTap: () =>
-                        setState(() => _expanded = !_expanded),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 16, vertical: 7),
-                      decoration: BoxDecoration(
-                        border: Border.all(
-                            color: gold.withOpacity(0.4)),
-                        borderRadius: BorderRadius.circular(20),
-                      ),
-                      child: Row(
-                        children: [
-                          Text(
-                            _expanded ? 'عرض أقل' : 'اقرأ المزيد',
-                            style: TextStyle(
-                                color: textPrimary,
-                                fontSize: 12.5,
-                                fontWeight: FontWeight.w600),
-                          ),
-                          const SizedBox(width: 5),
-                          Icon(
-                            _expanded
-                                ? Icons.keyboard_arrow_up_rounded
-                                : Icons.arrow_back_ios_rounded,
-                            size: _expanded ? 17 : 12,
-                            color: textPrimary,
-                          ),
-                        ],
+
+                  // Comments count badge — taps open detail page
+                  if (commentCount > 0)
+                    GestureDetector(
+                      onTap: _openPostDetail,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 12, vertical: 7),
+                        decoration: BoxDecoration(
+                          color: gold.withOpacity(0.10),
+                          borderRadius: BorderRadius.circular(20),
+                          border:
+                              Border.all(color: gold.withOpacity(0.35)),
+                        ),
+                        child: Row(
+                          children: [
+                            Icon(Icons.chat_bubble_outline_rounded,
+                                size: 15, color: gold),
+                            const SizedBox(width: 6),
+                            Text(
+                              '$commentCount ${commentCount == 1 ? 'تعليق' : 'تعليقات'}',
+                              style: TextStyle(
+                                  color: gold,
+                                  fontSize: 12.5,
+                                  fontWeight: FontWeight.w700),
+                            ),
+                          ],
+                        ),
                       ),
                     ),
-                  ),
                 ],
               ),
             ),
+
+            Divider(height: 1, thickness: 0.5, color: dividerColor),
+
+            // ── Comment Input Box ──────────────────────────────────────────
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
+              child: currentUser != null
+                  ? _CommentInputBox(
+                      isDark: isDark,
+                      user: currentUser,
+                      controller: _commentCtrl,
+                      sending: _sendingComment,
+                      onSend: _sendComment,
+                    )
+                  : _LockedCommentBox(
+                      isDark: isDark,
+                      onLoginTap: _showLoginSheet,
+                    ),
+            ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Comment Input Box (logged in)
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _CommentInputBox extends StatelessWidget {
+  final bool isDark;
+  final User user;
+  final TextEditingController controller;
+  final bool sending;
+  final VoidCallback onSend;
+
+  const _CommentInputBox({
+    required this.isDark,
+    required this.user,
+    required this.controller,
+    required this.sending,
+    required this.onSend,
+  });
+
+  static const gold = Color(0xFFD4A017);
+
+  @override
+  Widget build(BuildContext context) {
+    final fieldBg = isDark ? const Color(0xFF242424) : const Color(0xFFF5F1EA);
+    final textPrimary = isDark ? Colors.white : const Color(0xFF1A1000);
+    final hintColor = isDark ? Colors.white38 : Colors.black38;
+
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.end,
+      children: [
+        // User Avatar
+        CircleAvatar(
+          radius: 18,
+          backgroundImage: user.photoURL != null
+              ? NetworkImage(user.photoURL!)
+              : null,
+          backgroundColor: gold.withOpacity(0.2),
+          child: user.photoURL == null
+              ? Icon(Icons.person_rounded, color: gold, size: 18)
+              : null,
+        ),
+        const SizedBox(width: 8),
+
+        // Text field + send button
+        Expanded(
+          child: Container(
+            constraints: const BoxConstraints(minHeight: 42),
+            decoration: BoxDecoration(
+              color: fieldBg,
+              borderRadius: BorderRadius.circular(22),
+              border: Border.all(color: gold.withOpacity(0.25)),
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: controller,
+                    textDirection: TextDirection.rtl,
+                    textAlign: TextAlign.right,
+                    maxLines: 4,
+                    minLines: 1,
+                    style: TextStyle(
+                      color: textPrimary,
+                      fontSize: 13.5,
+                      height: 1.5,
+                    ),
+                    decoration: InputDecoration(
+                      hintText: 'اكتب تعليقاً...',
+                      hintTextDirection: TextDirection.rtl,
+                      hintStyle: TextStyle(
+                          color: hintColor,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w400),
+                      contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 14, vertical: 10),
+                      border: InputBorder.none,
+                    ),
+                  ),
+                ),
+                // Send button
+                Padding(
+                  padding: const EdgeInsets.only(left: 6, right: 4, bottom: 5),
+                  child: GestureDetector(
+                    onTap: sending ? null : onSend,
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 200),
+                      width: 34,
+                      height: 34,
+                      decoration: BoxDecoration(
+                        color: sending
+                            ? gold.withOpacity(0.4)
+                            : gold,
+                        shape: BoxShape.circle,
+                      ),
+                      child: sending
+                          ? const Padding(
+                              padding: EdgeInsets.all(8),
+                              child: CircularProgressIndicator(
+                                  color: Colors.white, strokeWidth: 2),
+                            )
+                          : const Icon(Icons.send_rounded,
+                              color: Colors.white, size: 16),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Locked Comment Box (not logged in)
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _LockedCommentBox extends StatelessWidget {
+  final bool isDark;
+  final VoidCallback onLoginTap;
+
+  const _LockedCommentBox({
+    required this.isDark,
+    required this.onLoginTap,
+  });
+
+  static const gold = Color(0xFFD4A017);
+
+  @override
+  Widget build(BuildContext context) {
+    final fieldBg = isDark ? const Color(0xFF242424) : const Color(0xFFF5F1EA);
+    final textSub = isDark ? Colors.white54 : Colors.black45;
+
+    return GestureDetector(
+      onTap: onLoginTap,
+      child: Container(
+        height: 46,
+        decoration: BoxDecoration(
+          color: fieldBg,
+          borderRadius: BorderRadius.circular(22),
+          border: Border.all(color: gold.withOpacity(0.2)),
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.lock_rounded, size: 15, color: gold.withOpacity(0.7)),
+            const SizedBox(width: 8),
+            Text(
+              'سجّل الدخول لترك تعليق',
+              textDirection: TextDirection.rtl,
+              style: TextStyle(
+                  color: textSub,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600),
+            ),
+            const SizedBox(width: 8),
+            Container(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+              decoration: BoxDecoration(
+                color: gold,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: const Text('تسجيل الدخول',
+                  style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w800)),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Login Bottom Sheet
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _LoginSheet extends StatefulWidget {
+  final bool isDark;
+  final VoidCallback onLoggedIn;
+
+  const _LoginSheet({required this.isDark, required this.onLoggedIn});
+
+  @override
+  State<_LoginSheet> createState() => _LoginSheetState();
+}
+
+class _LoginSheetState extends State<_LoginSheet> {
+  static const gold = Color(0xFFD4A017);
+  bool _loading = false;
+  String? _error;
+
+  Future<void> _signInWithGoogle() async {
+    setState(() { _loading = true; _error = null; });
+    try {
+      final googleUser = await GoogleSignIn().signIn();
+      if (googleUser == null) {
+        setState(() => _loading = false);
+        return;
+      }
+      final googleAuth = await googleUser.authentication;
+      final credential = GoogleAuthProvider.credential(
+        accessToken: googleAuth.accessToken,
+        idToken: googleAuth.idToken,
+      );
+      await FirebaseAuth.instance.signInWithCredential(credential);
+      if (mounted) widget.onLoggedIn();
+    } catch (e) {
+      setState(() {
+        _error = 'فشل تسجيل الدخول. حاول مرة أخرى.';
+        _loading = false;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = widget.isDark;
+    final sheetBg = isDark ? const Color(0xFF181818) : Colors.white;
+    final textPrimary = isDark ? Colors.white : const Color(0xFF1A1000);
+    final textSub = isDark ? Colors.white60 : Colors.black54;
+
+    return Padding(
+      padding: EdgeInsets.only(
+          bottom: MediaQuery.of(context).viewInsets.bottom),
+      child: Container(
+        decoration: BoxDecoration(
+          color: sheetBg,
+          borderRadius:
+              const BorderRadius.vertical(top: Radius.circular(28)),
+        ),
+        child: SafeArea(
+          top: false,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(24, 0, 24, 28),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // Handle
+                Center(
+                  child: Container(
+                    margin: const EdgeInsets.only(top: 12, bottom: 20),
+                    width: 40,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: gold.withOpacity(0.4),
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                  ),
+                ),
+
+                // Icon
+                Container(
+                  width: 68,
+                  height: 68,
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [gold.withOpacity(0.3), gold.withOpacity(0.1)],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                    ),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(Icons.chat_bubble_rounded,
+                      color: gold, size: 32),
+                ),
+                const SizedBox(height: 16),
+
+                Text(
+                  'سجّل الدخول للتعليق',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: textPrimary,
+                    fontSize: 20,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'انضم إلى النقاش واترك تعليقك\nعلى منشورات د.ماجد البنا',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: textSub,
+                    fontSize: 14,
+                    height: 1.6,
+                  ),
+                ),
+                const SizedBox(height: 28),
+
+                if (_error != null) ...[
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 16, vertical: 10),
+                    decoration: BoxDecoration(
+                      color: Colors.red.withOpacity(0.08),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                          color: Colors.red.withOpacity(0.3)),
+                    ),
+                    child: Text(_error!,
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                            color: Colors.red, fontSize: 13)),
+                  ),
+                  const SizedBox(height: 16),
+                ],
+
+                // Google Sign In Button
+                SizedBox(
+                  width: double.infinity,
+                  height: 54,
+                  child: ElevatedButton(
+                    onPressed: _loading ? null : _signInWithGoogle,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor:
+                          isDark ? const Color(0xFF2A2A2A) : Colors.white,
+                      foregroundColor: textPrimary,
+                      elevation: 0,
+                      side: BorderSide(
+                          color: isDark
+                              ? Colors.white12
+                              : Colors.black12),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(16)),
+                    ),
+                    child: _loading
+                        ? SizedBox(
+                            width: 24,
+                            height: 24,
+                            child: CircularProgressIndicator(
+                                color: gold, strokeWidth: 2.5))
+                        : Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              // Google logo
+                              Container(
+                                width: 24,
+                                height: 24,
+                                decoration: const BoxDecoration(
+                                  image: DecorationImage(
+                                    image: NetworkImage(
+                                        'https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg'),
+                                    fit: BoxFit.contain,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Text(
+                                'تسجيل الدخول بـ Google',
+                                style: TextStyle(
+                                  color: textPrimary,
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ],
+                          ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Post Detail Page (Full Post + Comments)
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _PostDetailPage extends StatefulWidget {
+  final _PublicationPost post;
+  final bool isDark;
+
+  const _PostDetailPage({required this.post, required this.isDark});
+
+  @override
+  State<_PostDetailPage> createState() => _PostDetailPageState();
+}
+
+class _PostDetailPageState extends State<_PostDetailPage> {
+  static const gold = Color(0xFFD4A017);
+  static const String _commentsApi =
+      'https://majidalbana.com/admin/comments/load_comments.php';
+  static const String _addCommentApi =
+      'https://majidalbana.com/admin/comments/add_comment.php';
+
+  List<_Comment> _comments = [];
+  bool _loadingComments = true;
+  bool _sendingComment = false;
+  final _commentCtrl = TextEditingController();
+  final _scrollCtrl = ScrollController();
+
+  @override
+  void initState() {
+    super.initState();
+    _loadComments();
+  }
+
+  @override
+  void dispose() {
+    _commentCtrl.dispose();
+    _scrollCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadComments() async {
+    setState(() => _loadingComments = true);
+    try {
+      final res = await http.get(
+        Uri.parse('$_commentsApi?post_id=${widget.post.id}'),
+      ).timeout(const Duration(seconds: 15));
+      if (!mounted) return;
+      if (res.statusCode == 200) {
+        final data = jsonDecode(utf8.decode(res.bodyBytes));
+        if (data is List) {
+          setState(() {
+            _comments = data
+                .whereType<Map>()
+                .map((e) => _Comment.fromJson(Map<String, dynamic>.from(e)))
+                .toList();
+          });
+        }
+      }
+    } catch (_) {} finally {
+      if (mounted) setState(() => _loadingComments = false);
+    }
+  }
+
+Future<void> _sendComment() async {
+    final text = _commentCtrl.text.trim();
+    if (text.isEmpty) return;
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+
+    setState(() => _sendingComment = true);
+    try {
+      final res = await http.post(
+        Uri.parse(_addCommentApi),
+        body: {
+          'post_id': '${widget.post.id}',
+          'user_name': user.displayName ?? 'مستخدم',
+          'user_avatar': user.photoURL ?? '',
+          'comment_text': text,
+          'user_email': user.email ?? '',
+        },
+      ).timeout(const Duration(seconds: 15));
+
+      if (!mounted) return;
+
+      // DEBUG — شيل هذا بعد ما تحل المشكلة
+      print('=== DEBUG COMMENT ===');
+      print('post_id: ${widget.post.id}');
+      print('user: ${user.displayName}');
+      print('status: ${res.statusCode}');
+      print('response: ${utf8.decode(res.bodyBytes)}');
+      print('====================');
+
+if (res.statusCode == 200) {
+        final data = jsonDecode(utf8.decode(res.bodyBytes));
+        if (data['success'] == true) {
+          _commentCtrl.clear();
+          await _loadComments();
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+              content: const Text('تم إرسال التعليق بنجاح ✓',
+                  textDirection: TextDirection.rtl,
+                  style: TextStyle(fontWeight: FontWeight.w600)),
+              backgroundColor: const Color(0xFF2E7D32),
+              behavior: SnackBarBehavior.floating,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+              margin: const EdgeInsets.all(14),
+            ));
+          }
+        } else {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+              content: Text(
+                'فشل إرسال التعليق: ${data['error'] ?? 'خطأ غير معروف'}',
+                textDirection: TextDirection.rtl,
+                style: const TextStyle(fontWeight: FontWeight.w600),
+              ),
+              backgroundColor: Colors.red.shade700,
+              behavior: SnackBarBehavior.floating,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+              margin: const EdgeInsets.all(14),
+            ));
+          }
+        }
+      }
+    } catch (e) {
+      print('ERROR: $e');
+    } finally {
+      if (mounted) setState(() => _sendingComment = false);
+    }
+  }
+
+  void _showLoginSheet() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => _LoginSheet(
+        isDark: widget.isDark,
+        onLoggedIn: () {
+          setState(() {});
+          Navigator.pop(context);
+        },
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = widget.isDark;
+    final p = widget.post;
+    final bgColor =
+        isDark ? const Color(0xFF101010) : const Color(0xFFF7F4EE);
+    final cardBg = isDark ? const Color(0xFF181818) : Colors.white;
+    final textPrimary = isDark ? Colors.white : const Color(0xFF1A1000);
+    final textSub = isDark ? Colors.white60 : Colors.black54;
+    final dividerColor = isDark
+        ? Colors.white.withOpacity(0.08)
+        : Colors.black.withOpacity(0.07);
+    final currentUser = FirebaseAuth.instance.currentUser;
+
+    return Scaffold(
+      backgroundColor: bgColor,
+      appBar: AppBar(
+        backgroundColor: isDark ? const Color(0xFF181818) : Colors.white,
+        elevation: 0,
+        centerTitle: true,
+        title: Text(
+          'المنشور',
+          style: TextStyle(
+            color: textPrimary,
+            fontSize: 17,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+        leading: GestureDetector(
+          onTap: () => Navigator.pop(context),
+          child: Container(
+            margin: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: gold.withOpacity(0.12),
+              shape: BoxShape.circle,
+            ),
+            child: Icon(Icons.arrow_back_ios_new_rounded,
+                color: gold, size: 18),
+          ),
+        ),
+        bottom: PreferredSize(
+          preferredSize: const Size.fromHeight(1),
+          child: Divider(height: 1, color: dividerColor),
+        ),
+      ),
+      body: Column(
+        children: [
+          // ── Scrollable content ─────────────────────────────────────────
+          Expanded(
+            child: ListView(
+              controller: _scrollCtrl,
+              padding: const EdgeInsets.only(bottom: 16),
+              children: [
+                // Post Image
+                if (p.image.trim().isNotEmpty)
+                  _PostImage(imageUrl: p.imageUrl, isDark: isDark),
+
+                // Post Content Card
+                Container(
+                  margin: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+                  padding: const EdgeInsets.all(18),
+                  decoration: BoxDecoration(
+                    color: cardBg,
+                    borderRadius: BorderRadius.circular(18),
+                    border: Border.all(color: gold.withOpacity(0.12)),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(isDark ? 0.15 : 0.04),
+                        blurRadius: 10,
+                        offset: const Offset(0, 3),
+                      ),
+                    ],
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // Author
+                      Row(
+                        children: [
+                          CircleAvatar(
+                            radius: 22,
+                            backgroundImage:
+                                const AssetImage('assets/images/majid.png'),
+                            backgroundColor: gold.withOpacity(0.15),
+                          ),
+                          const SizedBox(width: 12),
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text('د.ماجد البنا',
+                                  style: TextStyle(
+                                      color: textPrimary,
+                                      fontSize: 15,
+                                      fontWeight: FontWeight.w700)),
+                              Row(
+                                children: [
+                                  Icon(Icons.calendar_month_rounded,
+                                      size: 12, color: textSub),
+                                  const SizedBox(width: 4),
+                                  Text(p.formattedDate,
+                                      style: TextStyle(
+                                          color: textSub, fontSize: 11.5)),
+                                ],
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                      if (p.content.isNotEmpty) ...[
+                        const SizedBox(height: 14),
+                        Divider(height: 1, color: dividerColor),
+                        const SizedBox(height: 14),
+                        Text(
+                          p.content,
+                          textDirection: TextDirection.rtl,
+                          style: TextStyle(
+                            color: textPrimary,
+                            fontSize: 15,
+                            height: 1.85,
+                            fontWeight: FontWeight.w400,
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+
+                // ── Comments Section ──────────────────────────────────────
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 20, 16, 12),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 4,
+                        height: 20,
+                        decoration: BoxDecoration(
+                          color: gold,
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Text(
+                        'التعليقات${_comments.isNotEmpty ? ' (${_comments.length})' : ''}',
+                        style: TextStyle(
+                          color: textPrimary,
+                          fontSize: 16,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      const Spacer(),
+                      if (_loadingComments)
+                        SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(
+                              color: gold, strokeWidth: 2),
+                        ),
+                    ],
+                  ),
+                ),
+
+                if (!_loadingComments && _comments.isEmpty)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 24),
+                    child: Column(
+                      children: [
+                        Icon(Icons.chat_bubble_outline_rounded,
+                            color: gold.withOpacity(0.4), size: 42),
+                        const SizedBox(height: 10),
+                        Text(
+                          'كن أول من يعلّق!',
+                          style: TextStyle(
+                              color: textSub,
+                              fontSize: 14,
+                              fontWeight: FontWeight.w600),
+                        ),
+                      ],
+                    ),
+                  ),
+
+                ..._comments
+                    .where((c) => c.text.isNotEmpty)
+                    .map((c) => _CommentBubble(
+                          comment: c,
+                          isDark: isDark,
+                        )),
+              ],
+            ),
+          ),
+
+          // ── Fixed bottom comment input ─────────────────────────────────
+          Container(
+            padding: EdgeInsets.fromLTRB(
+                12, 10, 12, MediaQuery.of(context).padding.bottom + 10),
+            decoration: BoxDecoration(
+              color: cardBg,
+              border: Border(
+                  top: BorderSide(color: dividerColor, width: 0.8)),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(isDark ? 0.3 : 0.06),
+                  blurRadius: 10,
+                  offset: const Offset(0, -3),
+                ),
+              ],
+            ),
+            child: currentUser != null
+                ? _CommentInputBox(
+                    isDark: isDark,
+                    user: currentUser,
+                    controller: _commentCtrl,
+                    sending: _sendingComment,
+                    onSend: _sendComment,
+                  )
+                : _LockedCommentBox(
+                    isDark: isDark,
+                    onLoginTap: _showLoginSheet,
+                  ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Comment Bubble
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _CommentBubble extends StatelessWidget {
+  final _Comment comment;
+  final bool isDark;
+
+  const _CommentBubble({required this.comment, required this.isDark});
+
+  static const gold = Color(0xFFD4A017);
+
+  @override
+  Widget build(BuildContext context) {
+    final bubbleBg = isDark ? const Color(0xFF222222) : const Color(0xFFFAF6EF);
+    final textPrimary = isDark ? Colors.white : const Color(0xFF1A1000);
+    final textSub = isDark ? Colors.white54 : Colors.black45;
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // User Avatar
+          CircleAvatar(
+            radius: 19,
+            backgroundImage: comment.userAvatar.isNotEmpty
+                ? NetworkImage(comment.userAvatar)
+                : null,
+            backgroundColor: gold.withOpacity(0.2),
+            child: comment.userAvatar.isEmpty
+                ? Text(
+                    comment.userName.isNotEmpty
+                        ? comment.userName[0].toUpperCase()
+                        : '?',
+                    style: TextStyle(
+                        color: gold,
+                        fontWeight: FontWeight.w800,
+                        fontSize: 15),
+                  )
+                : null,
+          ),
+          const SizedBox(width: 10),
+
+          // Bubble
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
+                  decoration: BoxDecoration(
+                    color: bubbleBg,
+                    borderRadius: const BorderRadius.only(
+                      topLeft: Radius.circular(18),
+                      topRight: Radius.circular(4),
+                      bottomLeft: Radius.circular(18),
+                      bottomRight: Radius.circular(18),
+                    ),
+                    border: Border.all(
+                        color: gold.withOpacity(0.1), width: 0.8),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        comment.userName,
+                        style: TextStyle(
+                          color: gold,
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        comment.text,
+                        textDirection: TextDirection.rtl,
+                        style: TextStyle(
+                          color: textPrimary,
+                          fontSize: 13.5,
+                          height: 1.55,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Padding(
+                  padding: const EdgeInsets.only(right: 4),
+                  child: Text(
+                    comment.timeAgo,
+                    style: TextStyle(color: textSub, fontSize: 11),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -1073,7 +2208,6 @@ class _EditPostSheetState extends State<_EditPostSheet> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              // Handle
               Center(
                 child: Container(
                   margin: const EdgeInsets.only(top: 12, bottom: 8),
@@ -1085,7 +2219,6 @@ class _EditPostSheetState extends State<_EditPostSheet> {
                   ),
                 ),
               ),
-              // Title
               Padding(
                 padding: const EdgeInsets.fromLTRB(20, 4, 20, 16),
                 child: Row(
@@ -1118,7 +2251,6 @@ class _EditPostSheetState extends State<_EditPostSheet> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    // Image area
                     Container(
                       height: 180,
                       decoration: BoxDecoration(
@@ -1148,8 +2280,7 @@ class _EditPostSheetState extends State<_EditPostSheet> {
                                     : Center(
                                         child: Icon(
                                           Icons.image_outlined,
-                                          color:
-                                              gold.withOpacity(0.4),
+                                          color: gold.withOpacity(0.4),
                                           size: 42,
                                         ),
                                       )),
@@ -1176,8 +2307,7 @@ class _EditPostSheetState extends State<_EditPostSheet> {
                                           style: TextStyle(
                                               color: Colors.white,
                                               fontSize: 12,
-                                              fontWeight:
-                                                  FontWeight.w700)),
+                                              fontWeight: FontWeight.w700)),
                                     ],
                                   ),
                                 ),
@@ -1207,7 +2337,6 @@ class _EditPostSheetState extends State<_EditPostSheet> {
                       ),
                     ),
                     const SizedBox(height: 12),
-                    // Content field
                     Container(
                       decoration: BoxDecoration(
                         color: fieldBg,
@@ -1239,7 +2368,6 @@ class _EditPostSheetState extends State<_EditPostSheet> {
                       ),
                     ),
                     const SizedBox(height: 14),
-                    // Save button
                     SizedBox(
                       height: 50,
                       child: ElevatedButton(

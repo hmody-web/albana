@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:url_launcher/url_launcher.dart';
+import '../services/map_launcher_service.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:async';
@@ -120,10 +121,12 @@ class _CoursesPageState extends State<CoursesPage>
         _loadingVideos = false;
       });
     } catch (e) {
-      setState(() {
-        _videoError = e.toString();
-        _loadingVideos = false;
-      });
+if (mounted) {
+  setState(() {
+    _videoError = e.toString();
+    _loadingVideos = false;
+  });
+}
     }
   }
 
@@ -1286,21 +1289,12 @@ class _ScheduleTable extends StatelessWidget {
 
   static const gold = Color(0xFFD4A017);
 
-  Future<void> _openLocation(String rawUrl) async {
-    if (rawUrl.trim().isEmpty) return;
-    var value = rawUrl.trim()
-        .replaceAll('&amp;', '&')
-        .replaceAll('&quot;', '"')
-        .replaceAll('&#039;', "'")
-        .replaceAll('&lt;', '<')
-        .replaceAll('&gt;', '>');
-    if (!value.startsWith('http://') && !value.startsWith('https://')) {
-      value = 'https://$value';
-    }
-    final uri = Uri.tryParse(value);
-    if (uri != null && await canLaunchUrl(uri)) {
-      await launchUrl(uri, mode: LaunchMode.externalApplication);
-    }
+  void _openLocation(BuildContext context, String rawUrl) {
+    MapLauncherService.openMapPicker(
+      context: context,
+      rawUrl: rawUrl,
+      isDark: isDark,
+    );
   }
 
   void _showEditDialog(BuildContext context, _ScheduleItem item, int index) {
@@ -1523,7 +1517,7 @@ class _ScheduleTable extends StatelessWidget {
                 if (row.urlLocation.isNotEmpty) ...[
                   const SizedBox(width: 5),
                   GestureDetector(
-                    onTap: () => _openLocation(row.urlLocation),
+                    onTap: () => _openLocation(context, row.urlLocation),
                     child: Container(
                       padding: const EdgeInsets.all(5),
                       decoration: BoxDecoration(

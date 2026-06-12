@@ -9,6 +9,7 @@ import 'package:flutter_pdfview/flutter_pdfview.dart';
 import 'package:file_picker/file_picker.dart';
 import '../widgets/shared_widgets.dart';
 import 'package:http/http.dart' as http;
+import 'package:flutter/gestures.dart';
 // ══════════════════════════════════════════════════════════════════════════════
 //  LOCAL CACHE SERVICE
 //  Saves & loads the file list from disk so it's instant on re-open.
@@ -741,16 +742,14 @@ class _FileCard extends StatelessWidget {
                     ],
                   ),
                   const SizedBox(height: 16),
-                  Divider(color: isDark ? Colors.white24 : Colors.black12, height: 1),
+                  Divider(color: isDark ? Colors.white24 : const Color.fromARGB(31, 216, 21, 21), height: 1),
                   const SizedBox(height: 18),
                   _FileInfoPill(file: file, isDark: isDark, searchQuery: searchQuery),
                   if (file.description.isNotEmpty) ...[
                     const SizedBox(height: 16),
-                    _HighlightText(
+                    _ExpandableDescription(
                       text: file.description,
                       query: searchQuery,
-                      maxLines: 3,
-                      textAlign: TextAlign.right,
                       baseStyle: TextStyle(
                         color: textSub,
                         fontSize: 13.5,
@@ -855,7 +854,101 @@ class _HighlightText extends StatelessWidget {
     );
   }
 }
+class _ExpandableDescription extends StatefulWidget {
+  final String text;
+  final String query;
+  final TextStyle baseStyle;
 
+  const _ExpandableDescription({
+    required this.text,
+    required this.query,
+    required this.baseStyle,
+  });
+
+  @override
+  State<_ExpandableDescription> createState() => _ExpandableDescriptionState();
+}
+
+
+class _ExpandableDescriptionState extends State<_ExpandableDescription> {
+  bool _expanded = false;
+  static const gold = Color(0xFFD4A017);
+  static const int _collapsedCharLimit = 200; // الحد الذي بعده تظهر "اقرأ المزيد"
+
+  late TapGestureRecognizer _tapRecognizer;
+
+  @override
+  void initState() {
+    super.initState();
+    _tapRecognizer = TapGestureRecognizer()
+      ..onTap = () => setState(() => _expanded = !_expanded);
+  }
+
+  @override
+  void dispose() {
+    _tapRecognizer.dispose();
+    super.dispose();
+  }
+
+  List<TextSpan> _buildSpans(String text) {
+    final style = widget.baseStyle;
+    if (widget.query.isEmpty) return [TextSpan(text: text)];
+
+    final lower = text.toLowerCase();
+    final queryLower = widget.query.toLowerCase();
+    final spans = <TextSpan>[];
+    int start = 0;
+
+    while (true) {
+      final idx = lower.indexOf(queryLower, start);
+      if (idx == -1) {
+        spans.add(TextSpan(text: text.substring(start)));
+        break;
+      }
+      if (idx > start) {
+        spans.add(TextSpan(text: text.substring(start, idx)));
+      }
+      spans.add(TextSpan(
+        text: text.substring(idx, idx + widget.query.length),
+        style: style.copyWith(
+          backgroundColor: const Color(0xFFD4A017).withOpacity(0.30),
+          color: const Color(0xFFD4A017),
+          fontWeight: FontWeight.w900,
+        ),
+      ));
+      start = idx + widget.query.length;
+    }
+    return spans;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isLong = widget.text.length > _collapsedCharLimit;
+    final displayText = (!_expanded && isLong)
+        ? widget.text.substring(0, _collapsedCharLimit).trimRight()
+        : widget.text;
+
+    final spans = _buildSpans(displayText);
+
+    if (isLong) {
+      spans.add(TextSpan(
+        text: _expanded ? '  عرض أقل' : '... اقرأ المزيد',
+        style: widget.baseStyle.copyWith(
+          color: gold,
+          fontWeight: FontWeight.w800,
+        ),
+        recognizer: _tapRecognizer,
+      ));
+    }
+
+    return Text.rich(
+      TextSpan(children: spans, style: widget.baseStyle),
+      textAlign: TextAlign.right,
+      maxLines: _expanded ? null : 3,
+      overflow: _expanded ? TextOverflow.visible : TextOverflow.ellipsis,
+    );
+  }
+}
 // ══════════════════════════════════════════════════════════════════════════════
 //  HERO THUMBNAIL  (cached network image)
 // ══════════════════════════════════════════════════════════════════════════════
@@ -929,7 +1022,7 @@ class _HeroThumbnail extends StatelessWidget {
               height: 62,
               decoration: BoxDecoration(
                 color: Colors.white,
-                borderRadius: BorderRadius.circular(10),
+                borderRadius: BorderRadius.circular(8),
                 boxShadow: [
                   BoxShadow(
                     color: Colors.black.withOpacity(0.18),
@@ -1065,7 +1158,7 @@ class _FileInfoPill extends StatelessWidget {
               maxLines: 1,
               textAlign: TextAlign.start,
               baseStyle: TextStyle(
-                color: isDark ? Colors.white : const Color(0xFF172033),
+                color: isDark ? const Color.fromARGB(213, 235, 172, 0) : const Color.fromARGB(255, 190, 143, 54),
                 fontSize: 13,
                 fontWeight: FontWeight.w900,
               ),
@@ -1105,11 +1198,17 @@ class _ActionButton extends StatelessWidget {
       child: ElevatedButton.icon(
         onPressed: onPressed,
         icon: Icon(icon, size: 20),
-        label: Text(label),
+        label: Text(
+  label,
+  style: const TextStyle(
+    fontFamily: 'Cairo', 
+    fontWeight: FontWeight.w900,
+  ),
+),
         style: ElevatedButton.styleFrom(
           elevation: 0,
           backgroundColor: isDark ? const Color(0xFF1C1A10) : const Color(0xFFFDF8EC),
-          foregroundColor: isDark ? const Color(0xFFE8D2B0) : const Color(0xFF49351B),
+          foregroundColor: isDark ? const Color(0xFFE8D2B0) : const Color.fromARGB(193, 199, 129, 0),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(999),
             side: BorderSide(color: const Color(0xFFD4A017).withOpacity(0.35)),
@@ -1152,7 +1251,7 @@ class _DownloadButton extends StatelessWidget {
           backgroundColor: isDark ? const Color(0xFF1C1A10) : const Color(0xFFFDF8EC),
           disabledBackgroundColor:
               isDark ? const Color(0xFF1C1A10) : const Color(0xFFFDF8EC),
-          foregroundColor: isDark ? const Color(0xFFE8D2B0) : const Color(0xFF49351B),
+          foregroundColor: isDark ? const Color(0xFFE8D2B0) : const Color.fromARGB(193, 199, 129, 0),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(999),
             side: BorderSide(color: const Color(0xFFD4A017).withOpacity(0.35)),
@@ -1319,6 +1418,7 @@ class _PdfBrowserPageState extends State<_PdfBrowserPage> {
                           Text(
                             'عرض الملف',
                             style: TextStyle(
+                              fontFamily: 'Cairo',
                               color: const Color(0xFFD4A017).withOpacity(0.85),
                               fontSize: 11,
                               fontWeight: FontWeight.w800,
@@ -1331,12 +1431,96 @@ class _PdfBrowserPageState extends State<_PdfBrowserPage> {
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
+                              fontFamily: 'Cairo',
                               color: text,
                               fontSize: 13,
                               fontWeight: FontWeight.w900,
                             ),
                           ),
                         ],
+                      ),
+                    ),
+                    // ── Download Button ──────────────────────────────────
+                    Material(
+                      color: Colors.transparent,
+                      child: InkWell(
+                        borderRadius: BorderRadius.circular(14),
+                        onTap: () async {
+                          final dir = await getApplicationDocumentsDirectory();
+                          final filePath = '${dir.path}/${widget.file.safeFileName}';
+                          final localFile = File(filePath);
+                          if (await localFile.exists()) {
+                            if (context.mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: const Text(
+                                    'الملف محفوظ بالفعل على جهازك ✓',
+                                    textDirection: TextDirection.rtl,
+                                    style: TextStyle(fontWeight: FontWeight.w700),
+                                  ),
+                                  backgroundColor: const Color(0xFF2E7D32),
+                                  behavior: SnackBarBehavior.floating,
+                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                                  margin: const EdgeInsets.all(14),
+                                ),
+                              );
+                            }
+                          } else {
+                            try {
+                              final request = await HttpClient().getUrl(Uri.parse(widget.file.fileUrl));
+                              final response = await request.close();
+                              if (response.statusCode != 200) throw Exception();
+                              final output = localFile.openWrite();
+                              await for (final chunk in response) { output.add(chunk); }
+                              await output.flush();
+                              await output.close();
+                              if (context.mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: const Text(
+                                      'تم تحميل الملف بنجاح ✓',
+                                      textDirection: TextDirection.rtl,
+                                      style: TextStyle(fontWeight: FontWeight.w700),
+                                    ),
+                                    backgroundColor: const Color(0xFFD4A017),
+                                    behavior: SnackBarBehavior.floating,
+                                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                                    margin: const EdgeInsets.all(14),
+                                  ),
+                                );
+                              }
+                            } catch (_) {
+                              if (context.mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: const Text(
+                                      'فشل التحميل. تحقق من الاتصال',
+                                      textDirection: TextDirection.rtl,
+                                      style: TextStyle(fontWeight: FontWeight.w700),
+                                    ),
+                                    backgroundColor: Colors.red.shade700,
+                                    behavior: SnackBarBehavior.floating,
+                                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                                    margin: const EdgeInsets.all(14),
+                                  ),
+                                );
+                              }
+                            }
+                          }
+                        },
+                        child: Container(
+                          width: 40,
+                          height: 40,
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFD4A017).withOpacity(0.12),
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                          child: const Icon(
+                            Icons.download_rounded,
+                            color: Color(0xFFD4A017),
+                            size: 20,
+                          ),
+                        ),
                       ),
                     ),
                   ],
