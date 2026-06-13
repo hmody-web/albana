@@ -3,14 +3,20 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:share_plus/share_plus.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart' show ImagePicker, ImageSource, XFile;
+import 'package:video_player/video_player.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:path_provider/path_provider.dart';
 import '../widgets/shared_widgets.dart';
 import 'package:flutter_svg/flutter_svg.dart';
+import 'package:visibility_detector/visibility_detector.dart';
+import 'package:provider/provider.dart';
+import 'package:image_picker/image_picker.dart' show ImagePicker, ImageSource, XFile;
+import 'package:path_provider/path_provider.dart';
 class PublicationsPage extends StatefulWidget {
   final bool isDark;
   const PublicationsPage({super.key, required this.isDark});
@@ -165,6 +171,14 @@ class _PublicationsPageState extends State<PublicationsPage> {
     _saveToCache(_posts);
   }
 
+  void _onPostDeleted(int id) {
+    setState(() {
+      _posts.removeWhere((p) => p.id == id);
+      _cachedIds.remove(id);
+    });
+    _saveToCache(_posts);
+  }
+
   @override
   Widget build(BuildContext context) {
     final bgColor =
@@ -243,6 +257,7 @@ class _PublicationsPageState extends State<PublicationsPage> {
             showOfflineBanner: _isOffline && !isCached,
             isSupervisor: supervisor,
             onEdited: _onPostEdited,
+            onDeleted: _onPostDeleted,
           );
         },
       ),
@@ -273,8 +288,12 @@ class _AdminPublishBoxState extends State<_AdminPublishBox> {
   static const gold = Color(0xFFD4A017);
   final _contentCtrl = TextEditingController();
   List<File> _pickedImages = [];
+  File? _pickedVideo;
+  Duration? _videoDuration;
   bool _publishing = false;
   bool _expanded = false;
+  // 'image' or 'video'
+  String _mediaType = 'image';
 
   @override
   void dispose() {
@@ -295,36 +314,84 @@ class _AdminPublishBoxState extends State<_AdminPublishBox> {
     });
   }
 
+  Future<void> _pickVideo() async {
+    final picker = ImagePicker();
+    final picked = await picker.pickVideo(
+      source: ImageSource.gallery,
+      maxDuration: const Duration(minutes: 2),
+    );
+    if (picked == null) return;
+
+    // التحقق من مدة الفيديو
+    final videoFile = File(picked.path);
+    final ctrl = VideoPlayerController.file(videoFile);
+    await ctrl.initialize();
+    final duration = ctrl.value.duration;
+    await ctrl.dispose();
+
+    if (duration.inSeconds > 120) {
+      if (mounted) _showSnack('الفيديو يتجاوز الدقيقتين — اختر فيديو أقصر');
+      return;
+    }
+
+    setState(() {
+      _pickedVideo = videoFile;
+      _videoDuration = duration;
+    });
+  }
+
   void _removeImage(int index) {
     setState(() => _pickedImages.removeAt(index));
   }
 
+  void _removeVideo() {
+    setState(() {
+      _pickedVideo = null;
+      _videoDuration = null;
+    });
+  }
+
   Future<void> _publish() async {
-    if (_pickedImages.isEmpty) {
+    if (_mediaType == 'image' && _pickedImages.isEmpty) {
       _showSnack('الصورة مطلوبة للنشر');
       return;
     }
+    if (_mediaType == 'video' && _pickedVideo == null) {
+      _showSnack('الفيديو مطلوب للنشر');
+      return;
+    }
+
     setState(() => _publishing = true);
     try {
       final request =
           http.MultipartRequest('POST', Uri.parse(widget.addPostApi));
       request.fields['content'] = _contentCtrl.text.trim();
-      for (final img in _pickedImages) {
+
+      if (_mediaType == 'video') {
         request.files.add(
-          await http.MultipartFile.fromPath('images[]', img.path),
+          await http.MultipartFile.fromPath('video', _pickedVideo!.path),
         );
+      } else {
+        for (final img in _pickedImages) {
+          request.files.add(
+            await http.MultipartFile.fromPath('images[]', img.path),
+          );
+        }
       }
+
       final streamed =
-          await request.send().timeout(const Duration(seconds: 30));
+          await request.send().timeout(const Duration(seconds: 60));
       if (streamed.statusCode == 200 || streamed.statusCode == 302) {
         _contentCtrl.clear();
         setState(() {
           _pickedImages = [];
+          _pickedVideo = null;
+          _videoDuration = null;
           _expanded = false;
           _publishing = false;
         });
         _showSnack('تم النشر بنجاح ✓', success: true);
-        widget.onPublished();
+        if (mounted) widget.onPublished();
       } else {
         _showSnack('فشل النشر. حاول مجدداً');
         setState(() => _publishing = false);
@@ -442,16 +509,108 @@ class _AdminPublishBoxState extends State<_AdminPublishBox> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    // Image picker (up to 4 images)
-                    _ImagesPickerGrid(
-                      images: _pickedImages,
-                      onAdd: _pickImages,
-                      onRemove: _removeImage,
-                      fieldBg: fieldBg,
-                      borderColor: borderColor,
-                      hintColor: hintColor,
-                      gold: gold,
+                    // تبويب نوع المحتوى: صور / فيديو
+                    Container(
+                      decoration: BoxDecoration(
+                        color: fieldBg,
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(color: borderColor),
+                      ),
+                      padding: const EdgeInsets.all(4),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: GestureDetector(
+                              onTap: () => setState(() => _mediaType = 'image'),
+                              child: AnimatedContainer(
+                                duration: const Duration(milliseconds: 200),
+                                height: 36,
+                                decoration: BoxDecoration(
+                                  color: _mediaType == 'image'
+                                      ? gold
+                                      : Colors.transparent,
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                                child: Row(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Icon(Icons.image_rounded,
+                                        size: 16,
+                                        color: _mediaType == 'image'
+                                            ? Colors.white
+                                            : hintColor),
+                                    const SizedBox(width: 6),
+                                    Text('صور',
+                                        style: TextStyle(
+                                            color: _mediaType == 'image'
+                                                ? Colors.white
+                                                : hintColor,
+                                            fontWeight: FontWeight.w700,
+                                            fontSize: 13)),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+                          Expanded(
+                            child: GestureDetector(
+                              onTap: () => setState(() => _mediaType = 'video'),
+                              child: AnimatedContainer(
+                                duration: const Duration(milliseconds: 200),
+                                height: 36,
+                                decoration: BoxDecoration(
+                                  color: _mediaType == 'video'
+                                      ? gold
+                                      : Colors.transparent,
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                                child: Row(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Icon(Icons.videocam_rounded,
+                                        size: 16,
+                                        color: _mediaType == 'video'
+                                            ? Colors.white
+                                            : hintColor),
+                                    const SizedBox(width: 6),
+                                    Text('فيديو',
+                                        style: TextStyle(
+                                            color: _mediaType == 'video'
+                                                ? Colors.white
+                                                : hintColor,
+                                            fontWeight: FontWeight.w700,
+                                            fontSize: 13)),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
+                    const SizedBox(height: 12),
+                    // محتوى الوسائط
+                    if (_mediaType == 'image')
+                      _ImagesPickerGrid(
+                        images: _pickedImages,
+                        onAdd: _pickImages,
+                        onRemove: _removeImage,
+                        fieldBg: fieldBg,
+                        borderColor: borderColor,
+                        hintColor: hintColor,
+                        gold: gold,
+                      )
+                    else
+                      _VideoPickerBox(
+                        videoFile: _pickedVideo,
+                        duration: _videoDuration,
+                        onPick: _pickVideo,
+                        onRemove: _removeVideo,
+                        fieldBg: fieldBg,
+                        borderColor: borderColor,
+                        hintColor: hintColor,
+                        gold: gold,
+                      ),
                     const SizedBox(height: 12),
                     // Content field
                     Container(
@@ -672,7 +831,145 @@ class _ImagesPickerGrid extends StatelessWidget {
     );
   }
 }
+// ─────────────────────────────────────────────────────────────────────────────
+// Video Picker Box
+// ─────────────────────────────────────────────────────────────────────────────
 
+class _VideoPickerBox extends StatelessWidget {
+  final File? videoFile;
+  final Duration? duration;
+  final VoidCallback onPick;
+  final VoidCallback onRemove;
+  final Color fieldBg;
+  final Color borderColor;
+  final Color hintColor;
+  final Color gold;
+
+  const _VideoPickerBox({
+    required this.videoFile,
+    required this.duration,
+    required this.onPick,
+    required this.onRemove,
+    required this.fieldBg,
+    required this.borderColor,
+    required this.hintColor,
+    required this.gold,
+  });
+
+  String _formatDuration(Duration d) {
+    final m = d.inMinutes.toString().padLeft(2, '0');
+    final s = (d.inSeconds % 60).toString().padLeft(2, '0');
+    return '$m:$s';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (videoFile == null) {
+      return GestureDetector(
+        onTap: onPick,
+        child: Container(
+          height: 120,
+          decoration: BoxDecoration(
+            color: fieldBg,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: borderColor, width: 1.5),
+          ),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(Icons.videocam_rounded, color: gold.withOpacity(0.7), size: 36),
+              const SizedBox(height: 8),
+              Text('اضغط لاختيار فيديو',
+                  style: TextStyle(
+                      color: hintColor,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600)),
+              const SizedBox(height: 4),
+              Text('الحد الأقصى: دقيقتان',
+                  style: TextStyle(
+                      color: hintColor.withOpacity(0.7), fontSize: 11.5)),
+            ],
+          ),
+        ),
+      );
+    }
+
+    return Container(
+      height: 100,
+      decoration: BoxDecoration(
+        color: fieldBg,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: gold.withOpacity(0.5), width: 1.5),
+      ),
+      child: Row(
+        textDirection: TextDirection.rtl,
+        children: [
+          const SizedBox(width: 16),
+          Container(
+            width: 50,
+            height: 50,
+            decoration: BoxDecoration(
+              color: gold.withOpacity(0.15),
+              shape: BoxShape.circle,
+            ),
+            child: Icon(Icons.videocam_rounded, color: gold, size: 26),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Text(
+                  videoFile!.path.split('/').last,
+                  textDirection: TextDirection.rtl,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                      color: hintColor,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600),
+                ),
+                if (duration != null) ...[
+                  const SizedBox(height: 4),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    children: [
+                      Icon(Icons.timer_rounded, size: 13, color: gold),
+                      const SizedBox(width: 4),
+                      Text(
+                        _formatDuration(duration!),
+                        style: TextStyle(
+                            color: gold,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w700),
+                      ),
+                    ],
+                  ),
+                ],
+              ],
+            ),
+          ),
+          const SizedBox(width: 10),
+          GestureDetector(
+            onTap: onRemove,
+            child: Container(
+              width: 30,
+              height: 30,
+              margin: const EdgeInsets.only(left: 12),
+              decoration: BoxDecoration(
+                color: Colors.red.withOpacity(0.15),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(Icons.close_rounded,
+                  color: Colors.red, size: 16),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
 // ─────────────────────────────────────────────────────────────────────────────
 // Model
 // ─────────────────────────────────────────────────────────────────────────────
@@ -753,7 +1050,28 @@ class _PublicationPost {
     return 'https://majidalbana.com/uploads/$image';
   }
 
+  bool get isVideo {
+    if (images.length == 1 && images.first == '__video__') return false;
+    // تحقق من images JSON للعلامة الخاصة
+    return false;
+  }
+
+  String? get videoUrl {
+    // نتحقق من وجود مفتاح __video__ في images
+    if (image.isNotEmpty) {
+      final ext = image.split('.').last.toLowerCase();
+      if (['mp4', 'mov', 'webm', '3gp'].contains(ext)) {
+        if (image.startsWith('http://') || image.startsWith('https://')) {
+          return image;
+        }
+        return 'https://majidalbana.com/uploads/$image';
+      }
+    }
+    return null;
+  }
+
   List<String> get imageUrls {
+    if (videoUrl != null) return [];
     final list = images.isNotEmpty ? images : (image.isNotEmpty ? [image] : <String>[]);
     return list.map((img) {
       if (img.startsWith('http://') || img.startsWith('https://')) return img;
@@ -801,6 +1119,15 @@ class _Comment {
     );
   }
 
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'post_id': postId,
+    'user_name': userName,
+    'user_avatar': userAvatar,
+    'comment_text': text,
+    'created_at': createdAt,
+  };
+
   String get timeAgo {
     if (createdAt.isEmpty) return '';
     try {
@@ -829,6 +1156,7 @@ class _PostCard extends StatefulWidget {
   final bool showOfflineBanner;
   final bool isSupervisor;
   final void Function(_PublicationPost) onEdited;
+  final void Function(int) onDeleted;
 
   const _PostCard({
     required this.post,
@@ -836,6 +1164,7 @@ class _PostCard extends StatefulWidget {
     this.showOfflineBanner = false,
     required this.isSupervisor,
     required this.onEdited,
+    required this.onDeleted,
   });
 
   @override
@@ -1167,7 +1496,7 @@ Future<void> _editComment(int commentId, String newText) async {
   }
 
   void _openEditSheet() {
-    showModalBottomSheet(
+    showModalBottomSheet<String>(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
@@ -1176,7 +1505,11 @@ Future<void> _editComment(int commentId, String newText) async {
         isDark: widget.isDark,
         onSaved: widget.onEdited,
       ),
-    );
+    ).then((result) {
+      if (result == 'deleted' && mounted) {
+        widget.onDeleted(widget.post.id);
+      }
+    });
   }
 
   void _showLoginSheet() {
@@ -1284,7 +1617,13 @@ void _openCommentsSheet({bool autoFocus = false}) {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            if (p.imageUrls.isNotEmpty)
+            if (p.videoUrl != null)
+              _PostVideoPlayer(
+                videoUrl: p.videoUrl!,
+                isDark: isDark,
+                post: p,
+              )
+            else if (p.imageUrls.isNotEmpty)
               _PostImageGallery(
                 imageUrls: p.imageUrls,
                 isDark: isDark,
@@ -1496,23 +1835,7 @@ void _openCommentsSheet({bool autoFocus = false}) {
                       final text = widget.post.content.isNotEmpty
                           ? '${widget.post.content.substring(0, widget.post.content.length.clamp(0, 200))}..\n\nادخل على الرابط لقراءة المقال:\n$url'
                           : 'منشور د.ماجد البنا\n\nادخل على الرابط لقراءة المقال:\n$url';
-
-                      if (widget.post.image.trim().isNotEmpty) {
-                        try {
-                          final response = await http.get(Uri.parse(widget.post.imageUrl));
-                          final tempDir = await getTemporaryDirectory();
-                          final file = File('${tempDir.path}/share_image.jpg');
-                          await file.writeAsBytes(response.bodyBytes);
-                          await Share.shareXFiles(
-                            [XFile(file.path)],
-                            text: text,
-                          );
-                        } catch (_) {
-                          await Share.share(text);
-                        }
-                      } else {
-                        await Share.share(text);
-                      }
+                      await Share.share(text);
                     },
                     behavior: HitTestBehavior.opaque,
                     child: Container(
@@ -2498,13 +2821,176 @@ class _LoginSheetState extends State<_LoginSheet> {
 class _PostDetailPage extends StatefulWidget {
   final _PublicationPost post;
   final bool isDark;
+  final VideoPlayerController? existingController;
 
-  const _PostDetailPage({required this.post, required this.isDark});
+  const _PostDetailPage({
+    required this.post,
+    required this.isDark,
+    this.existingController,
+  });
 
   @override
   State<_PostDetailPage> createState() => _PostDetailPageState();
 }
+class _ExistingVideoPlayer extends StatefulWidget {
+  final VideoPlayerController controller;
+  final bool isDark;
 
+  const _ExistingVideoPlayer({
+    required this.controller,
+    required this.isDark,
+  });
+
+  @override
+  State<_ExistingVideoPlayer> createState() => _ExistingVideoPlayerState();
+}
+
+class _ExistingVideoPlayerState extends State<_ExistingVideoPlayer> {
+  static const gold = Color(0xFFD4A017);
+  bool _muted = false;
+  bool _isDraggingSlider = false;
+
+  String _fmt(Duration d) {
+    final m = d.inMinutes.toString().padLeft(2, '0');
+    final s = (d.inSeconds % 60).toString().padLeft(2, '0');
+    return '$m:$s';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final ctrl = widget.controller;
+    return AspectRatio(
+      aspectRatio: ctrl.value.aspectRatio,
+      child: Stack(
+        children: [
+          Positioned.fill(child: VideoPlayer(ctrl)),
+
+          // أزرار الكتم والتشغيل
+          Positioned(
+            top: 8,
+            left: 10,
+            child: Row(
+              children: [
+                GestureDetector(
+                  onTap: () {
+                    setState(() {
+                      _muted = !_muted;
+                      ctrl.setVolume(_muted ? 0 : 1.0);
+                    });
+                  },
+                  child: Container(
+                    width: 32,
+                    height: 32,
+                    decoration: BoxDecoration(
+                      color: Colors.black.withOpacity(0.5),
+                      shape: BoxShape.circle,
+                    ),
+                    child: Icon(
+                      _muted ? Icons.volume_off_rounded : Icons.volume_up_rounded,
+                      color: Colors.white,
+                      size: 17,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                ValueListenableBuilder<VideoPlayerValue>(
+                  valueListenable: ctrl,
+                  builder: (_, value, __) => GestureDetector(
+                    onTap: () => setState(() {
+                      value.isPlaying ? ctrl.pause() : ctrl.play();
+                    }),
+                    child: Container(
+                      width: 32,
+                      height: 32,
+                      decoration: BoxDecoration(
+                        color: Colors.black.withOpacity(0.5),
+                        shape: BoxShape.circle,
+                      ),
+                      child: Icon(
+                        value.isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
+                        color: Colors.white,
+                        size: 17,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          // شريط التمرير
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: -9.5,
+            child: ValueListenableBuilder<VideoPlayerValue>(
+              valueListenable: ctrl,
+              builder: (_, value, __) {
+                if (!value.isInitialized) return const SizedBox();
+                final dur = value.duration.inMilliseconds.toDouble();
+                final safeMax = dur > 1 ? dur : 1.0;
+                final pos = value.position.inMilliseconds.toDouble().clamp(0.0, safeMax);
+                return Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (_isDraggingSlider)
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 14),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Text(_fmt(value.duration),
+                                style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w700)),
+                            Text(_fmt(value.position),
+                                style: const TextStyle(color: Color.fromARGB(255, 255, 255, 255), fontSize: 11, fontWeight: FontWeight.w700)),
+                          ],
+                        ),
+                      ),
+                    SliderTheme(
+                      data: SliderTheme.of(context).copyWith(
+                        trackHeight: _isDraggingSlider ? 3.5 : 2.5,
+                        trackShape: const RectangularSliderTrackShape(),
+                        thumbShape: RoundSliderThumbShape(enabledThumbRadius: _isDraggingSlider ? 7 : 5),
+                        overlayShape: const RoundSliderOverlayShape(overlayRadius: 14),
+                        activeTrackColor: const Color.fromARGB(255, 255, 255, 255),
+                        inactiveTrackColor: Colors.white30,
+                        thumbColor: const Color.fromARGB(255, 255, 255, 255),
+                        overlayColor: const Color.fromARGB(255, 255, 255, 255).withOpacity(0.25),
+                      ),
+                      child: Directionality(
+                        textDirection: TextDirection.rtl,
+                       child: Directionality(
+                        textDirection: TextDirection.rtl,
+                        child: SizedBox(
+                          height: 20,
+                          child: Slider(
+                            value: pos,
+                            min: 0,
+                            max: safeMax,
+                            onChangeStart: (_) {
+                              ctrl.pause();
+                              setState(() => _isDraggingSlider = true);
+                            },
+                            onChanged: (v) => ctrl.seekTo(Duration(milliseconds: v.toInt())),
+                            onChangeEnd: (_) {
+                              ctrl.play();
+                              setState(() => _isDraggingSlider = false);
+                            },
+                          ),
+                        ),
+                      ),
+                      ),
+                    ),
+                  ],
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
 class _PostDetailPageState extends State<_PostDetailPage> {
   static const gold = Color(0xFFD4A017);
   static const String _commentsApi =
@@ -2529,12 +3015,126 @@ class _PostDetailPageState extends State<_PostDetailPage> {
   bool _liked = false;
   int _likesCount = 0;
   bool _likeLoading = false;
+  VideoPlayerController? _videoController;
+  bool _videoOwned = false;
+  Timer? _refreshTimer;
+
+  String get _cacheKey => 'post_detail_${widget.post.id}';
 
   @override
   void initState() {
     super.initState();
-    _loadComments();
-    _loadLikes();
+    _loadFromCacheThenNetwork();
+    if (widget.existingController != null) {
+      _videoController = widget.existingController;
+      _videoOwned = false;
+    }
+    // تحقق كل 5 دقائق من وجود تحديثات
+    _refreshTimer = Timer.periodic(const Duration(minutes: 5), (_) {
+      _silentRefresh();
+    });
+  }
+
+  // تحميل من الكاش أولاً ثم تحديث من الشبكة
+  Future<void> _loadFromCacheThenNetwork() async {
+    await _loadFromCache();
+    await _fetchFromNetwork();
+  }
+
+  Future<void> _loadFromCache() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(_cacheKey);
+      if (raw == null) return;
+      final data = jsonDecode(raw) as Map<String, dynamic>;
+      if (!mounted) return;
+      setState(() {
+        _liked = data['liked'] == true;
+        _likesCount = (data['likes_count'] as num?)?.toInt() ?? 0;
+        final rawComments = data['comments'];
+        if (rawComments is List) {
+          _comments = rawComments
+              .whereType<Map>()
+              .map((e) => _Comment.fromJson(Map<String, dynamic>.from(e)))
+              .toList();
+          _commentsLoaded = true;
+          _loadingComments = false;
+        }
+      });
+    } catch (_) {}
+  }
+
+  Future<void> _saveToCache() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final data = {
+        'liked': _liked,
+        'likes_count': _likesCount,
+        'comments': _comments.map((c) => c.toJson()).toList(),
+      };
+      await prefs.setString(_cacheKey, jsonEncode(data));
+    } catch (_) {}
+  }
+
+  // تحميل من الشبكة وتحديث الـ UI إن وجد تغيير
+  Future<void> _fetchFromNetwork() async {
+    await Future.wait([_loadComments(), _loadLikes()]);
+  }
+
+  // تحديث صامت كل 5 دقائق — بدون loading indicator
+  Future<void> _silentRefresh() async {
+    try {
+      final user = FirebaseAuth.instance.currentUser;
+      final email = user?.email ?? '';
+
+      // تحديث الإعجابات
+      final likeUri = Uri.parse(_getLikesApi).replace(queryParameters: {
+        'post_id': '${widget.post.id}',
+        if (email.isNotEmpty) 'user_email': email,
+      });
+      final likeRes = await http.get(likeUri).timeout(const Duration(seconds: 10));
+      if (likeRes.statusCode == 200 && mounted) {
+        final likeData = jsonDecode(utf8.decode(likeRes.bodyBytes));
+        if (likeData is Map && likeData['success'] == true) {
+          final newLiked = likeData['liked'] == true;
+          final newCount = int.tryParse('${likeData['likes_count'] ?? _likesCount}') ?? _likesCount;
+          if (newLiked != _liked || newCount != _likesCount) {
+            setState(() {
+              _liked = newLiked;
+              _likesCount = newCount;
+            });
+          }
+        }
+      }
+
+      // تحديث التعليقات
+      final commentsRes = await http.get(
+        Uri.parse('$_commentsApi?post_id=${widget.post.id}'),
+      ).timeout(const Duration(seconds: 10));
+      if (commentsRes.statusCode == 200 && mounted) {
+        final commentsData = jsonDecode(utf8.decode(commentsRes.bodyBytes));
+        if (commentsData is List) {
+          final fresh = commentsData
+              .whereType<Map>()
+              .map((e) => _Comment.fromJson(Map<String, dynamic>.from(e)))
+              .toList();
+          // تحقق إذا في تغيير قبل تحديث الـ UI
+          final changed = fresh.length != _comments.length ||
+              fresh.any((c) {
+                final old = _comments.firstWhere(
+                  (o) => o.id == c.id,
+                  orElse: () => _Comment(
+                    id: -1, postId: 0, userName: '', userAvatar: '', text: '', createdAt: ''),
+                );
+                return old.id == -1 || old.text != c.text;
+              });
+          if (changed && mounted) {
+            setState(() => _comments = fresh);
+            await _saveToCache();
+          }
+        }
+      }
+    } catch (_) {}
   }
 
   Future<void> _loadLikes() async {
@@ -2554,6 +3154,7 @@ class _PostDetailPageState extends State<_PostDetailPage> {
             _likesCount = int.tryParse('${data['likes_count'] ?? 0}') ?? 0;
             _liked = data['liked'] == true;
           });
+          await _saveToCache();
         }
       }
     } catch (_) {}
@@ -2613,13 +3214,15 @@ class _PostDetailPageState extends State<_PostDetailPage> {
 
   @override
   void dispose() {
+    _refreshTimer?.cancel();
     _commentCtrl.dispose();
     _scrollCtrl.dispose();
+    if (_videoOwned) _videoController?.dispose();
     super.dispose();
   }
 
   Future<void> _loadComments() async {
-    setState(() => _loadingComments = true);
+    if (!_commentsLoaded) setState(() => _loadingComments = true);
     try {
       final res = await http.get(
         Uri.parse('$_commentsApi?post_id=${widget.post.id}'),
@@ -2633,7 +3236,9 @@ class _PostDetailPageState extends State<_PostDetailPage> {
                 .whereType<Map>()
                 .map((e) => _Comment.fromJson(Map<String, dynamic>.from(e)))
                 .toList();
+            _commentsLoaded = true;
           });
+          await _saveToCache();
         }
       }
     } catch (_) {} finally {
@@ -2779,9 +3384,16 @@ Future<void> _editComment(int commentId, String newText) async {
         : Colors.black.withOpacity(0.07);
     final currentUser = FirebaseAuth.instance.currentUser;
 
-    return Scaffold(
-      backgroundColor: bgColor,
-      appBar: AppBar(
+    return GestureDetector(
+      onHorizontalDragEnd: (details) {
+        if (details.primaryVelocity != null &&
+            details.primaryVelocity!.abs() > 300) {
+          Navigator.of(context).pop();
+        }
+      },
+      child: Scaffold(
+        backgroundColor: bgColor,
+        appBar: AppBar(
         backgroundColor: isDark ? const Color(0xFF181818) : Colors.white,
         elevation: 0,
         centerTitle: true,
@@ -2812,23 +3424,7 @@ Future<void> _editComment(int commentId, String newText) async {
               final text = p.content.isNotEmpty
                   ? '${p.content.substring(0, p.content.length.clamp(0, 200))}..\n\nادخل على الرابط لقراءة المقال:\n$url'
                   : 'منشور د.ماجد البنا\n\nادخل على الرابط لقراءة المقال:\n$url';
-
-              if (p.image.trim().isNotEmpty) {
-                try {
-                  final response = await http.get(Uri.parse(p.imageUrl));
-                  final tempDir = await getTemporaryDirectory();
-                  final file = File('${tempDir.path}/share_image.jpg');
-                  await file.writeAsBytes(response.bodyBytes);
-                  await Share.shareXFiles(
-                    [XFile(file.path)],
-                    text: text,
-                  );
-                } catch (_) {
-                  await Share.share(text);
-                }
-              } else {
-                await Share.share(text);
-              }
+              await Share.share(text);
             },
             child: Container(
               margin: const EdgeInsets.only(right: 12),
@@ -2865,8 +3461,19 @@ Future<void> _editComment(int commentId, String newText) async {
               controller: _scrollCtrl,
               padding: const EdgeInsets.only(bottom: 16),
               children: [
-                // Post Image
-                if (p.imageUrls.isNotEmpty)
+                // Post Image / Video
+if (p.videoUrl != null)
+              _videoController != null
+                  ? _ExistingVideoPlayer(
+                      controller: _videoController!,
+                      isDark: widget.isDark,
+                    )
+                  : _PostVideoPlayer(
+                      videoUrl: p.videoUrl!,
+                      isDark: widget.isDark,
+                      post: p,
+                    )
+                else if (p.imageUrls.isNotEmpty)
                   _PostImageGallery(imageUrls: p.imageUrls, isDark: isDark),
 
                 // Post Content Card
@@ -2925,19 +3532,27 @@ Future<void> _editComment(int commentId, String newText) async {
                           const Spacer(),
                           // Like button
                           GestureDetector(
-                            onTap: _toggleLike,
+                            onTap: () {
+                              HapticFeedback.lightImpact();
+                              _toggleLike();
+                            },
                             behavior: HitTestBehavior.opaque,
                             child: Padding(
                               padding: const EdgeInsets.symmetric(
                                   horizontal: 8, vertical: 6),
                               child: Row(
                                 children: [
-                                  Icon(
-                                    _liked
-                                        ? Icons.favorite_rounded
-                                        : Icons.favorite_border_rounded,
-                                    size: 24,
-                                    color: _liked ? Colors.red : gold,
+                                  AnimatedScale(
+                                    scale: _liked ? 1.2 : 1.0,
+                                    duration: const Duration(milliseconds: 150),
+                                    curve: Curves.elasticOut,
+                                    child: Icon(
+                                      _liked
+                                          ? Icons.favorite_rounded
+                                          : Icons.favorite_border_rounded,
+                                      size: 24,
+                                      color: _liked ? Colors.red : gold,
+                                    ),
                                   ),
                                   if (_likesCount > 0) ...[
                                     const SizedBox(width: 6),
@@ -3087,6 +3702,7 @@ Future<void> _editComment(int commentId, String newText) async {
                   ),
           ),
         ],
+      ),
       ),
     );
   }
@@ -3376,7 +3992,70 @@ class _EditPostSheetState extends State<_EditPostSheet> {
     }
   }
 
+  Future<void> _delete() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: widget.isDark ? const Color(0xFF1E1E1E) : Colors.white,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Text(
+          'حذف المنشور',
+          textDirection: TextDirection.rtl,
+          style: TextStyle(
+            color: Colors.red,
+            fontWeight: FontWeight.w800,
+            fontSize: 17,
+          ),
+        ),
+        content: const Text(
+          'هل أنت متأكد من حذف هذا المنشور؟\nلا يمكن التراجع عن هذه العملية.',
+          textDirection: TextDirection.rtl,
+          textAlign: TextAlign.right,
+          style: TextStyle(fontSize: 14, height: 1.6),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('إلغاء',
+                style: TextStyle(color: Colors.grey, fontWeight: FontWeight.w600)),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red,
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              elevation: 0,
+            ),
+            child: const Text('حذف', style: TextStyle(fontWeight: FontWeight.w800)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    setState(() => _saving = true);
+    try {
+      final response = await http.post(
+        Uri.parse('https://majidalbana.com/admin/posts/delete_post.php'),
+        body: {'id': '${widget.post.id}'},
+      ).timeout(const Duration(seconds: 20));
+      final json = jsonDecode(response.body);
+      if (json['success'] == true) {
+        if (mounted) Navigator.pop(context, 'deleted');
+      } else {
+        _showSnack('فشل الحذف. حاول مجدداً');
+        setState(() => _saving = false);
+      }
+    } catch (_) {
+      _showSnack('خطأ في الاتصال');
+      setState(() => _saving = false);
+    }
+  }
+
   void _showSnack(String msg, {bool success = false}) {
+    
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
       content: Text(msg,
@@ -3576,40 +4255,62 @@ class _EditPostSheetState extends State<_EditPostSheet> {
                       ),
                     ),
                     const SizedBox(height: 14),
-                    SizedBox(
-                      height: 50,
-                      child: ElevatedButton(
-                        onPressed: _saving ? null : _save,
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: gold,
-                          foregroundColor: Colors.white,
-                          disabledBackgroundColor:
-                              gold.withOpacity(0.5),
-                          elevation: 0,
-                          shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(16)),
-                        ),
-                        child: _saving
-                            ? const SizedBox(
-                                width: 22,
-                                height: 22,
-                                child: CircularProgressIndicator(
-                                    color: Colors.white,
-                                    strokeWidth: 2.5),
-                              )
-                            : const Row(
-                                mainAxisAlignment:
-                                    MainAxisAlignment.center,
-                                children: [
-                                  Icon(Icons.check_rounded, size: 19),
-                                  SizedBox(width: 8),
-                                  Text('حفظ التعديلات',
-                                      style: TextStyle(
-                                          fontSize: 15,
-                                          fontWeight: FontWeight.w800)),
-                                ],
+                    Row(
+                      children: [
+                        Expanded(
+                          child: SizedBox(
+                            height: 50,
+                            child: ElevatedButton(
+                              onPressed: _saving ? null : _save,
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: gold,
+                                foregroundColor: Colors.white,
+                                disabledBackgroundColor: gold.withOpacity(0.5),
+                                elevation: 0,
+                                shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(16)),
                               ),
-                      ),
+                              child: _saving
+                                  ? const SizedBox(
+                                      width: 22,
+                                      height: 22,
+                                      child: CircularProgressIndicator(
+                                          color: Colors.white,
+                                          strokeWidth: 2.5),
+                                    )
+                                  : const Row(
+                                      mainAxisAlignment: MainAxisAlignment.center,
+                                      children: [
+                                        Icon(Icons.check_rounded, size: 19),
+                                        SizedBox(width: 8),
+                                        Text('حفظ التعديلات',
+                                            style: TextStyle(
+                                                fontSize: 15,
+                                                fontWeight: FontWeight.w800)),
+                                      ],
+                                    ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        SizedBox(
+                          height: 50,
+                          width: 50,
+                          child: ElevatedButton(
+                            onPressed: _saving ? null : _delete,
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.red.shade700,
+                              foregroundColor: Colors.white,
+                              disabledBackgroundColor: Colors.red.withOpacity(0.4),
+                              elevation: 0,
+                              padding: EdgeInsets.zero,
+                              shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(16)),
+                            ),
+                            child: const Icon(Icons.delete_rounded, size: 22),
+                          ),
+                        ),
+                      ],
                     ),
                   ],
                 ),
@@ -3622,6 +4323,525 @@ class _EditPostSheetState extends State<_EditPostSheet> {
   }
 }
 
+
+
+class _VideoControllerProvider extends InheritedWidget {
+  final VideoPlayerController controller;
+
+  const _VideoControllerProvider({
+    required this.controller,
+    required super.child,
+  });
+
+  static _VideoControllerProvider? of(BuildContext context) {
+    return context.dependOnInheritedWidgetOfExactType<_VideoControllerProvider>();
+  }
+
+  @override
+  bool updateShouldNotify(_VideoControllerProvider old) =>
+      controller != old.controller;
+}
+// ─────────────────────────────────────────────────────────────────────────────
+// Post Video Player — تلقائي، بدون أزرار تشغيل/إيقاف، مع شريط تمرير وكتم
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _PostVideoPlayer extends StatefulWidget {
+  final String videoUrl;
+  final bool isDark;
+  final _PublicationPost post;
+
+  const _PostVideoPlayer({
+    required this.videoUrl,
+    required this.isDark,
+    required this.post,
+  });
+
+  @override
+  State<_PostVideoPlayer> createState() => _PostVideoPlayerState();
+}
+class _VideoFullPage extends StatefulWidget {
+  final VideoPlayerController controller;
+  final bool isDark;
+  final VoidCallback onReturn;
+
+  const _VideoFullPage({
+    required this.controller,
+    required this.isDark,
+    required this.onReturn,
+  });
+
+  @override
+  State<_VideoFullPage> createState() => _VideoFullPageState();
+}
+
+class _VideoFullPageState extends State<_VideoFullPage> {
+  static const gold = Color(0xFFD4A017);
+  bool _muted = false;
+  bool _isDraggingSlider = false;
+
+  String _fmt(Duration d) {
+    final m = d.inMinutes.toString().padLeft(2, '0');
+    final s = (d.inSeconds % 60).toString().padLeft(2, '0');
+    return '$m:$s';
+  }
+
+  @override
+  void dispose() {
+    widget.onReturn();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final ctrl = widget.controller;
+
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: SafeArea(
+        child: Stack(
+          children: [
+            // الفيديو في المنتصف
+            Center(
+              child: AspectRatio(
+                aspectRatio: ctrl.value.aspectRatio,
+                child: VideoPlayer(ctrl),
+              ),
+            ),
+
+            // زر الرجوع
+            Positioned(
+              top: 8,
+              right: 12,
+              child: GestureDetector(
+                onTap: () => Navigator.of(context).pop(),
+                child: Container(
+                  width: 36,
+                  height: 36,
+                  decoration: BoxDecoration(
+                    color: Colors.black.withOpacity(0.55),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(Icons.arrow_back_rounded,
+                      color: Colors.white, size: 20),
+                ),
+              ),
+            ),
+
+            // أزرار الكتم والتشغيل
+            Positioned(
+              top: 8,
+              left: 10,
+              child: Row(
+                children: [
+                  GestureDetector(
+                    onTap: () {
+                      setState(() {
+                        _muted = !_muted;
+                        ctrl.setVolume(_muted ? 0 : 1.0);
+                      });
+                    },
+                    child: Container(
+                      width: 32,
+                      height: 32,
+                      decoration: BoxDecoration(
+                        color: Colors.black.withOpacity(0.5),
+                        shape: BoxShape.circle,
+                      ),
+                      child: Icon(
+                        _muted
+                            ? Icons.volume_off_rounded
+                            : Icons.volume_up_rounded,
+                        color: Colors.white,
+                        size: 17,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  ValueListenableBuilder<VideoPlayerValue>(
+                    valueListenable: ctrl,
+                    builder: (_, value, __) {
+                      return GestureDetector(
+                        onTap: () {
+                          setState(() {
+                            value.isPlaying ? ctrl.pause() : ctrl.play();
+                          });
+                        },
+                        child: Container(
+                          width: 32,
+                          height: 32,
+                          decoration: BoxDecoration(
+                            color: Colors.black.withOpacity(0.5),
+                            shape: BoxShape.circle,
+                          ),
+                          child: Icon(
+                            value.isPlaying
+                                ? Icons.pause_rounded
+                                : Icons.play_arrow_rounded,
+                            color: Colors.white,
+                            size: 17,
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ],
+              ),
+            ),
+
+            // شريط التمرير في الأسفل
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 0,
+              child: ValueListenableBuilder<VideoPlayerValue>(
+                valueListenable: ctrl,
+                builder: (_, value, __) {
+                  if (!value.isInitialized) return const SizedBox();
+                  final dur = value.duration.inMilliseconds.toDouble();
+                  final safeMax = dur > 1 ? dur : 1.0;
+                  final pos = value.position.inMilliseconds
+                      .toDouble()
+                      .clamp(0.0, safeMax);
+
+                  return Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (_isDraggingSlider)
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 14),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Text(_fmt(value.duration),
+                                  style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w700)),
+                              Text(_fmt(value.position),
+                                  style: const TextStyle(
+                                      color: gold,
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w700)),
+                            ],
+                          ),
+                        ),
+                      SliderTheme(
+                        data: SliderTheme.of(context).copyWith(
+                          trackHeight: _isDraggingSlider ? 3.5 : 2.5,
+                          trackShape: const RectangularSliderTrackShape(),
+                          thumbShape: RoundSliderThumbShape(
+                            enabledThumbRadius: _isDraggingSlider ? 7 : 5,
+                          ),
+                          overlayShape: const RoundSliderOverlayShape(overlayRadius: 14),
+                          activeTrackColor: gold,
+                          inactiveTrackColor: Colors.white30,
+                          thumbColor: gold,
+                          overlayColor: gold.withOpacity(0.25),
+                        ),
+                        child: SizedBox(
+                          height: 20,
+                          child: Slider(
+                            value: pos,
+                            min: 0,
+                            max: safeMax,
+                            onChangeStart: (_) {
+                              ctrl.pause();
+                              setState(() => _isDraggingSlider = true);
+                            },
+                            onChanged: (v) => ctrl.seekTo(
+                                Duration(milliseconds: v.toInt())),
+                            onChangeEnd: (_) {
+                              ctrl.play();
+                              setState(() => _isDraggingSlider = false);
+                            },
+                          ),
+                        ),
+                      ),
+                    ],
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+class _PostVideoPlayerState extends State<_PostVideoPlayer>
+    with AutomaticKeepAliveClientMixin {
+  static const gold = Color(0xFFD4A017);
+  VideoPlayerController? _controller;
+  bool _initialized = false;
+  bool _muted = false;
+  bool _showControls = true;
+  bool _disposed = false;
+  bool _isDraggingSlider = false;
+  bool _isTransferred = false;
+
+  @override
+  bool get wantKeepAlive => true;
+
+  @override
+  void initState() {
+    super.initState();
+    _initVideo();
+  }
+
+  Future<void> _initVideo() async {
+    final ctrl = VideoPlayerController.networkUrl(
+      Uri.parse(widget.videoUrl),
+      videoPlayerOptions: VideoPlayerOptions(mixWithOthers: true),
+    );
+    try {
+      await ctrl.initialize();
+    } catch (e) {
+      debugPrint('Video init error: $e');
+      ctrl.dispose();
+      return;
+    }
+    // تحقق بعد await — هل الـ widget لا يزال موجوداً؟
+    if (!mounted) {
+      ctrl.dispose();
+      return;
+    }
+    await ctrl.setLooping(true);
+    await ctrl.setVolume(1.0);
+    await ctrl.play();
+    setState(() {
+      _controller = ctrl;
+      _initialized = true;
+    });
+    _scheduleHideControls();
+  }
+
+  void _scheduleHideControls() {
+    Future.delayed(const Duration(seconds: 3), () {
+      if (mounted && !_disposed) setState(() => _showControls = false);
+    });
+  }
+
+@override
+  void dispose() {
+    _disposed = true;
+    if (!_isTransferred) _controller?.dispose();
+    super.dispose();
+  }
+
+  void _toggleMute() {
+    if (_controller == null) return;
+    setState(() {
+      _muted = !_muted;
+      _controller!.setVolume(_muted ? 0 : 1.0);
+    });
+  }
+
+  void _onTapVideo() {
+    setState(() => _showControls = true);
+    _scheduleHideControls();
+  }
+String _fmt(Duration d) {
+    final m = d.inMinutes.toString().padLeft(2, '0');
+    final s = (d.inSeconds % 60).toString().padLeft(2, '0');
+    return '$m:$s';
+  }
+  @override
+  Widget build(BuildContext context) {
+    super.build(context);
+    if (!_initialized || _controller == null) {
+      return AspectRatio(
+        aspectRatio: 16 / 9,
+        child: Container(
+          color: widget.isDark ? const Color(0xFF222222) : const Color(0xFFEFE7D8),
+          child: const Center(
+            child: CircularProgressIndicator(color: gold, strokeWidth: 2.5),
+          ),
+        ),
+      );
+    }
+
+return VisibilityDetector(
+      key: Key('video_${widget.videoUrl}'),
+      onVisibilityChanged: (info) {
+        if (!mounted || _controller == null || _isTransferred) return;
+        if (info.visibleFraction > 0.6) {
+          if (!_controller!.value.isPlaying) _controller!.play();
+        } else {
+          if (_controller!.value.isPlaying) _controller!.pause();
+        }
+      },
+      child: GestureDetector(
+        onTap: () {
+          if (_controller == null) return;
+          setState(() => _isTransferred = true);
+          Navigator.of(context).push(
+            PageRouteBuilder(
+              pageBuilder: (_, animation, __) => FadeTransition(
+                opacity: animation,
+                child: _PostDetailPage(
+                  post: widget.post,
+                  isDark: widget.isDark,
+                  existingController: _controller,
+                ),
+              ),
+              transitionDuration: const Duration(milliseconds: 300),
+            ),
+          ).then((_) {
+            if (mounted) setState(() => _isTransferred = false);
+          });
+        },
+        behavior: HitTestBehavior.opaque,
+        child: AspectRatio(
+          aspectRatio: _controller!.value.aspectRatio,
+        child: Stack(
+          children: [
+            // الفيديو
+            Positioned.fill(child: VideoPlayer(_controller!)),
+
+            // زر الكتم — دائماً ظاهر في أعلى اليسار
+// أزرار الكتم والتشغيل — دائماً ظاهرة في أعلى اليسار
+            Positioned(
+              top: 5,
+              left: 5,
+              child: Row(
+                children: [
+                  GestureDetector(
+                    onTap: _toggleMute,
+                    child: Container(
+                      width: 24,
+                      height: 24,
+                      decoration: BoxDecoration(
+                        color: Colors.black.withOpacity(0.5),
+                        shape: BoxShape.circle,
+                      ),
+                      child: Icon(
+                        _muted
+                            ? Icons.volume_off_rounded
+                            : Icons.volume_up_rounded,
+                        color: const Color.fromARGB(199, 255, 255, 255),
+                        size: 16,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 4),
+                  GestureDetector(
+                    onTap: () {
+                      if (_controller == null) return;
+                      setState(() {
+                        _controller!.value.isPlaying
+                            ? _controller!.pause()
+                            : _controller!.play();
+                      });
+                    },
+                    child: Container(
+                      width: 24,
+                      height: 24,
+                      decoration: BoxDecoration(
+                        color: Colors.black.withOpacity(0.5),
+                        shape: BoxShape.circle,
+                      ),
+                      child: Icon(
+                        _controller!.value.isPlaying
+                            ? Icons.pause_rounded
+                            : Icons.play_arrow_rounded,
+                        color: const Color.fromARGB(199, 255, 255, 255),
+                        size: 16,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
+            // شريط التمرير في أسفل الفيديو تماماً مع عرض الوقت عند السحب
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: -9,
+              child: ValueListenableBuilder<VideoPlayerValue>(
+                valueListenable: _controller!,
+                builder: (_, value, __) {
+                  if (!value.isInitialized) return const SizedBox();
+                  final dur = value.duration.inMilliseconds.toDouble();
+                  final safeMax = dur > 1 ? dur : 1.0;
+                  final pos = value.position.inMilliseconds
+                      .toDouble()
+                      .clamp(0.0, safeMax);
+
+        
+                  return Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      // عرض الوقت فقط أثناء السحب
+                      if (_isDraggingSlider)
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 14),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Text(
+                                _fmt(value.duration),
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                              Text(
+                                _fmt(value.position),
+                                style: const TextStyle(
+                                  color: const Color.fromARGB(255, 255, 255, 255),
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      SliderTheme(
+                        data: SliderTheme.of(context).copyWith(
+                          trackHeight: _isDraggingSlider ? 3.5 : 2.5,
+                          trackShape: const RectangularSliderTrackShape(),
+                          thumbShape: RoundSliderThumbShape(
+                            enabledThumbRadius: _isDraggingSlider ? 7 : 5,
+                          ),
+                          overlayShape: const RoundSliderOverlayShape(overlayRadius: 14),
+                          activeTrackColor: const Color.fromARGB(255, 255, 255, 255),
+                          inactiveTrackColor: Colors.white30,
+                          thumbColor: const Color.fromARGB(255, 255, 255, 255),
+                          overlayColor: const Color.fromARGB(255, 255, 255, 255).withOpacity(0.25),
+                        ),
+                        child: SizedBox(
+                          height: 20,
+                          child: Slider(
+                            value: pos,
+                            min: 0,
+                            max: safeMax,
+                            onChangeStart: (_) {
+                              _controller?.pause();
+                              setState(() => _isDraggingSlider = true);
+                            },
+                            onChanged: (v) => _controller?.seekTo(
+                                Duration(milliseconds: v.toInt())),
+                            onChangeEnd: (_) {
+                              _controller?.play();
+                              setState(() => _isDraggingSlider = false);
+                            },
+                          ),
+                        ),
+                      ),
+                    ],
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    ),
+    );
+  }
+}
 // ─────────────────────────────────────────────────────────────────────────────
 // Post Image
 // ─────────────────────────────────────────────────────────────────────────────
