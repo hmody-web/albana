@@ -117,8 +117,17 @@ class _MainScaffoldState extends State<MainScaffold>
   }
 
   void _onTabTapped(int index) {
-    if (_currentIndex == index) return;
+    // 0 = قسم المنشورات حسب ترتيب PageView الحالي.
+    // إذا أنت داخل المنشورات وضغطت زر المنشورات مرة ثانية، يصعد لأعلى الصفحة.
+    if (_currentIndex == index) {
+      if (index == 0) {
+        PublicationsPageScrollBus.goTop();
+      }
+      return;
+    }
+
     setState(() => _currentIndex = index);
+
     _pageController.animateToPage(
       index,
       duration: const Duration(milliseconds: 280),
