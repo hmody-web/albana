@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
@@ -10,6 +11,7 @@ import 'package:file_picker/file_picker.dart';
 import '../widgets/shared_widgets.dart';
 import 'package:http/http.dart' as http;
 import 'package:flutter/gestures.dart';
+import 'package:share_plus/share_plus.dart';
 // ══════════════════════════════════════════════════════════════════════════════
 //  LOCAL CACHE SERVICE
 //  Saves & loads the file list from disk so it's instant on re-open.
@@ -308,6 +310,65 @@ bool _isSupervisor() {
     );
   }
 
+  Future<void> _shareFile(BuildContext shareContext, PdfFileItem file) async {
+    final box = shareContext.findRenderObject() as RenderBox?;
+
+    final title = file.title.trim().isEmpty
+        ? 'ملف من منصة د.ماجد البنا'
+        : file.title.trim();
+    final fileLink = Uri.encodeFull(file.fileUrl);
+
+    await Share.share(
+      '$title\n\n$fileLink',
+      subject: title,
+      sharePositionOrigin: box == null
+          ? const Rect.fromLTWH(0, 0, 1, 1)
+          : box.localToGlobal(Offset.zero) & box.size,
+    );
+  }
+
+  void _openFileDetails(PdfFileItem file) {
+    Navigator.of(context).push(
+      PageRouteBuilder(
+        transitionDuration: const Duration(milliseconds: 420),
+        reverseTransitionDuration: const Duration(milliseconds: 300),
+        pageBuilder: (_, animation, secondaryAnimation) {
+          return _PdfFileDetailsPage(
+            file: file,
+            isDark: widget.isDark,
+            isDownloading: _downloading.contains(file.id),
+            isDownloaded: _downloaded.contains(file.id),
+            progress: _downloadProgress[file.id] ?? 0,
+            onView: () => _openFile(file),
+            onDownload: () => _downloadFile(file),
+            onShare: (shareContext) => _shareFile(shareContext, file),
+          );
+        },
+        transitionsBuilder: (_, animation, secondaryAnimation, child) {
+          final curved = CurvedAnimation(
+            parent: animation,
+            curve: Curves.easeOutCubic,
+            reverseCurve: Curves.easeInCubic,
+          );
+
+          return FadeTransition(
+            opacity: curved,
+            child: SlideTransition(
+              position: Tween<Offset>(
+                begin: const Offset(0, 0.08),
+                end: Offset.zero,
+              ).animate(curved),
+              child: ScaleTransition(
+                scale: Tween<double>(begin: 0.985, end: 1).animate(curved),
+                child: child,
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
   // ── Build ─────────────────────────────────────────────────────────────────
 
   @override
@@ -399,6 +460,8 @@ bool _isSupervisor() {
                       searchQuery: _searchActive ? _searchCtrl.text : '',
                       onDownload: () => _downloadFile(file),
                       onView: () => _openFile(file),
+                      onShare: (shareContext) => _shareFile(shareContext, file),
+                      onOpenDetails: () => _openFileDetails(file),
                       isSupervisor: supervisor,
                       onEdited: _onFileEdited,
                     );
@@ -595,6 +658,8 @@ class _FileCard extends StatelessWidget {
   final String searchQuery;
   final VoidCallback onDownload;
   final VoidCallback onView;
+  final void Function(BuildContext shareContext) onShare;
+  final VoidCallback onOpenDetails;
   final bool isSupervisor;
   final void Function(PdfFileItem) onEdited;
 
@@ -608,6 +673,8 @@ class _FileCard extends StatelessWidget {
     required this.searchQuery,
     required this.onDownload,
     required this.onView,
+    required this.onShare,
+    required this.onOpenDetails,
     required this.isSupervisor,
     required this.onEdited,
   });
@@ -636,9 +703,15 @@ class _FileCard extends StatelessWidget {
           ),
         ],
       ),
-      child: ClipRRect(
+      child: Material(
+        color: Colors.transparent,
         borderRadius: BorderRadius.circular(24),
-        child: Column(
+        child: InkWell(
+          borderRadius: BorderRadius.circular(24),
+          onTap: onOpenDetails,
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(24),
+            child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             _HeroThumbnail(file: file, isDark: isDark),
@@ -750,6 +823,7 @@ class _FileCard extends StatelessWidget {
                     _ExpandableDescription(
                       text: file.description,
                       query: searchQuery,
+                      onReadMore: onOpenDetails,
                       baseStyle: TextStyle(
                         color: textSub,
                         fontSize: 13.5,
@@ -760,16 +834,26 @@ class _FileCard extends StatelessWidget {
                   ],
                   const SizedBox(height: 18),
                   Row(
+                    textDirection: TextDirection.rtl,
                     children: [
+                      Builder(
+                        builder: (shareContext) {
+                          return _CircleShareButton(
+                            isDark: isDark,
+                            onPressed: () => onShare(shareContext),
+                          );
+                        },
+                      ),
+                      const SizedBox(width: 8),
                       Expanded(
                         child: _ActionButton(
                           icon: Icons.visibility_rounded,
-                          label: 'عرض الملف',
+                          label: 'عرض',
                           isDark: isDark,
                           onPressed: onView,
                         ),
                       ),
-                      const SizedBox(width: 12),
+                      const SizedBox(width: 8),
                       Expanded(
                         child: _DownloadButton(
                           isDark: isDark,
@@ -785,6 +869,8 @@ class _FileCard extends StatelessWidget {
               ),
             ),
           ],
+            ),
+          ),
         ),
       ),
     );
@@ -858,94 +944,108 @@ class _ExpandableDescription extends StatefulWidget {
   final String text;
   final String query;
   final TextStyle baseStyle;
+  final VoidCallback? onReadMore;
 
   const _ExpandableDescription({
     required this.text,
     required this.query,
     required this.baseStyle,
+    this.onReadMore,
   });
 
   @override
   State<_ExpandableDescription> createState() => _ExpandableDescriptionState();
 }
 
-
 class _ExpandableDescriptionState extends State<_ExpandableDescription> {
-  bool _expanded = false;
   static const gold = Color(0xFFD4A017);
-  static const int _collapsedCharLimit = 200; // الحد الذي بعده تظهر "اقرأ المزيد"
+  static const int _collapsedCharLimit = 200;
 
-  late TapGestureRecognizer _tapRecognizer;
+  TapGestureRecognizer? _readMoreRecognizer;
 
   @override
   void initState() {
     super.initState();
-    _tapRecognizer = TapGestureRecognizer()
-      ..onTap = () => setState(() => _expanded = !_expanded);
+    _readMoreRecognizer = TapGestureRecognizer()
+      ..onTap = () {
+        HapticFeedback.selectionClick();
+        widget.onReadMore?.call();
+      };
   }
 
   @override
   void dispose() {
-    _tapRecognizer.dispose();
+    _readMoreRecognizer?.dispose();
+    _readMoreRecognizer = null;
     super.dispose();
   }
 
-  List<TextSpan> _buildSpans(String text) {
+  List<TextSpan> _buildSpans(String value) {
     final style = widget.baseStyle;
-    if (widget.query.isEmpty) return [TextSpan(text: text)];
+    final query = widget.query;
 
-    final lower = text.toLowerCase();
-    final queryLower = widget.query.toLowerCase();
+    if (query.isEmpty) return [TextSpan(text: value)];
+
+    final lower = value.toLowerCase();
+    final queryLower = query.toLowerCase();
     final spans = <TextSpan>[];
     int start = 0;
 
     while (true) {
       final idx = lower.indexOf(queryLower, start);
       if (idx == -1) {
-        spans.add(TextSpan(text: text.substring(start)));
+        spans.add(TextSpan(text: value.substring(start)));
         break;
       }
+
       if (idx > start) {
-        spans.add(TextSpan(text: text.substring(start, idx)));
+        spans.add(TextSpan(text: value.substring(start, idx)));
       }
-      spans.add(TextSpan(
-        text: text.substring(idx, idx + widget.query.length),
-        style: style.copyWith(
-          backgroundColor: const Color(0xFFD4A017).withOpacity(0.30),
-          color: const Color(0xFFD4A017),
-          fontWeight: FontWeight.w900,
+
+      spans.add(
+        TextSpan(
+          text: value.substring(idx, idx + query.length),
+          style: style.copyWith(
+            backgroundColor: const Color(0xFFD4A017).withOpacity(0.30),
+            color: const Color(0xFFD4A017),
+            fontWeight: FontWeight.w900,
+          ),
         ),
-      ));
-      start = idx + widget.query.length;
+      );
+
+      start = idx + query.length;
     }
+
     return spans;
   }
 
   @override
   Widget build(BuildContext context) {
     final isLong = widget.text.length > _collapsedCharLimit;
-    final displayText = (!_expanded && isLong)
+    final displayText = isLong
         ? widget.text.substring(0, _collapsedCharLimit).trimRight()
         : widget.text;
 
     final spans = _buildSpans(displayText);
 
     if (isLong) {
-      spans.add(TextSpan(
-        text: _expanded ? '  عرض أقل' : '... اقرأ المزيد',
-        style: widget.baseStyle.copyWith(
-          color: gold,
-          fontWeight: FontWeight.w800,
+      spans.add(
+        TextSpan(
+          text: '... اقرأ المزيد',
+          style: widget.baseStyle.copyWith(
+            color: gold,
+            fontWeight: FontWeight.w900,
+          ),
+          recognizer: _readMoreRecognizer,
         ),
-        recognizer: _tapRecognizer,
-      ));
+      );
     }
 
     return Text.rich(
       TextSpan(children: spans, style: widget.baseStyle),
       textAlign: TextAlign.right,
-      maxLines: _expanded ? null : 3,
-      overflow: _expanded ? TextOverflow.visible : TextOverflow.ellipsis,
+      maxLines: isLong ? 3 : null,
+      overflow: isLong ? TextOverflow.ellipsis : TextOverflow.visible,
     );
   }
 }
@@ -1220,6 +1320,48 @@ class _ActionButton extends StatelessWidget {
   }
 }
 
+
+class _CircleShareButton extends StatelessWidget {
+  final bool isDark;
+  final VoidCallback onPressed;
+
+  const _CircleShareButton({
+    required this.isDark,
+    required this.onPressed,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 46,
+      height: 46,
+      child: ElevatedButton(
+        onPressed: () {
+          HapticFeedback.lightImpact();
+          onPressed();
+        },
+        style: ElevatedButton.styleFrom(
+          elevation: 0,
+          padding: EdgeInsets.zero,
+          backgroundColor:
+              isDark ? const Color(0xFF1C1A10) : const Color(0xFFFDF8EC),
+          foregroundColor:
+              isDark ? const Color(0xFFE8D2B0) : const Color.fromARGB(193, 199, 129, 0),
+          shape: CircleBorder(
+            side: BorderSide(
+              color: const Color(0xFFD4A017).withOpacity(0.35),
+            ),
+          ),
+        ),
+        child: const Icon(
+          Icons.share_rounded,
+          size: 21,
+        ),
+      ),
+    );
+  }
+}
+
 // ══════════════════════════════════════════════════════════════════════════════
 //  DOWNLOAD BUTTON
 // ══════════════════════════════════════════════════════════════════════════════
@@ -1302,6 +1444,228 @@ class _DownloadButton extends StatelessWidget {
     );
   }
 }
+
+class _PdfFileDetailsPage extends StatelessWidget {
+  final PdfFileItem file;
+  final bool isDark;
+  final bool isDownloading;
+  final bool isDownloaded;
+  final double progress;
+  final VoidCallback onView;
+  final VoidCallback onDownload;
+  final void Function(BuildContext shareContext) onShare;
+
+  const _PdfFileDetailsPage({
+    required this.file,
+    required this.isDark,
+    required this.isDownloading,
+    required this.isDownloaded,
+    required this.progress,
+    required this.onView,
+    required this.onDownload,
+    required this.onShare,
+  });
+
+  static const gold = Color(0xFFD4A017);
+
+  @override
+  Widget build(BuildContext context) {
+    final pageBg = isDark ? const Color(0xFF050505) : const Color(0xFFF8F6F0);
+    final cardBg = isDark ? const Color(0xFF111111) : Colors.white;
+    final textPrimary = isDark ? const Color(0xFFEDEDED) : const Color(0xFF17120A);
+    final textSub = isDark ? Colors.white70 : Colors.black54;
+
+    return Scaffold(
+      backgroundColor: pageBg,
+      body: SafeArea(
+        bottom: false,
+        child: Directionality(
+          textDirection: TextDirection.rtl,
+          child: CustomScrollView(
+            physics: const BouncingScrollPhysics(),
+            slivers: [
+              SliverAppBar(
+                pinned: true,
+                elevation: 0,
+                backgroundColor: pageBg.withOpacity(0.96),
+                surfaceTintColor: Colors.transparent,
+                automaticallyImplyLeading: false,
+                leadingWidth: 64,
+                leading: Padding(
+                  padding: const EdgeInsetsDirectional.only(start: 12),
+                  child: IconButton(
+                    onPressed: () => Navigator.of(context).pop(),
+                    icon: const Icon(Icons.arrow_back_ios_new_rounded),
+                    color: textPrimary,
+                    style: IconButton.styleFrom(
+                      backgroundColor:
+                          isDark ? Colors.white.withOpacity(0.08) : Colors.black.withOpacity(0.05),
+                    ),
+                  ),
+                ),
+                title: Text(
+                  'تفاصيل الملف',
+                  style: TextStyle(
+                    color: textPrimary,
+                    fontSize: 17,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                centerTitle: true,
+              ),
+              SliverPadding(
+                padding: const EdgeInsets.fromLTRB(16, 10, 16, 28),
+                sliver: SliverToBoxAdapter(
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: cardBg,
+                      borderRadius: BorderRadius.circular(28),
+                      border: Border.all(
+                        color: isDark
+                            ? Colors.white.withOpacity(0.08)
+                            : Colors.black.withOpacity(0.06),
+                      ),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(isDark ? 0.35 : 0.08),
+                          blurRadius: 24,
+                          offset: const Offset(0, 12),
+                        ),
+                      ],
+                    ),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(28),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          _HeroThumbnail(file: file, isDark: isDark),
+                          Padding(
+                            padding: const EdgeInsets.fromLTRB(18, 20, 18, 20),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  file.title.isEmpty ? 'ملف بدون عنوان' : file.title,
+                                  textAlign: TextAlign.right,
+                                  style: TextStyle(
+                                    color: textPrimary,
+                                    fontSize: 22,
+                                    height: 1.45,
+                                    fontWeight: FontWeight.w900,
+                                  ),
+                                ),
+                                const SizedBox(height: 14),
+                                Row(
+                                  children: [
+                                    const _AuthorAvatar(),
+                                    const SizedBox(width: 10),
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        children: [
+                                          Text(
+                                            file.author,
+                                            style: const TextStyle(
+                                              color: Color(0xFF486CFF),
+                                              fontSize: 13,
+                                              fontWeight: FontWeight.w900,
+                                            ),
+                                          ),
+                                          if (file.displayDate.isNotEmpty) ...[
+                                            const SizedBox(height: 2),
+                                            Text(
+                                              file.displayDate,
+                                              style: TextStyle(
+                                                color: textSub,
+                                                fontSize: 12,
+                                                fontWeight: FontWeight.w700,
+                                              ),
+                                            ),
+                                          ],
+                                        ],
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 18),
+                                Divider(
+                                  color: isDark ? Colors.white24 : Colors.black.withOpacity(0.08),
+                                  height: 1,
+                                ),
+                                const SizedBox(height: 18),
+                                _FileInfoPill(file: file, isDark: isDark, searchQuery: ''),
+                                if (file.description.isNotEmpty) ...[
+                                  const SizedBox(height: 20),
+                                  Text(
+                                    'الوصف',
+                                    style: TextStyle(
+                                      color: textPrimary,
+                                      fontSize: 15,
+                                      fontWeight: FontWeight.w900,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 8),
+                                  Text(
+                                    file.description,
+                                    textAlign: TextAlign.right,
+                                    style: TextStyle(
+                                      color: textSub,
+                                      fontSize: 14,
+                                      height: 1.75,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                ],
+                                const SizedBox(height: 22),
+                                Row(
+                                  textDirection: TextDirection.rtl,
+                                  children: [
+                                    Builder(
+                                      builder: (shareContext) {
+                                        return _CircleShareButton(
+                                          isDark: isDark,
+                                          onPressed: () => onShare(shareContext),
+                                        );
+                                      },
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Expanded(
+                                      child: _ActionButton(
+                                        icon: Icons.visibility_rounded,
+                                        label: 'عرض',
+                                        isDark: isDark,
+                                        onPressed: onView,
+                                      ),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Expanded(
+                                      child: _DownloadButton(
+                                        isDark: isDark,
+                                        isDownloading: isDownloading,
+                                        isDownloaded: isDownloaded,
+                                        progress: progress,
+                                        onPressed: onDownload,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _PdfBrowserPage extends StatefulWidget {
   final PdfFileItem file;
   final bool isDark;

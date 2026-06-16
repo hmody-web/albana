@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'dart:ui' as ui;
 import 'package:share_plus/share_plus.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart' show ImagePicker, ImageSource, XFile;
@@ -174,7 +175,7 @@ class _PostRealtimeBus {
   }
 
   static void publishComments(int postId, List<_Comment> comments) {
-    final safeComments = List<_Comment>.from(comments);
+    final safeComments = _Comment.newestFirst(comments);
     final old = _snapshots[postId];
     if (old?.comments != null &&
         !commentsChanged(old!.comments!, safeComments)) {
@@ -2599,11 +2600,54 @@ class _Comment {
     'created_at': createdAt,
   };
 
+  static DateTime? _parseServerDate(String value) {
+    final raw = value.trim();
+    if (raw.isEmpty) return null;
+
+    try {
+      final normalized = raw.contains('T') ? raw : raw.replaceFirst(' ', 'T');
+      final hasTimezone = RegExp(r'(Z|[+-]\d{2}:?\d{2})$').hasMatch(normalized);
+
+      // السيرفر يرجع الوقت غالباً بصيغة UTC بدون Z، لذلك نضيفها حتى لا يظهر التعليق الجديد 3h.
+      final dateText = hasTimezone ? normalized : '${normalized}Z';
+      return DateTime.parse(dateText).toLocal();
+    } catch (_) {
+      try {
+        return DateTime.parse(raw).toLocal();
+      } catch (_) {
+        return null;
+      }
+    }
+  }
+
+  DateTime? get parsedCreatedAt => _parseServerDate(createdAt);
+
+  static List<_Comment> newestFirst(List<_Comment> comments) {
+    final sorted = List<_Comment>.from(comments);
+    sorted.sort((a, b) {
+      final ad = a.parsedCreatedAt;
+      final bd = b.parsedCreatedAt;
+      if (ad != null && bd != null) {
+        final byDate = bd.compareTo(ad);
+        if (byDate != 0) return byDate;
+      } else if (ad != null) {
+        return -1;
+      } else if (bd != null) {
+        return 1;
+      }
+      return b.id.compareTo(a.id);
+    });
+    return sorted;
+  }
+
   String get timeAgo {
     if (createdAt.isEmpty) return '';
     try {
-      final dt = DateTime.parse(createdAt).toLocal();
-      final diff = DateTime.now().difference(dt);
+      final dt = parsedCreatedAt;
+      if (dt == null) return createdAt.split(' ').first;
+      var diff = DateTime.now().difference(dt);
+      if (diff.isNegative) diff = Duration.zero;
+      if (diff.inSeconds < 10) return 'الآن';
       if (diff.inSeconds < 60) return '${diff.inSeconds}s';
       if (diff.inMinutes < 60) return '${diff.inMinutes}m';
       if (diff.inHours < 24) return '${diff.inHours}h';
@@ -2710,7 +2754,7 @@ _onRealtimeUpdate();
 
     if (snap.comments != null &&
         _PostRealtimeBus.commentsChanged(_comments, snap.comments!)) {
-      nextComments = List<_Comment>.from(snap.comments!);
+      nextComments = _Comment.newestFirst(snap.comments!);
       nextCommentsLoaded = true;
       changed = true;
     }
@@ -2905,7 +2949,7 @@ void _applyComments(List<_Comment> loaded, {bool force = false}) {
     return;
   }
 
-  final safeLoaded = List<_Comment>.from(loaded);
+  final safeLoaded = _Comment.newestFirst(loaded);
 
   setState(() {
     _comments = safeLoaded;
@@ -2981,9 +3025,9 @@ Future<void> _loadComments() async {
 }
 
   Future<void> _sendComment() async {
-    print('### _sendComment called ###');
+    if (_sendingComment) return;
     final text = _commentCtrl.text.trim();
-    print('### text: $text ###');
+    if (text.isEmpty) return;
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) return;
 
@@ -3710,7 +3754,12 @@ AnimatedSwitcher(
                               padding: const EdgeInsets.only(
                                   left: 9, right: 6, bottom: 7),
                               child: GestureDetector(
-                                onTap: sending ? null : onSend,
+                                onTap: sending
+                                    ? null
+                                    : () {
+                                        HapticFeedback.selectionClick();
+                                        onSend();
+                                      },
                                 child: AnimatedContainer(
                                   duration: const Duration(milliseconds: 200),
                                   curve: Curves.easeOutCubic,
@@ -3907,6 +3956,7 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
 
   final FocusNode _inputFocusNode = FocusNode();
   final ScrollController _commentsListController = ScrollController();
+  bool _localSendingComment = false;
 
 bool _commentsListSheetDragging = false;
 double _sheetDragDownOffset = 0;
@@ -3986,7 +4036,7 @@ int? _newAnimatedCommentId;
       if (!mounted || !_commentsListController.hasClients) return;
 
       _commentsListController.animateTo(
-        _commentsListController.position.maxScrollExtent,
+        _commentsListController.position.minScrollExtent,
         duration: const Duration(milliseconds: 650),
         curve: Curves.easeOutCubic,
       );
@@ -4086,7 +4136,7 @@ void _endCommentsListSheetDrag() {
 
     if (newComments.isEmpty) return;
 
-    final newest = newComments.last;
+    final newest = _Comment.newestFirst(newComments).first;
 
     setState(() {
       _newAnimatedCommentId = newest.id;
@@ -4245,30 +4295,48 @@ Listener(
                             strokeWidth: 2.5,
                           ),
                         )
-                      : widget.comments.isEmpty
-                          ? Center(
-                              child: Column(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Icon(
-                                    Icons.chat_bubble_outline_rounded,
-                                    size: 44,
-                                    color: gold.withOpacity(0.4),
-                                  ),
-                                  const SizedBox(height: 12),
-                                  Text(
-                                    'لا توجد تعليقات بعد\nكن أول من يعلّق!',
-                                    textAlign: TextAlign.center,
-                                    textDirection: TextDirection.rtl,
-                                    style: TextStyle(
-                                      color: textSub,
-                                      fontSize: 14,
-                                      height: 1.7,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            )
+: widget.comments.isEmpty
+    ? Listener(
+        behavior: HitTestBehavior.translucent,
+        onPointerMove: (event) {
+          if (_commentsListSheetDragging || event.delta.dy > 0) {
+            _dragCommentsListSheetByDelta(event.delta.dy);
+          }
+        },
+        onPointerUp: (_) {
+          if (_commentsListSheetDragging) {
+            _endCommentsListSheetDrag();
+          }
+        },
+        onPointerCancel: (_) {
+          if (_commentsListSheetDragging) {
+            _endCommentsListSheetDrag();
+          }
+        },
+        child: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                Icons.chat_bubble_outline_rounded,
+                size: 44,
+                color: gold.withOpacity(0.4),
+              ),
+              const SizedBox(height: 12),
+              Text(
+                'لا توجد تعليقات بعد\nكن أول من يعلّق!',
+                textAlign: TextAlign.center,
+                textDirection: TextDirection.rtl,
+                style: TextStyle(
+                  color: textSub,
+                  fontSize: 14,
+                  height: 1.7,
+                ),
+              ),
+            ],
+          ),
+        ),
+      )
 : Listener(
     behavior: HitTestBehavior.translucent,
     onPointerMove: (event) {
@@ -4368,19 +4436,27 @@ Listener(
                     12,
                     10,
                     12,
-                    10 + MediaQuery.of(context).viewInsets.bottom,
+                    28 + MediaQuery.of(context).viewInsets.bottom,
                   ),
                   child: currentUser != null
                       ? _CommentInputBox(
                           isDark: isDark,
                           user: currentUser,
                           controller: widget.commentCtrl,
-                          sending: widget.sendingComment,
+                          sending: widget.sendingComment || _localSendingComment,
                           focusNode: _inputFocusNode,
                           onSend: () async {
+                            if (_localSendingComment || widget.sendingComment) return;
                             _scrollToNewCommentAfterSend = true;
 
-                            await widget.onSend();
+                            setState(() => _localSendingComment = true);
+                            try {
+                              await widget.onSend();
+                            } finally {
+                              if (mounted) {
+                                setState(() => _localSendingComment = false);
+                              }
+                            }
 
                             if (!mounted) return;
 
@@ -5274,10 +5350,12 @@ _onRealtimeUpdate();
         _likesCount = (data['likes_count'] as num?)?.toInt() ?? 0;
         final rawComments = data['comments'];
         if (rawComments is List) {
-          _comments = rawComments
-              .whereType<Map>()
-              .map((e) => _Comment.fromJson(Map<String, dynamic>.from(e)))
-              .toList();
+          _comments = _Comment.newestFirst(
+            rawComments
+                .whereType<Map>()
+                .map((e) => _Comment.fromJson(Map<String, dynamic>.from(e)))
+                .toList(),
+          );
           _commentsLoaded = true;
           _loadingComments = false;
         }
@@ -5304,17 +5382,21 @@ _onRealtimeUpdate();
 
   List<_Comment> _parseCommentsPayload(dynamic data) {
     if (data is List) {
-      return data
-          .whereType<Map>()
-          .map((e) => _Comment.fromJson(Map<String, dynamic>.from(e)))
-          .toList();
+      return _Comment.newestFirst(
+        data
+            .whereType<Map>()
+            .map((e) => _Comment.fromJson(Map<String, dynamic>.from(e)))
+            .toList(),
+      );
     }
 
     if (data is Map && data['comments'] is List) {
-      return (data['comments'] as List)
-          .whereType<Map>()
-          .map((e) => _Comment.fromJson(Map<String, dynamic>.from(e)))
-          .toList();
+      return _Comment.newestFirst(
+        (data['comments'] as List)
+            .whereType<Map>()
+            .map((e) => _Comment.fromJson(Map<String, dynamic>.from(e)))
+            .toList(),
+      );
     }
 
     return [];
@@ -5331,7 +5413,7 @@ _onRealtimeUpdate();
       return;
     }
 
-    final safeFresh = List<_Comment>.from(fresh);
+    final safeFresh = _Comment.newestFirst(fresh);
     setState(() {
       _comments = safeFresh;
       _commentsLoaded = true;
@@ -5367,7 +5449,7 @@ _onRealtimeUpdate();
 
     if (snap.comments != null &&
         _PostRealtimeBus.commentsChanged(_comments, snap.comments!)) {
-      nextComments = List<_Comment>.from(snap.comments!);
+      nextComments = _Comment.newestFirst(snap.comments!);
       nextCommentsLoaded = true;
       changed = true;
     }
@@ -5569,6 +5651,7 @@ if (listener != null) {
   }
 
 Future<void> _sendComment() async {
+    if (_sendingComment) return;
     final text = _commentCtrl.text.trim();
     if (text.isEmpty) return;
     final user = FirebaseAuth.instance.currentUser;
@@ -5984,7 +6067,7 @@ if (p.videoUrl != null)
           // ── Fixed bottom comment input ─────────────────────────────────
           Container(
             padding: EdgeInsets.fromLTRB(
-                12, 10, 12, MediaQuery.of(context).padding.bottom + 10),
+                12, 10, 12, MediaQuery.of(context).padding.bottom + 18),
             decoration: BoxDecoration(
               color: cardBg,
               border: Border(
@@ -6253,6 +6336,31 @@ class _EditPostSheetState extends State<_EditPostSheet> {
   late TextEditingController _contentCtrl;
   File? _newImage;
   bool _saving = false;
+  final GlobalKey _descriptionFieldKey = GlobalKey();
+
+  void _hideKeyboard() {
+    FocusManager.instance.primaryFocus?.unfocus();
+  }
+
+  void _hideKeyboardIfTapOutsideDescription(PointerDownEvent event) {
+    final boxContext = _descriptionFieldKey.currentContext;
+    if (boxContext == null) {
+      _hideKeyboard();
+      return;
+    }
+
+    final renderBox = boxContext.findRenderObject();
+    if (renderBox is! RenderBox) {
+      _hideKeyboard();
+      return;
+    }
+
+    final topLeft = renderBox.localToGlobal(Offset.zero);
+    final fieldRect = topLeft & renderBox.size;
+    if (!fieldRect.contains(event.position)) {
+      _hideKeyboard();
+    }
+  }
 
   @override
   void initState() {
@@ -6397,21 +6505,46 @@ class _EditPostSheetState extends State<_EditPostSheet> {
         isDark ? const Color(0xFF232323) : const Color(0xFFFAF6EF);
     final borderColor = gold.withOpacity(0.35);
 
-    return Padding(
-      padding: EdgeInsets.only(
-          bottom: MediaQuery.of(context).viewInsets.bottom),
-      child: Container(
-        decoration: BoxDecoration(
-          color: sheetBg,
-          borderRadius:
-              const BorderRadius.vertical(top: Radius.circular(28)),
-        ),
-        child: SafeArea(
-          top: false,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
+    final media = MediaQuery.of(context);
+    final keyboardHeight = media.viewInsets.bottom;
+    final keyboardVisible = keyboardHeight > 0;
+    final double? sheetHeight = keyboardVisible
+        ? (media.size.height * 0.90 - keyboardHeight)
+            .clamp(360.0, media.size.height * 0.90)
+            .toDouble()
+        : null;
+
+    return Listener(
+      behavior: HitTestBehavior.translucent,
+      onPointerDown: _hideKeyboardIfTapOutsideDescription,
+      onPointerMove: (event) {
+        if (event.delta.dy > 4) _hideKeyboard();
+      },
+      child: GestureDetector(
+        behavior: HitTestBehavior.translucent,
+        onVerticalDragUpdate: (details) {
+          if (details.delta.dy > 2) _hideKeyboard();
+        },
+        child: AnimatedPadding(
+          duration: const Duration(milliseconds: 220),
+          curve: Curves.easeOutCubic,
+          padding: EdgeInsets.only(bottom: keyboardHeight),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 240),
+            curve: Curves.easeOutCubic,
+            height: sheetHeight,
+            decoration: BoxDecoration(
+              color: sheetBg,
+              borderRadius:
+                  const BorderRadius.vertical(top: Radius.circular(28)),
+            ),
+            child: SafeArea(
+              top: false,
+              child: Column(
+                mainAxisSize:
+                    keyboardVisible ? MainAxisSize.max : MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
               Center(
                 child: Container(
                   margin: const EdgeInsets.only(top: 12, bottom: 8),
@@ -6450,11 +6583,16 @@ class _EditPostSheetState extends State<_EditPostSheet> {
                   ],
                 ),
               ),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 0, 16, 20),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
+              Flexible(
+                fit: keyboardVisible ? FlexFit.tight : FlexFit.loose,
+                child: SingleChildScrollView(
+                  keyboardDismissBehavior:
+                      ScrollViewKeyboardDismissBehavior.onDrag,
+                  physics: const BouncingScrollPhysics(),
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 20),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
                     Container(
                       height: 180,
                       decoration: BoxDecoration(
@@ -6542,6 +6680,7 @@ class _EditPostSheetState extends State<_EditPostSheet> {
                     ),
                     const SizedBox(height: 12),
                     Container(
+                      key: _descriptionFieldKey,
                       decoration: BoxDecoration(
                         color: fieldBg,
                         borderRadius: BorderRadius.circular(16),
@@ -6629,14 +6768,17 @@ class _EditPostSheetState extends State<_EditPostSheet> {
                         ),
                       ],
                     ),
-                  ],
+                  ],),
                 ),
               ),
             ],
+            
           ),
         ),
       ),
-    );
+    ),
+  ),
+);
   }
 }
 

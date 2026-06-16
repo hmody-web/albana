@@ -78,6 +78,16 @@
 			<string>com.googleusercontent.apps.14634099103-n5r847gqsgga7hdghhbvblpqg2tnjkc1</string>
 		</array>
 	</dict>
+	<dict>
+		<key>CFBundleURLName</key>
+		<string>majidalbana</string>
+		<key>CFBundleTypeRole</key>
+		<string>Viewer</string>
+		<key>CFBundleURLSchemes</key>
+		<array>
+			<string>majidalbana</string>
+		</array>
+	</dict>
 </array>
 </dict>
 </plist>
