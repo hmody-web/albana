@@ -1,4 +1,6 @@
+import 'dart:async';
 import 'dart:ui' as ui;
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/scheduler.dart';
@@ -9,15 +11,24 @@ import 'pages/settings_page.dart';
 import 'widgets/shared_widgets.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'firebase_options.dart';
-
+import 'package:app_links/app_links.dart';
+import 'firebase_notification_service.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
   );
+
+  final isAndroid = !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
+
+  if (isAndroid) {
+    FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
+    await FirebaseNotificationService.initialize();
+  }
 
   await SystemChrome.setPreferredOrientations([
     DeviceOrientation.portraitUp,
@@ -98,6 +109,10 @@ class _MainScaffoldState extends State<MainScaffold>
   int _currentIndex = 2;
   late PageController _pageController;
   late AnimationController _navAnimCtrl;
+  final AppLinks _appLinks = AppLinks();
+StreamSubscription<Uri>? _deepLinkSub;
+StreamSubscription<Map<String, dynamic>>? _notificationClickSub;
+int? _pendingPostId;
 
   @override
   void initState() {
@@ -107,13 +122,139 @@ class _MainScaffoldState extends State<MainScaffold>
       vsync: this,
       duration: const Duration(milliseconds: 200),
     )..forward();
+
+    _initDeepLinks();
+    _initNotificationClicks();
+  }
+
+  Future<void> _initDeepLinks() async {
+    try {
+      final initialUri = await _appLinks.getInitialLink();
+      if (initialUri != null) {
+        _handleDeepLink(initialUri);
+      }
+    } catch (_) {}
+
+    await _deepLinkSub?.cancel();
+    _deepLinkSub = _appLinks.uriLinkStream.listen(
+      _handleDeepLink,
+      onError: (_) {},
+    );
+  }
+void _initNotificationClicks() {
+  final initialData = FirebaseNotificationService.consumeInitialNotificationData();
+
+  if (initialData != null) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _openFromNotificationData(initialData);
+    });
+  }
+
+  _notificationClickSub =
+      FirebaseNotificationService.notificationClicks.listen(_openFromNotificationData);
+}
+
+void _openFromNotificationData(Map<String, dynamic> data) {
+  final rawPostId = data['post_id'] ?? data['postId'];
+  final postId = int.tryParse('$rawPostId');
+
+  if (postId != null && postId > 0) {
+    _openSharedPost(postId);
+    return;
+  }
+
+  _openPublicationsPageFromNotification();
+}
+
+void _openPublicationsPageFromNotification() {
+  if (!mounted) return;
+
+  if (_currentIndex == 0) {
+    PublicationsPageScrollBus.goTop();
+    return;
+  }
+
+  setState(() => _currentIndex = 0);
+
+  if (_pageController.hasClients) {
+    _pageController.animateToPage(
+      0,
+      duration: const Duration(milliseconds: 280),
+      curve: Curves.easeOutCubic,
+    );
+  }
+}
+  void _handleDeepLink(Uri uri) {
+    int? postId;
+
+    // روابط التطبيق المباشرة:
+    // majidalbana://post/123
+    // majidalbana://post?id=123
+    if (uri.scheme == 'majidalbana' && uri.host == 'post') {
+      if (uri.pathSegments.isNotEmpty) {
+        postId = int.tryParse(uri.pathSegments.first);
+      }
+      postId ??= int.tryParse(uri.queryParameters['id'] ?? '');
+    }
+
+    // روابط الموقع:
+    // https://majidalbana.com/post/123
+    // https://majidalbana.com/post/index.php?id=123
+    // https://www.majidalbana.com/post/123
+    // https://www.majidalbana.com/post/index.php?id=123
+    if ((uri.scheme == 'https' || uri.scheme == 'http') &&
+        (uri.host == 'majidalbana.com' || uri.host == 'www.majidalbana.com') &&
+        uri.pathSegments.isNotEmpty &&
+        uri.pathSegments.first == 'post') {
+      if (uri.pathSegments.length >= 2) {
+        final secondSegment = uri.pathSegments[1];
+
+        if (secondSegment != 'index.php') {
+          postId = int.tryParse(secondSegment);
+        }
+      }
+
+      postId ??= int.tryParse(uri.queryParameters['id'] ?? '');
+    }
+
+    if (postId == null || postId <= 0) return;
+
+    _openSharedPost(postId);
+  }
+
+  void _openSharedPost(int postId) {
+    _pendingPostId = postId;
+
+    if (!mounted) return;
+
+    if (_currentIndex != 0) {
+      setState(() => _currentIndex = 0);
+      if (_pageController.hasClients) {
+        _pageController.animateToPage(
+          0,
+          duration: const Duration(milliseconds: 280),
+          curve: Curves.easeOutCubic,
+        );
+      }
+    }
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      Future.delayed(const Duration(milliseconds: 360), () {
+        final id = _pendingPostId;
+        if (!mounted || id == null) return;
+        _pendingPostId = null;
+        PublicationsPageDeepLinkBus.openPost(id);
+      });
+    });
   }
 
   @override
   void dispose() {
-    _pageController.dispose();
-    _navAnimCtrl.dispose();
-    super.dispose();
+_deepLinkSub?.cancel();
+_notificationClickSub?.cancel();
+_pageController.dispose();
+_navAnimCtrl.dispose();
+super.dispose();
   }
 
   void _onTabTapped(int index) {
