@@ -258,11 +258,13 @@ super.dispose();
   }
 
   void _onTabTapped(int index) {
-    // 0 = قسم المنشورات حسب ترتيب PageView الحالي.
-    // إذا أنت داخل المنشورات وضغطت زر المنشورات مرة ثانية، يصعد لأعلى الصفحة.
+    // 0 = المنشورات، 1 = الملفات
+    // إذا أنت داخل نفس القسم وضغطت زر القسم مرة ثانية، يصعد لأعلى الصفحة.
     if (_currentIndex == index) {
       if (index == 0) {
         PublicationsPageScrollBus.goTop();
+      } else if (index == 1) {
+        FilesPageScrollBus.goTop();
       }
       return;
     }

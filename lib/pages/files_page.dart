@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:path_provider/path_provider.dart';
@@ -80,6 +81,33 @@ class _CacheService {
 // ══════════════════════════════════════════════════════════════════════════════
 //  FILES PAGE
 // ══════════════════════════════════════════════════════════════════════════════
+class FilesPageScrollBus {
+  static VoidCallback? _goTop;
+
+  static void register(VoidCallback callback) {
+    _goTop = callback;
+  }
+
+  static void unregister(VoidCallback callback) {
+    if (_goTop == callback) {
+      _goTop = null;
+    }
+  }
+
+  static void goTop() {
+    _goTop?.call();
+  }
+}
+
+class _FilesPageMemory {
+  static List<PdfFileItem> files = [];
+  static String? selectedCategory;
+  static String searchText = '';
+  static bool searchActive = false;
+  static double scrollOffset = 0;
+  static bool didLoadOnce = false;
+}
+
 class FilesPage extends StatefulWidget {
   final bool isDark;
   const FilesPage({super.key, required this.isDark});
@@ -88,8 +116,12 @@ class FilesPage extends StatefulWidget {
   State<FilesPage> createState() => _FilesPageState();
 }
 
-class _FilesPageState extends State<FilesPage> with SingleTickerProviderStateMixin {
+class _FilesPageState extends State<FilesPage>
+    with SingleTickerProviderStateMixin, AutomaticKeepAliveClientMixin {
   static const gold = Color(0xFFD4A017);
+
+  @override
+  bool get wantKeepAlive => true;
 
   static const String _apiUrl =
       'https://majidalbana.com/admin/pdf-posts/load_pdf_posts.php';
@@ -100,18 +132,40 @@ class _FilesPageState extends State<FilesPage> with SingleTickerProviderStateMix
   final Set<int> _downloading = {};
   final Set<int> _downloaded = {};
   final ValueNotifier<int> _downloadSignal = ValueNotifier<int>(0);
+  final ScrollController _pageScrollController = ScrollController(
+    initialScrollOffset: _FilesPageMemory.scrollOffset,
+  );
 
-  List<PdfFileItem> _files = [];
+void _scrollToTopFromNav() {
+  if (!_pageScrollController.hasClients) return;
+
+  HapticFeedback.selectionClick();
+
+  _pageScrollController.animateTo(
+    0,
+    duration: const Duration(milliseconds: 520),
+    curve: Curves.easeOutCubic,
+  );
+}
+
+  List<PdfFileItem> _files = List<PdfFileItem>.from(_FilesPageMemory.files);
   List<PdfFileItem> _filteredFiles = [];
-  bool _loading = true;          // only true on very first launch (no cache)
+  bool _loading = !_FilesPageMemory.didLoadOnce && _FilesPageMemory.files.isEmpty;
   bool _backgroundRefreshing = false;
-  String? _selectedCategory;
+  String? _selectedCategory = _FilesPageMemory.selectedCategory;
   String? _error;
   Timer? _refreshTimer;
+  bool _refreshInProgress = false;
+  final Set<int> _incomingFileIds = {};
+  final Set<int> _updatedFileIds = {};
+  final Map<int, PdfFileItem> _removingFiles = {};
+  final Map<int, int> _removingFileIndexes = {};
 
   // Search
-  bool _searchActive = false;
-  final TextEditingController _searchCtrl = TextEditingController();
+  bool _searchActive = _FilesPageMemory.searchActive;
+  final TextEditingController _searchCtrl = TextEditingController(
+    text: _FilesPageMemory.searchText,
+  );
   final FocusNode _searchFocus = FocusNode();
   late final AnimationController _searchAnimCtrl;
   late final Animation<double> _searchAnim;
@@ -128,30 +182,88 @@ bool _isSupervisor() {
   void _onFileEdited(PdfFileItem updated) {
     setState(() {
       final idx = _files.indexWhere((f) => f.id == updated.id);
-      if (idx != -1) _files[idx] = updated;
+      if (idx != -1) {
+        _files[idx] = updated;
+        _updatedFileIds.add(updated.id);
+      }
       _applyFilters();
     });
+    _savePageMemory();
     _CacheService.save(_files);
+    _clearRealtimeMarksLater();
   }
+  void _rememberScrollOffset() {
+    if (!_pageScrollController.hasClients) return;
+    _FilesPageMemory.scrollOffset = _pageScrollController.offset;
+  }
+
+  void _savePageMemory() {
+    _FilesPageMemory.files = List<PdfFileItem>.from(_files);
+    _FilesPageMemory.selectedCategory = _selectedCategory;
+    _FilesPageMemory.searchText = _searchCtrl.text;
+    _FilesPageMemory.searchActive = _searchActive;
+    _FilesPageMemory.didLoadOnce = true;
+
+    if (_pageScrollController.hasClients) {
+      _FilesPageMemory.scrollOffset = _pageScrollController.offset;
+    }
+  }
+
+  void _restoreScrollPositionSoon() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_pageScrollController.hasClients) return;
+
+      final maxScroll = _pageScrollController.position.maxScrollExtent;
+      final target = _FilesPageMemory.scrollOffset.clamp(0.0, maxScroll);
+
+      if (target > 0) {
+        _pageScrollController.jumpTo(target);
+      }
+    });
+  }
+
   @override
   void initState() {
     super.initState();
+    FilesPageScrollBus.register(_scrollToTopFromNav);
+    _pageScrollController.addListener(_rememberScrollOffset);
+
     _searchAnimCtrl = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 280),
     );
-    _searchAnim = CurvedAnimation(parent: _searchAnimCtrl, curve: Curves.easeOutCubic);
+    _searchAnim = CurvedAnimation(
+      parent: _searchAnimCtrl,
+      curve: Curves.easeOutCubic,
+    );
+
+    if (_searchActive) {
+      _searchAnimCtrl.value = 1;
+    }
+
     _searchCtrl.addListener(_onSearchChanged);
 
-    _initLoad();
-    _refreshTimer = Timer.periodic(const Duration(seconds: 8), (_) {
+    if (_files.isNotEmpty || _FilesPageMemory.didLoadOnce) {
+      _applyFilters();
+      _loading = false;
+      _restoreScrollPositionSoon();
+      _fetchFromNetwork(silent: true);
+    } else {
+      _initLoad();
+    }
+
+    _refreshTimer = Timer.periodic(const Duration(seconds: 5), (_) {
       _fetchFromNetwork(silent: true);
     });
   }
 
   @override
   void dispose() {
+    _savePageMemory();
+    FilesPageScrollBus.unregister(_scrollToTopFromNav);
     _refreshTimer?.cancel();
+    _pageScrollController.removeListener(_rememberScrollOffset);
+    _pageScrollController.dispose();
     _searchCtrl.dispose();
     _searchFocus.dispose();
     _searchAnimCtrl.dispose();
@@ -177,7 +289,10 @@ bool _isSupervisor() {
   }
 
   void _onSearchChanged() {
-    setState(_applyFilters);
+    setState(() {
+      _applyFilters();
+      _savePageMemory();
+    });
   }
 
   void _selectCategory(String? category) {
@@ -185,6 +300,7 @@ bool _isSupervisor() {
     setState(() {
       _selectedCategory = category;
       _applyFilters();
+      _savePageMemory();
     });
   }
 
@@ -192,7 +308,10 @@ bool _isSupervisor() {
       _mergePdfCategories(_files.map((f) => f.category));
 
   void _openSearch() {
-    setState(() => _searchActive = true);
+    setState(() {
+      _searchActive = true;
+      _savePageMemory();
+    });
     _searchAnimCtrl.forward();
     Future.delayed(const Duration(milliseconds: 80), () {
       if (mounted) _searchFocus.requestFocus();
@@ -207,6 +326,7 @@ bool _isSupervisor() {
           _searchActive = false;
           _searchCtrl.clear();
           _applyFilters();
+          _savePageMemory();
         });
       }
     });
@@ -215,27 +335,45 @@ bool _isSupervisor() {
   // ── Data loading ──────────────────────────────────────────────────────────
 
   Future<void> _initLoad() async {
-    // 1. Load cache instantly — show it right away
+    if (_files.isNotEmpty) {
+      if (mounted) {
+        setState(() {
+          _applyFilters();
+          _loading = false;
+        });
+        _savePageMemory();
+        _restoreScrollPositionSoon();
+      }
+
+      await _fetchFromNetwork(silent: true);
+      return;
+    }
+
     final cached = await _CacheService.load();
+
     if (cached.isNotEmpty && mounted) {
       setState(() {
         _files = cached;
         _applyFilters();
         _loading = false;
       });
+
+      _savePageMemory();
+      _restoreScrollPositionSoon();
     }
-    // 2. Then fetch from network (silently if we had cache)
+
     await _fetchFromNetwork(silent: cached.isNotEmpty);
   }
 
   Future<void> _fetchFromNetwork({required bool silent}) async {
+    if (_refreshInProgress) return;
+    _refreshInProgress = true;
+
     if (!silent && mounted) {
       setState(() {
         _loading = true;
         _error = null;
       });
-    } else if (silent && mounted) {
-      setState(() => _backgroundRefreshing = true);
     }
 
     try {
@@ -253,35 +391,112 @@ bool _isSupervisor() {
           .map((e) => PdfFileItem.fromJson(Map<String, dynamic>.from(e)))
           .toList();
 
-      // Check if there's actually anything new before rebuilding
-      final hasNewContent = _hasNewItems(fresh);
-
       if (!mounted) return;
 
-      if (hasNewContent || _files.isEmpty) {
+      final oldFiles = List<PdfFileItem>.from(_files);
+      final oldById = {for (final f in oldFiles) f.id: f};
+      final freshById = {for (final f in fresh) f.id: f};
+      final incomingIds = freshById.keys.where((id) => !oldById.containsKey(id)).toSet();
+      final removedIds = oldById.keys.where((id) => !freshById.containsKey(id)).toSet();
+      final changedIds = freshById.keys.where((id) {
+        final old = oldById[id];
+        final next = freshById[id];
+        return old != null && next != null && old.toStableSignature() != next.toStableSignature();
+      }).toSet();
+
+      final hasChanges = incomingIds.isNotEmpty || removedIds.isNotEmpty || changedIds.isNotEmpty || _files.isEmpty;
+
+      if (hasChanges) {
         setState(() {
-          // Merge: prepend new items with a "new" animation flag
+          for (final id in removedIds) {
+            final old = oldById[id];
+            if (old == null) continue;
+            _removingFiles[id] = old;
+            _removingFileIndexes[id] = oldFiles.indexWhere((f) => f.id == id);
+          }
+          _incomingFileIds
+            ..clear()
+            ..addAll(incomingIds);
+          _updatedFileIds
+            ..clear()
+            ..addAll(changedIds);
           _files = fresh;
-          _applyFilters(); // re-apply filters
+          _applyFilters();
           _loading = false;
           _error = null;
           _backgroundRefreshing = false;
         });
-        // Save to cache
-        await _CacheService.save(fresh);
-      } else {
-        if (mounted) setState(() => _backgroundRefreshing = false);
+        _savePageMemory();
+        unawaited(_CacheService.save(fresh));
+        _restoreScrollPositionSoon();
+        _clearRealtimeMarksLater();
+      } else if (!silent) {
+        setState(() {
+          _loading = false;
+          _error = null;
+          _backgroundRefreshing = false;
+        });
       }
     } catch (_) {
       if (!mounted) return;
-      setState(() {
-        _backgroundRefreshing = false;
-        _loading = false;
-        if (_files.isEmpty) {
-          _error = 'تعذر تحميل الملفات. تأكد من الاتصال بالإنترنت.';
-        }
-      });
+      if (!silent || _files.isEmpty) {
+        setState(() {
+          _backgroundRefreshing = false;
+          _loading = false;
+          if (_files.isEmpty) {
+            _error = 'تعذر تحميل الملفات. تأكد من الاتصال بالإنترنت.';
+          }
+        });
+      }
+    } finally {
+      _refreshInProgress = false;
     }
+  }
+
+  void _clearRealtimeMarksLater() {
+    Future.delayed(const Duration(milliseconds: 950), () {
+      if (!mounted) return;
+      setState(() {
+        _incomingFileIds.clear();
+        _updatedFileIds.clear();
+      });
+    });
+    Future.delayed(const Duration(milliseconds: 520), () {
+      if (!mounted) return;
+      if (_removingFiles.isEmpty) return;
+      setState(() {
+        _removingFiles.clear();
+        _removingFileIndexes.clear();
+      });
+    });
+  }
+
+  bool _matchesCurrentView(PdfFileItem file) {
+    final selectedCategory = _selectedCategory;
+    if (selectedCategory != null && file.category != selectedCategory) return false;
+    final q = _searchActive ? _searchCtrl.text.trim().toLowerCase() : '';
+    if (q.isEmpty) return true;
+    return file.title.toLowerCase().contains(q) ||
+        file.description.toLowerCase().contains(q) ||
+        file.author.toLowerCase().contains(q) ||
+        file.fileName.toLowerCase().contains(q) ||
+        file.category.toLowerCase().contains(q);
+  }
+
+  List<PdfFileItem> _displayFilesForCurrentView() {
+    final base = (_searchActive || _selectedCategory != null)
+        ? List<PdfFileItem>.from(_filteredFiles)
+        : List<PdfFileItem>.from(_files);
+
+    final ghosts = _removingFiles.values.where(_matchesCurrentView).toList()
+      ..sort((a, b) => (_removingFileIndexes[a.id] ?? 0).compareTo(_removingFileIndexes[b.id] ?? 0));
+
+    for (final ghost in ghosts) {
+      if (base.any((f) => f.id == ghost.id)) continue;
+      final insertAt = (_removingFileIndexes[ghost.id] ?? base.length).clamp(0, base.length).toInt();
+      base.insert(insertAt, ghost);
+    }
+    return base;
   }
 
   bool _hasNewItems(List<PdfFileItem> fresh) {
@@ -524,12 +739,16 @@ bool _isSupervisor() {
 
   @override
   Widget build(BuildContext context) {
+    super.build(context);
+
     final pageBg = widget.isDark ? const Color(0xFF050505) : const Color(0xFFF8F6F0);
-    final displayList = (_searchActive || _selectedCategory != null) ? _filteredFiles : _files;
+    final displayList = _displayFilesForCurrentView();
 
     return Container(
       color: pageBg,
       child: CustomScrollView(
+        key: const PageStorageKey<String>('files_page_scroll_view'),
+        controller: _pageScrollController,
         keyboardDismissBehavior:
     ScrollViewKeyboardDismissBehavior.onDrag,
         physics: const BouncingScrollPhysics(),
@@ -616,20 +835,26 @@ bool _isSupervisor() {
                     }
                     final fileIndex = supervisor && _selectedCategory == null ? i - 1 : i;
                     final file = displayList[fileIndex];
-                    return _FileCard(
-                      key: ValueKey(file.id),
-                      file: file,
-                      isDark: widget.isDark,
-                      isDownloading: _downloading.contains(file.id),
-                      isDownloaded: _downloaded.contains(file.id),
-                      progress: _downloadProgress[file.id] ?? 0,
-                      searchQuery: _searchActive ? _searchCtrl.text : '',
-                      onDownload: () => _downloadFile(file),
-                      onView: () => _openFile(file),
-                      onShare: (shareContext) => _shareFile(shareContext, file),
-                      onOpenDetails: () => _openFileDetails(file),
-                      isSupervisor: supervisor,
-                      onEdited: _onFileEdited,
+                    return _RealtimeFileCardShell(
+                      key: ValueKey('realtime-file-${file.id}'),
+                      isNew: _incomingFileIds.contains(file.id),
+                      isUpdated: _updatedFileIds.contains(file.id),
+                      isRemoving: _removingFiles.containsKey(file.id),
+                      child: _FileCard(
+                        key: ValueKey(file.id),
+                        file: file,
+                        isDark: widget.isDark,
+                        isDownloading: _downloading.contains(file.id),
+                        isDownloaded: _downloaded.contains(file.id),
+                        progress: _downloadProgress[file.id] ?? 0,
+                        searchQuery: _searchActive ? _searchCtrl.text : '',
+                        onDownload: () => _downloadFile(file),
+                        onView: () => _openFile(file),
+                        onShare: (shareContext) => _shareFile(shareContext, file),
+                        onOpenDetails: () => _openFileDetails(file),
+                        isSupervisor: supervisor,
+                        onEdited: _onFileEdited,
+                      ),
                     );
                   },
                   childCount: displayList.length + (_isSupervisor() && _selectedCategory == null ? 1 : 0),
@@ -1192,6 +1417,8 @@ class PdfFileItem {
         'category': category,
       };
 
+  String toStableSignature() => jsonEncode(toJson());
+
   static String _clean(dynamic value) => '${value ?? ''}'.trim();
   PdfFileItem copyWith({String? title, String? description, String? category}) {
     return PdfFileItem(
@@ -1467,6 +1694,110 @@ class _FileCard extends StatelessWidget {
   }
 }
 
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  REALTIME CARD ANIMATION SHELL
+// ══════════════════════════════════════════════════════════════════════════════
+class _RealtimeFileCardShell extends StatefulWidget {
+  final Widget child;
+  final bool isNew;
+  final bool isUpdated;
+  final bool isRemoving;
+
+  const _RealtimeFileCardShell({
+    super.key,
+    required this.child,
+    required this.isNew,
+    required this.isUpdated,
+    required this.isRemoving,
+  });
+
+  @override
+  State<_RealtimeFileCardShell> createState() => _RealtimeFileCardShellState();
+}
+
+class _RealtimeFileCardShellState extends State<_RealtimeFileCardShell>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+  late final Animation<double> _fade;
+  late final Animation<double> _scale;
+  late final Animation<Offset> _slide;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 560),
+      reverseDuration: const Duration(milliseconds: 420),
+    );
+    final curve = CurvedAnimation(parent: _controller, curve: Curves.easeOutBack, reverseCurve: Curves.easeInCubic);
+    _fade = Tween<double>(begin: 0, end: 1).animate(CurvedAnimation(parent: _controller, curve: Curves.easeOut));
+    _scale = Tween<double>(begin: 0.94, end: 1).animate(curve);
+    _slide = Tween<Offset>(begin: const Offset(0, -0.09), end: Offset.zero).animate(curve);
+    if (widget.isRemoving) {
+      _controller.value = 1;
+      _controller.reverse();
+    } else if (widget.isNew || widget.isUpdated) {
+      _controller.forward();
+    } else {
+      _controller.value = 1;
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant _RealtimeFileCardShell oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!oldWidget.isRemoving && widget.isRemoving) {
+      _controller.reverse();
+    } else if ((!oldWidget.isNew && widget.isNew) || (!oldWidget.isUpdated && widget.isUpdated)) {
+      _controller.forward(from: 0.68);
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final highlight = widget.isNew || widget.isUpdated;
+    if (!highlight && !widget.isRemoving) return widget.child;
+    return SizeTransition(
+      sizeFactor: _fade,
+      axisAlignment: -1,
+      child: FadeTransition(
+        opacity: _fade,
+        child: SlideTransition(
+          position: _slide,
+          child: ScaleTransition(
+            scale: _scale,
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 520),
+              curve: Curves.easeOutCubic,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(28),
+                boxShadow: highlight
+                    ? [
+                        BoxShadow(
+                          color: const Color(0xFFD4A017).withOpacity(0.22),
+                          blurRadius: 30,
+                          offset: const Offset(0, 12),
+                        ),
+                      ]
+                    : const [],
+              ),
+              child: widget.child,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 // ══════════════════════════════════════════════════════════════════════════════
 //  HIGHLIGHT TEXT WIDGET  (highlights search query in yellow)
 // ══════════════════════════════════════════════════════════════════════════════
@@ -1639,6 +1970,195 @@ class _ExpandableDescriptionState extends State<_ExpandableDescription> {
     );
   }
 }
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  DISK CACHE FOR POST CARD THUMBNAILS ONLY
+//  خفيف على السكرول: مسار الكاش ينحسب مرة، لا يوجد spinner متحرك داخل القائمة،
+//  ولا يوجد تنزيل مكرر لنفس الصورة إذا أكثر من كرت طلبها بنفس اللحظة.
+// ══════════════════════════════════════════════════════════════════════════════
+class _PostThumbnailDiskCache {
+  static const _folderName = 'pdf_post_seen_thumbnails';
+  static Directory? _cachedDir;
+  static int _activeDownloads = 0;
+  static const int _maxParallelDownloads = 2;
+  static final Map<String, File?> _memory = <String, File?>{};
+  static final Map<String, Future<File?>> _inFlight = <String, Future<File?>>{};
+
+  static Future<Directory> _dir() async {
+    final existing = _cachedDir;
+    if (existing != null) return existing;
+
+    final dir = await getApplicationDocumentsDirectory();
+    final cacheDir = Directory('${dir.path}/$_folderName');
+    if (!await cacheDir.exists()) await cacheDir.create(recursive: true);
+    _cachedDir = cacheDir;
+    return cacheDir;
+  }
+
+  static String _safeName(String key, String url) {
+    final ext = Uri.tryParse(url)?.path.split('.').last.toLowerCase() ?? 'jpg';
+    final cleanExt = RegExp(r'^[a-z0-9]{2,5}$').hasMatch(ext) ? ext : 'jpg';
+    final safeKey = base64Url.encode(utf8.encode(key)).replaceAll('=', '');
+    return '$safeKey.$cleanExt';
+  }
+
+  static String _cacheId(String key, String url) => '${key}_$url';
+
+  static File? peekMemory(String key, String url) {
+    final id = _cacheId(key, url);
+    return _memory[id];
+  }
+
+  static Future<File?> get(String key, String url) async {
+    final id = _cacheId(key, url);
+    if (_memory.containsKey(id)) return _memory[id];
+
+    try {
+      final file = File('${(await _dir()).path}/${_safeName(key, url)}');
+      if (await file.exists() && await file.length() > 0) {
+        _memory[id] = file;
+        return file;
+      }
+    } catch (_) {}
+
+    _memory[id] = null;
+    return null;
+  }
+
+  static Future<File?> saveFromNetwork(String key, String url) {
+    final id = _cacheId(key, url);
+    final running = _inFlight[id];
+    if (running != null) return running;
+
+    final future = _saveFromNetworkInternal(key, url).whenComplete(() {
+      _inFlight.remove(id);
+    });
+    _inFlight[id] = future;
+    return future;
+  }
+
+  static Future<File?> _saveFromNetworkInternal(String key, String url) async {
+    try {
+      final cached = await get(key, url);
+      if (cached != null) return cached;
+
+      while (_activeDownloads >= _maxParallelDownloads) {
+        await Future<void>.delayed(const Duration(milliseconds: 120));
+      }
+
+      _activeDownloads++;
+      try {
+        final uri = Uri.parse(url);
+        final request = await HttpClient().getUrl(uri);
+        final response = await request.close();
+        if (response.statusCode != 200) return null;
+
+        final bytes = await consolidateHttpClientResponseBytes(response);
+        if (bytes.isEmpty) return null;
+
+        final file = File('${(await _dir()).path}/${_safeName(key, url)}');
+        await file.writeAsBytes(bytes, flush: false);
+        _memory[_cacheId(key, url)] = file;
+        return file;
+      } finally {
+        _activeDownloads = (_activeDownloads - 1).clamp(0, _maxParallelDownloads).toInt();
+      }
+    } catch (_) {
+      return null;
+    }
+  }
+}
+
+class _CachedPostThumbnail extends StatefulWidget {
+  final String url;
+  final String cacheKey;
+  final BoxFit fit;
+  final Alignment alignment;
+  final Color placeholderColor;
+  final Widget fallback;
+
+  const _CachedPostThumbnail({
+    required this.url,
+    required this.cacheKey,
+    required this.fit,
+    required this.alignment,
+    required this.placeholderColor,
+    required this.fallback,
+  });
+
+  @override
+  State<_CachedPostThumbnail> createState() => _CachedPostThumbnailState();
+}
+
+class _CachedPostThumbnailState extends State<_CachedPostThumbnail> {
+  File? _file;
+  bool _failed = false;
+  int _token = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _file = _PostThumbnailDiskCache.peekMemory(widget.cacheKey, widget.url);
+    if (_file == null) _load();
+  }
+
+  @override
+  void didUpdateWidget(covariant _CachedPostThumbnail oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.url != widget.url || oldWidget.cacheKey != widget.cacheKey) {
+      _token++;
+      _file = _PostThumbnailDiskCache.peekMemory(widget.cacheKey, widget.url);
+      _failed = false;
+      if (_file == null) _load();
+    }
+  }
+
+  Future<void> _load() async {
+    final token = _token;
+    final cached = await _PostThumbnailDiskCache.get(widget.cacheKey, widget.url);
+    if (!mounted || token != _token) return;
+    if (cached != null) {
+      setState(() => _file = cached);
+      return;
+    }
+
+    final downloaded = await _PostThumbnailDiskCache.saveFromNetwork(widget.cacheKey, widget.url);
+    if (!mounted || token != _token) return;
+    if (downloaded != null) {
+      setState(() => _file = downloaded);
+    } else {
+      setState(() => _failed = true);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_failed) return widget.fallback;
+    final file = _file;
+    if (file == null) {
+      return Container(color: widget.placeholderColor);
+    }
+
+    final mq = MediaQuery.of(context);
+    final dpr = mq.devicePixelRatio.clamp(1.0, 3.0);
+    final logicalWidth = mq.size.width;
+    final cacheWidth = (logicalWidth * dpr).round().clamp(480, 1280).toInt();
+
+    return ColoredBox(
+      color: Colors.white,
+      child: Image.file(
+        file,
+        fit: widget.fit,
+        alignment: widget.alignment,
+        gaplessPlayback: true,
+        filterQuality: FilterQuality.low,
+        cacheWidth: cacheWidth,
+        errorBuilder: (_, __, ___) => widget.fallback,
+      ),
+    );
+  }
+}
+
 // ══════════════════════════════════════════════════════════════════════════════
 //  HERO THUMBNAIL  (cached network image)
 // ══════════════════════════════════════════════════════════════════════════════
@@ -1661,33 +2181,13 @@ class _HeroThumbnail extends StatelessWidget {
         children: [
           Container(color: bg),
           if (file.hasThumbnail)
-            Image.network(
-              file.thumbnailUrl,
+            _CachedPostThumbnail(
+              url: file.thumbnailUrl,
+              cacheKey: '${file.id}_${file.thumbnail}',
               fit: BoxFit.cover,
-              alignment: Alignment.topCenter,
-              // Flutter's Image.network caches images in memory automatically.
-              // For disk-level cache, add the `cached_network_image` package.
-              errorBuilder: (_, __, ___) =>
-                  _FallbackThumbnail(extension: file.extension, isDark: isDark),
-              loadingBuilder: (context, child, progress) {
-                if (progress == null) return child;
-                return Stack(
-                  fit: StackFit.expand,
-                  children: [
-                    Container(color: bg),
-                    Center(
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: gold,
-                        value: progress.expectedTotalBytes == null
-                            ? null
-                            : progress.cumulativeBytesLoaded /
-                                progress.expectedTotalBytes!,
-                      ),
-                    ),
-                  ],
-                );
-              },
+              alignment: Alignment.center,
+              placeholderColor: Colors.white,
+              fallback: _FallbackThumbnail(extension: file.extension, isDark: isDark),
             )
           else
             _FallbackThumbnail(extension: file.extension, isDark: isDark),
@@ -2508,26 +3008,16 @@ class _DetailPreviewPanel extends StatelessWidget {
             fit: StackFit.expand,
             children: [
               if (file.hasThumbnail)
-                Image.network(
-                  file.thumbnailUrl,
+                _CachedPostThumbnail(
+                  url: file.thumbnailUrl,
+                  cacheKey: '${file.id}_${file.thumbnail}',
                   fit: BoxFit.cover,
-                  alignment: Alignment.topCenter,
-                  errorBuilder: (_, __, ___) => _FallbackThumbnail(
+                  alignment: Alignment.center,
+                  placeholderColor: Colors.white,
+                  fallback: _FallbackThumbnail(
                     extension: file.extension,
                     isDark: isDark,
                   ),
-                  loadingBuilder: (context, child, progress) {
-                    if (progress == null) return child;
-                    return Container(
-                      color: bg,
-                      child: const Center(
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: gold,
-                        ),
-                      ),
-                    );
-                  },
                 )
               else
                 _FallbackThumbnail(extension: file.extension, isDark: isDark),
@@ -3186,7 +3676,7 @@ class _PdfCommentsSectionState extends State<_PdfCommentsSection> {
 
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) {
-      _showSnack('سجل دخولك أولاً حتى تضيف تعليق. التكنولوجيا تطلب هوية حتى للكلام الآن.', success: false);
+      _showSnack('سجل دخولك أولاً لأضافة تعليق.', success: false);
       return;
     }
 
@@ -3219,7 +3709,7 @@ class _PdfCommentsSectionState extends State<_PdfCommentsSection> {
     } catch (_) {
       if (!mounted) return;
       setState(() => _sending = false);
-      _showSnack('فشل إرسال التعليق. السيرفر يبدو أنه أخذ استراحة شاي.', success: false);
+      _showSnack('فشل إرسال التعليق.', success: false);
     }
   }
 
@@ -3344,7 +3834,7 @@ class _PdfCommentsSectionState extends State<_PdfCommentsSection> {
             backgroundColor: bg,
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
             title: Text('حذف التعليق؟', style: TextStyle(color: textColor, fontWeight: FontWeight.w900)),
-            content: Text('راح ينحذف نهائياً، لأن زر التراجع يبدو رفاهية لم نخترعها هنا.', style: TextStyle(color: widget.isDark ? Colors.white70 : Colors.black54, height: 1.6)),
+            content: Text('راح ينحذف نهائياً.', style: TextStyle(color: widget.isDark ? Colors.white70 : Colors.black54, height: 1.6)),
             actions: [
               TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('إلغاء')),
               TextButton(
@@ -3475,7 +3965,7 @@ class _PdfCommentsSectionState extends State<_PdfCommentsSection> {
                         key: const ValueKey('error_comments'),
                         icon: Icons.wifi_off_rounded,
                         title: _error!,
-                        subtitle: 'اضغط لإعادة المحاولة، لأن الإنترنت قرر يتصرف كموظف دائرة.',
+                        subtitle: 'اضغط لإعادة المحاولة.',
                         isDark: widget.isDark,
                         onTap: () => _loadComments(initial: true),
                       )
@@ -3484,7 +3974,7 @@ class _PdfCommentsSectionState extends State<_PdfCommentsSection> {
                             key: const ValueKey('empty_comments'),
                             icon: Icons.mode_comment_outlined,
                             title: 'لا توجد تعليقات بعد',
-                            subtitle: 'كن أول شخص يكسر الصمت الحضاري هنا.',
+                            subtitle: 'كن أول من يضيف تعليق.',
                             isDark: widget.isDark,
                           )
                         : ListView.separated(
