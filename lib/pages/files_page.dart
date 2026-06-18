@@ -1267,96 +1267,108 @@ class _PdfCategorySelector extends StatelessWidget {
     final textPrimary = isDark ? Colors.white : const Color(0xFF17120A);
     final bg = isDark ? const Color(0xFF0D0D0D) : const Color(0xFFFFFBF1);
 
-    return Container(
-      margin: const EdgeInsets.fromLTRB(12, 8, 12, 4),
-      padding: const EdgeInsets.fromLTRB(12, 12, 12, 10),
-      decoration: BoxDecoration(
-        color: bg,
-        borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: gold.withOpacity(0.20)),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(isDark ? 0.24 : 0.05),
-            blurRadius: 18,
-            offset: const Offset(0, 8),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Row(
-            textDirection: TextDirection.rtl,
-            children: [
-              Container(
-                width: 36,
-                height: 36,
-                decoration: BoxDecoration(
-                  color: gold.withOpacity(0.14),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: const Icon(Icons.dashboard_customize_rounded, color: gold, size: 19),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Text(
-                  'تصنيفات الملفات',
-                  textAlign: TextAlign.right,
-                  style: TextStyle(
-                    color: textPrimary,
-                    fontSize: 15.5,
-                    fontWeight: FontWeight.w900,
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onHorizontalDragStart: (_) {},
+      onHorizontalDragUpdate: (_) {},
+      onHorizontalDragEnd: (_) {},
+      child: Container(
+        margin: const EdgeInsets.fromLTRB(12, 8, 12, 4),
+        padding: const EdgeInsets.fromLTRB(12, 12, 12, 10),
+        decoration: BoxDecoration(
+          color: bg,
+          borderRadius: BorderRadius.circular(24),
+          border: Border.all(color: gold.withOpacity(0.20)),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(isDark ? 0.24 : 0.05),
+              blurRadius: 18,
+              offset: const Offset(0, 8),
+            ),
+          ],
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              textDirection: TextDirection.rtl,
+              children: [
+                Container(
+                  width: 36,
+                  height: 36,
+                  decoration: BoxDecoration(
+                    color: gold.withOpacity(0.14),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Icon(
+                    Icons.dashboard_customize_rounded,
+                    color: gold,
+                    size: 19,
                   ),
                 ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    'تصنيفات الملفات',
+                    textAlign: TextAlign.right,
+                    style: TextStyle(
+                      color: textPrimary,
+                      fontSize: 15.5,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            ShaderMask(
+              shaderCallback: (Rect bounds) {
+                return const LinearGradient(
+                  begin: Alignment.centerRight,
+                  end: Alignment.centerLeft,
+                  colors: [
+                    Colors.transparent,
+                    Colors.white,
+                    Colors.white,
+                    Colors.transparent,
+                  ],
+                  stops: [0.0, 0.06, 0.94, 1.0],
+                ).createShader(bounds);
+              },
+              blendMode: BlendMode.dstIn,
+              child: SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                reverse: false,
+                physics: const BouncingScrollPhysics(),
+                child: Row(
+                  textDirection: TextDirection.rtl,
+                  children: [
+                    const SizedBox(width: 14),
+                    _PdfCategoryFilterChip(
+                      label: 'الكل',
+                      selected: selectedCategory == null,
+                      isDark: isDark,
+                      onTap: () => onSelected(null),
+                    ),
+                    const SizedBox(width: 8),
+                    ...categories.map(
+                      (category) => Padding(
+                        padding: const EdgeInsetsDirectional.only(start: 8),
+                        child: _PdfCategoryFilterChip(
+                          label: category,
+                          selected: selectedCategory == category,
+                          isDark: isDark,
+                          onTap: () => onSelected(category),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 14),
+                  ],
+                ),
               ),
-            ],
-          ),
-          const SizedBox(height: 10),
-ShaderMask(
-  shaderCallback: (Rect bounds) {
-    return const LinearGradient(
-      begin: Alignment.centerRight,
-      end: Alignment.centerLeft,
-      colors: [
-        Colors.transparent,
-        Colors.white,
-        Colors.white,
-        Colors.transparent,
-      ],
-      stops: [0.0, 0.06, 0.94, 1.0],
-    ).createShader(bounds);
-  },
-  blendMode: BlendMode.dstIn,
-  child: SingleChildScrollView(
-    scrollDirection: Axis.horizontal,
-    reverse: false,
-    physics: const BouncingScrollPhysics(),
-    child: Row(
-      textDirection: TextDirection.rtl,
-      children: [
-        const SizedBox(width: 14),
-        _PdfCategoryFilterChip(
-          label: 'الكل',
-          selected: selectedCategory == null,
-          isDark: isDark,
-          onTap: () => onSelected(null),
+            ),
+          ],
         ),
-        const SizedBox(width: 8),
-        ...categories.map((category) => Padding(
-              padding: const EdgeInsetsDirectional.only(start: 8),
-              child: _PdfCategoryFilterChip(
-                label: category,
-                selected: selectedCategory == category,
-                isDark: isDark,
-                onTap: () => onSelected(category),
-              ),
-            )),
-        const SizedBox(width: 14),
-      ],
-    ),
-  ),
-),
-        ],
       ),
     );
   }

@@ -191,6 +191,7 @@ class _MainScaffoldState extends State<MainScaffold>
   bool _isNavCompact = false;
   double _navScrollDelta = 0;
   bool _navAnimationTargetCompact = false;
+  final GlobalKey<_HomePageState> _homePageKey = GlobalKey<_HomePageState>();
 StreamSubscription<Uri>? _deepLinkSub;
 StreamSubscription<Map<String, dynamic>>? _notificationClickSub;
 int? _pendingPostId;
@@ -401,32 +402,36 @@ super.dispose();
     return false;
   }
 
-  void _onTabTapped(int index) {
-    // 0 = المنشورات، 1 = الملفات
-    // إذا أنت داخل نفس القسم وضغطت زر القسم مرة ثانية، يصعد لأعلى الصفحة.
-    if (_currentIndex == index) {
-      if (_isNavCompact || _navScrollDelta != 0) {
-        _expandNavBar();
-      }
-      if (index == 0) {
-        PublicationsPageScrollBus.goTop();
-      } else if (index == 1) {
-        FilesPageScrollBus.goTop();
-      }
-      return;
+void _onTabTapped(int index) {
+  // 0 = المنشورات، 1 = الملفات، 2 = الرئيسية
+  // إذا أنت داخل نفس القسم وضغطت زر القسم مرة ثانية، يصعد لأعلى الصفحة.
+  if (_currentIndex == index) {
+    if (_isNavCompact || _navScrollDelta != 0) {
+      _expandNavBar();
     }
 
-    _expandNavBar();
-    setState(() {
-      _currentIndex = index;
-    });
+    if (index == 0) {
+      PublicationsPageScrollBus.goTop();
+    } else if (index == 1) {
+      FilesPageScrollBus.goTop();
+    } else if (index == 2) {
+      _homePageKey.currentState?.scrollToTop();
+    }
 
-    _pageController.animateToPage(
-      index,
-      duration: const Duration(milliseconds: 280),
-      curve: Curves.easeOutCubic,
-    );
+    return;
   }
+
+  _expandNavBar();
+  setState(() {
+    _currentIndex = index;
+  });
+
+  _pageController.animateToPage(
+    index,
+    duration: const Duration(milliseconds: 280),
+    curve: Curves.easeOutCubic,
+  );
+}
 
   @override
   Widget build(BuildContext context) {
@@ -458,14 +463,42 @@ child: Scaffold(
                 children: [
                   PublicationsPage(isDark: isDark),
                   FilesPage(isDark: isDark),
-                  HomePage(isDark: isDark, isActive: _currentIndex == 2, onOpenSection: _onTabTapped),
+                  HomePage(
+                    key: _homePageKey,
+                    isDark: isDark,
+                    isActive: _currentIndex == 2,
+                    onOpenSection: _onTabTapped,
+                  ),
                   CoursesPage(isDark: isDark),
                   SettingsPage(isDark: isDark, onThemeToggle: widget.onThemeToggle),
                 ],
               ),
             ),
 
-
+// ── Gradient background behind bottom glass nav ──
+Positioned(
+  left: 0,
+  right: 0,
+  bottom: 0,
+  height: 64 + 30 + MediaQuery.of(context).padding.bottom,
+  child: IgnorePointer(
+    child: Container(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.bottomCenter,
+          end: Alignment.topCenter,
+          colors: [
+            bg,
+            bg.withOpacity(0.7),
+            bg.withOpacity(0.45),
+            bg.withOpacity(0.0),
+          ],
+          stops: const [0.0, 0.38, 0.72, 1.0],
+        ),
+      ),
+    ),
+  ),
+),
 
             // ── Premium Floating Nav Bar ──
             Positioned(
@@ -531,7 +564,7 @@ static const double compactBlur = 10;
 static const double darkNormalOpacity = 0.42;
 static const double darkCompactOpacity = 0.9;
 
-static const double lightNormalOpacity = 0.55;
+static const double lightNormalOpacity = 0.78;
 static const double lightCompactOpacity = 0.9;
 
   const _PremiumNavBar({
@@ -1538,60 +1571,93 @@ class _GoldButtonState extends State<_GoldButton>
 //  QUICK CARD
 // ─────────────────────────────────────────────
 
-class _QuickCard extends StatelessWidget {
+class _QuickCard extends StatefulWidget {
   final IconData icon;
   final String label;
   final bool isDark;
-  const _QuickCard({required this.icon, required this.label, required this.isDark});
+  final VoidCallback onTap;
 
+  const _QuickCard({
+    required this.icon,
+    required this.label,
+    required this.isDark,
+    required this.onTap,
+  });
+
+  @override
+  State<_QuickCard> createState() => _QuickCardState();
+}
+
+class _QuickCardState extends State<_QuickCard> {
   static const gold = Color(0xFFD4A017);
+  bool _pressed = false;
 
   @override
   Widget build(BuildContext context) {
-    final cardBg = isDark ? const ui.Color.fromARGB(0, 0, 0, 0) : Colors.white;
-    final textColor = isDark ? Colors.white : const Color(0xFF1A1000);
+    final cardBg = widget.isDark ? const ui.Color.fromARGB(0, 0, 0, 0) : Colors.white;
+    final textColor = widget.isDark ? Colors.white : const Color(0xFF1A1000);
+
     return Expanded(
-      child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 8),
-        decoration: BoxDecoration(
-          color: cardBg,
-          borderRadius: BorderRadius.circular(28),
-          border: Border.all(color: gold.withOpacity(0.18)),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(isDark ? 0.25 : 0.07),
-              blurRadius: 12,
-              offset: const Offset(0, 4),
-            ),
-            if (isDark)
-              BoxShadow(
-                color: gold.withOpacity(0.04),
-                blurRadius: 12,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTapDown: (_) => setState(() => _pressed = true),
+        onTapCancel: () => setState(() => _pressed = false),
+        onTapUp: (_) {
+          setState(() => _pressed = false);
+          widget.onTap();
+        },
+        child: AnimatedScale(
+          scale: _pressed ? 0.96 : 1.0,
+          duration: const Duration(milliseconds: 130),
+          curve: Curves.easeOutCubic,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 180),
+            curve: Curves.easeOutCubic,
+            padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 8),
+            decoration: BoxDecoration(
+              color: cardBg,
+              borderRadius: BorderRadius.circular(28),
+              border: Border.all(
+                color: _pressed ? gold.withOpacity(0.45) : gold.withOpacity(0.18),
               ),
-          ],
-        ),
-        child: Column(
-          children: [
-            Container(
-              width: 30,
-              height: 30,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: gold.withOpacity(0.12),
-              ),
-              child: Icon(icon, color: gold, size: 28),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(widget.isDark ? 0.25 : 0.07),
+                  blurRadius: _pressed ? 8 : 12,
+                  offset: const Offset(0, 4),
+                ),
+                if (widget.isDark)
+                  BoxShadow(
+                    color: gold.withOpacity(_pressed ? 0.08 : 0.04),
+                    blurRadius: 12,
+                  ),
+              ],
             ),
-            const SizedBox(height: 10),
-            Text(
-              label,
-              style: TextStyle(
-                  color: textColor,
-                  fontSize: 9,
-                  fontWeight: FontWeight.w600,
-                  height: 1.4),
-              textAlign: TextAlign.center,
+            child: Column(
+              children: [
+                Container(
+                  width: 30,
+                  height: 30,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: gold.withOpacity(_pressed ? 0.20 : 0.12),
+                  ),
+                  child: Icon(widget.icon, color: gold, size: 28),
+                ),
+                const SizedBox(height: 10),
+                Text(
+                  widget.label,
+                  style: TextStyle(
+                    color: textColor,
+                    fontSize: 9,
+                    fontWeight: FontWeight.w600,
+                    height: 1.4,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+              ],
             ),
-          ],
+          ),
         ),
       ),
     );
@@ -1708,7 +1774,6 @@ class _SettingsCard extends StatelessWidget {
 // ─────────────────────────────────────────────
 //  HOME PAGE
 // ─────────────────────────────────────────────
-
 class HomePage extends StatefulWidget {
   final bool isDark;
   final bool isActive;
@@ -1725,7 +1790,8 @@ class HomePage extends StatefulWidget {
 
 class _HomePageState extends State<HomePage>
     with SingleTickerProviderStateMixin {
-
+      final ScrollController _homeScrollController = ScrollController();
+final GlobalKey _contactCardKey = GlobalKey();
   static const String _latestPostsApi =
       'https://majidalbana.com/admin/posts/load_posts.php';
   static const String _latestFilesApi =
@@ -1735,7 +1801,15 @@ class _HomePageState extends State<HomePage>
   static const String _latestHomeCacheKey = 'latest_home_updates_cache_v2';
   static const String _postImageBaseUrl = 'https://majidalbana.com/uploads/';
   static const String _fileThumbBaseUrl = 'https://majidalbana.com/uploads-pdf/img/';
+void scrollToTop() {
+  if (!_homeScrollController.hasClients) return;
 
+  _homeScrollController.animateTo(
+    _homeScrollController.position.minScrollExtent,
+    duration: const Duration(milliseconds: 650),
+    curve: Curves.easeInOutCubic,
+  );
+}
   Timer? _latestUpdatesTimer;
   bool _loadingLatestUpdates = true;
   bool _isFetchingLatestUpdates = false;
@@ -1871,6 +1945,7 @@ Widget _buildContactInfoPill({
   required String value,
   required Color accent,
   required bool isDark,
+  TextDirection? valueDirection,
 }) {
   final textColor = isDark ? Colors.white : const Color(0xFF211600);
   return Expanded(
@@ -1923,17 +1998,24 @@ Widget _buildContactInfoPill({
                   ),
                 ),
                 const SizedBox(height: 3),
-                Text(
-                  value,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: textColor,
-                    fontSize: 11.5,
-                    height: 1.35,
-                    fontWeight: FontWeight.w900,
-                  ),
-                ),
+Directionality(
+  textDirection: valueDirection ?? Directionality.of(context),
+  child: Align(
+    alignment: Alignment.centerRight,
+    child: Text(
+      value,
+      textAlign: TextAlign.right,
+      maxLines: 2,
+      overflow: TextOverflow.ellipsis,
+      style: TextStyle(
+        color: textColor,
+        fontSize: 11.5,
+        height: 1.35,
+        fontWeight: FontWeight.w900,
+      ),
+    ),
+  ),
+),
               ],
             ),
           ),
@@ -2496,7 +2578,7 @@ Widget _buildSocialBtn(IconData icon, Color color) {
                             ),
                             const SizedBox(height: 3),
                             Text(
-                              'منشور، ملف، ومحاضرة في مكان واحد',
+                              'تابع آخر ما تم نشره في المنصة :',
                               style: TextStyle(
                                 color: textSub,
                                 fontSize: 12,
@@ -2613,10 +2695,11 @@ Widget _buildSocialBtn(IconData icon, Color color) {
 
 
 
-  @override
-  void initState() {
-    super.initState();
-    _ctrl = AnimationController(
+ @override
+void initState() {
+  super.initState();
+
+  _ctrl = AnimationController(
         vsync: this, duration: const Duration(milliseconds: 800));
     _heroFade = CurvedAnimation(parent: _ctrl, curve: Curves.easeOut);
     _heroSlide = Tween<Offset>(
@@ -2653,12 +2736,13 @@ Widget _buildSocialBtn(IconData icon, Color color) {
     _latestUpdatesTimer = null;
   }
 
-  @override
-  void dispose() {
-    _stopLatestUpdatesTimer();
-    _ctrl.dispose();
-    super.dispose();
-  }
+@override
+void dispose() {
+  _stopLatestUpdatesTimer();
+  _homeScrollController.dispose();
+  _ctrl.dispose();
+  super.dispose();
+}
 
   static const gold = Color(0xFFD4A017);
   static const goldLight = Color(0xFFE8B84B);
@@ -2673,6 +2757,7 @@ Widget _buildSocialBtn(IconData icon, Color color) {
     final heroBg = isDark ? const Color(0xFF0E0E0E) : const Color(0xFFFAF4E8);
 
 return CustomScrollView(
+  controller: _homeScrollController,
   keyboardDismissBehavior:
       ScrollViewKeyboardDismissBehavior.onDrag,
   physics: const BouncingScrollPhysics(),
@@ -2821,10 +2906,20 @@ Row(
                                 ),
                                 const SizedBox(height: 28),
                                 _GoldButton(
-                                  label: 'تواصل معنا الآن',
-                                  icon: Icons.phone_rounded,
-                                  onTap: () {},
-                                ),
+  label: 'تواصل معنا الآن',
+  icon: Icons.phone_rounded,
+  onTap: () {
+    final contactContext = _contactCardKey.currentContext;
+    if (contactContext == null) return;
+
+    Scrollable.ensureVisible(
+      contactContext,
+      duration: const Duration(milliseconds: 650),
+      curve: Curves.easeInOutCubic,
+      alignment: 0.08,
+    );
+  },
+),
                                 const SizedBox(height: 18),
                                 Container(
                                   padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
@@ -2866,20 +2961,26 @@ Row(
             padding: const EdgeInsets.fromLTRB(16, 20, 16, 0),
             child: Row(
               children: [
-                _QuickCard(
-                    icon: Icons.photo_library_outlined,
-                    label: 'المنشورات',
-                    isDark: isDark),
-                const SizedBox(width: 10),
-                _QuickCard(
-                    icon: Icons.architecture_outlined,
-                    label: 'المخططات الإنشائية',
-                    isDark: isDark),
-                const SizedBox(width: 10),
-                _QuickCard(
-                    icon: Icons.school_outlined,
-                    label: 'الدورات',
-                    isDark: isDark),
+_QuickCard(
+  icon: Icons.photo_library_outlined,
+  label: 'المنشورات',
+  isDark: isDark,
+  onTap: () => widget.onOpenSection(0),
+),
+const SizedBox(width: 10),
+_QuickCard(
+  icon: Icons.architecture_outlined,
+  label: ' الملفات والكتب',
+  isDark: isDark,
+  onTap: () => widget.onOpenSection(1),
+),
+const SizedBox(width: 10),
+_QuickCard(
+  icon: Icons.school_outlined,
+  label: 'المحاضرات',
+  isDark: isDark,
+  onTap: () => widget.onOpenSection(3),
+),
               ],
             ),
           ),
@@ -3046,11 +3147,559 @@ Row(
                 ),
                 
                 const SizedBox(height: 18),
-const SizedBox(height: 20),
-         const SizedBox(height: 20),
-                // ── كرت تواصل معنا بتصميم زجاجي ذهبي ──
+
+                // ── كرت الموقع الرسمي ──
+                GestureDetector(
+                  onTap: () async {
+                    final uri = Uri.parse('https://majidalbana.com/');
+                    try {
+                      final opened = await launchUrl(
+                        uri,
+                        mode: LaunchMode.externalApplication,
+                      );
+
+                      if (!opened && mounted) {
+                        _showContactLaunchError();
+                      }
+                    } catch (_) {
+                      if (mounted) {
+                        _showContactLaunchError();
+                      }
+                    }
+                  },
+                  child: Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(18),
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(28),
+                      gradient: LinearGradient(
+                        begin: Alignment.topRight,
+                        end: Alignment.bottomLeft,
+                        colors: isDark
+                            ? [
+                                const Color(0xFF17120A),
+                                const Color(0xFF0D0D0D),
+                              ]
+                            : [
+                                const Color(0xFFFFFBF0),
+                                Colors.white,
+                              ],
+                      ),
+                      border: Border.all(
+                        color: gold.withOpacity(isDark ? 0.24 : 0.20),
+                      ),
+                      boxShadow: [
+                        BoxShadow(
+                          color: gold.withOpacity(isDark ? 0.12 : 0.10),
+                          blurRadius: 26,
+                          offset: const Offset(0, 12),
+                        ),
+                        BoxShadow(
+                          color: Colors.black.withOpacity(isDark ? 0.30 : 0.06),
+                          blurRadius: 18,
+                          offset: const Offset(0, 8),
+                        ),
+                      ],
+                    ),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(28),
+                      child: Stack(
+                        children: [
+                          Positioned(
+                            top: -45,
+                            left: -35,
+                            child: Container(
+                              width: 120,
+                              height: 120,
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                gradient: RadialGradient(
+                                  colors: [
+                                    gold.withOpacity(isDark ? 0.24 : 0.18),
+                                    Colors.transparent,
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+                          Positioned(
+                            bottom: -55,
+                            right: -40,
+                            child: Container(
+                              width: 140,
+                              height: 140,
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                gradient: RadialGradient(
+                                  colors: [
+                                    const Color(0xFFFFD970).withOpacity(isDark ? 0.18 : 0.14),
+                                    Colors.transparent,
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+                          Row(
+                            children: [
+                              Container(
+                                width: 58,
+                                height: 58,
+                                decoration: BoxDecoration(
+                                  borderRadius: BorderRadius.circular(22),
+                                  gradient: const LinearGradient(
+                                    colors: [
+                                      Color(0xFFFFD970),
+                                      Color(0xFFD4A017),
+                                      Color(0xFF9B6A00),
+                                    ],
+                                    begin: Alignment.topRight,
+                                    end: Alignment.bottomLeft,
+                                  ),
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: gold.withOpacity(0.28),
+                                      blurRadius: 18,
+                                      offset: const Offset(0, 8),
+                                    ),
+                                  ],
+                                ),
+                                child: const Icon(
+                                  Icons.language_rounded,
+                                  color: ui.Color.fromARGB(255, 255, 255, 255),
+                                  size: 28,
+                                ),
+                              ),
+                              const SizedBox(width: 14),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      'الموقع الرسمي',
+                                      style: TextStyle(
+                                        color: isDark ? Colors.white : const Color(0xFF1A1000),
+                                        fontSize: 15,
+                                        fontWeight: FontWeight.w900,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 6),
+                                    Text(
+                                      'WWW.MAJIDALBANA.COM',
+                                      style: TextStyle(
+                                        color: gold,
+                                        fontSize: 14,
+                                        letterSpacing: 0.7,
+                                        fontWeight: FontWeight.w800,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              Container(
+                                width: 40,
+                                height: 40,
+                                decoration: BoxDecoration(
+                                  color: isDark
+                                      ? Colors.white.withOpacity(0.06)
+                                      : gold.withOpacity(0.10),
+                                  shape: BoxShape.circle,
+                                  border: Border.all(
+                                    color: gold.withOpacity(0.22),
+                                  ),
+                                ),
+                                
+                                child: Icon(
+                                  Icons.open_in_new_rounded,
+                                  color: gold,
+                                  size: 20,
+                                ),
+                              ),
+             const SizedBox(width: 10),
+
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+
+                const SizedBox(height: 18),
+
+                // ── كرت تعريف وظيفة التطبيق والأقسام ──
                 Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(20),
                   decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(30),
+                    gradient: LinearGradient(
+                      begin: Alignment.topRight,
+                      end: Alignment.bottomLeft,
+                      colors: isDark
+                          ? [
+                              const Color(0xFF17140E),
+                              const Color(0xFF0E0E0E),
+                              const Color(0xFF070707),
+                            ]
+                          : [
+                              const Color(0xFFFFFCF5),
+                              const Color(0xFFFFF6DD),
+                              Colors.white,
+                            ],
+                    ),
+                    border: Border.all(
+                      color: gold.withOpacity(isDark ? 0.24 : 0.18),
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: gold.withOpacity(isDark ? 0.12 : 0.09),
+                        blurRadius: 28,
+                        offset: const Offset(0, 14),
+                      ),
+                      BoxShadow(
+                        color: Colors.black.withOpacity(isDark ? 0.28 : 0.05),
+                        blurRadius: 18,
+                        offset: const Offset(0, 8),
+                      ),
+                    ],
+                  ),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(30),
+                    child: Stack(
+                      children: [
+                        Positioned(
+                          top: -50,
+                          right: -45,
+                          child: Container(
+                            width: 140,
+                            height: 140,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              gradient: RadialGradient(
+                                colors: [
+                                  gold.withOpacity(isDark ? 0.20 : 0.14),
+                                  Colors.transparent,
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                        Positioned(
+                          bottom: -65,
+                          left: -50,
+                          child: Container(
+                            width: 160,
+                            height: 160,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              gradient: RadialGradient(
+                                colors: [
+                                  const Color(0xFFFFD970).withOpacity(isDark ? 0.16 : 0.12),
+                                  Colors.transparent,
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Container(
+                                  width: 56,
+                                  height: 56,
+                                  decoration: BoxDecoration(
+                                    borderRadius: BorderRadius.circular(21),
+                                    gradient: const LinearGradient(
+                                      begin: Alignment.topRight,
+                                      end: Alignment.bottomLeft,
+                                      colors: [
+                                        Color(0xFFFFD970),
+                                        Color(0xFFD4A017),
+                                        Color(0xFF9B6A00),
+                                      ],
+                                    ),
+                                    boxShadow: [
+                                      BoxShadow(
+                                        color: gold.withOpacity(0.28),
+                                        blurRadius: 18,
+                                        offset: const Offset(0, 8),
+                                      ),
+                                    ],
+                                  ),
+                                  child: const Icon(
+                                    Icons.auto_awesome_rounded,
+                                    color: Colors.white,
+                                    size: 27,
+                                  ),
+                                ),
+                                const SizedBox(width: 14),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        'منصة هندسية متكاملة',
+                                        style: TextStyle(
+                                          color: isDark ? Colors.white : const Color(0xFF1A1000),
+                                          fontSize: 16,
+                                          fontWeight: FontWeight.w900,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 6),
+                                      Text(
+                                        'كل ما تحتاجه من محتوى، ملفات، دورات وإعدادات في مكان واحد.',
+                                        style: TextStyle(
+                                          color: textSub,
+                                          fontSize: 12.8,
+                                          height: 1.5,
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
+
+                            const SizedBox(height: 18),
+
+                            Text(
+                              'صُمم التطبيق ليكون بوابتك السريعة لمتابعة آخر المنشورات الهندسية، الوصول إلى الملفات المهمة، معرفة تفاصيل الدورات والمحاضرات، والتحكم بتجربة الاستخدام من الإعدادات بأسلوب بسيط ومنظم.',
+                              style: TextStyle(
+                                color: textSub,
+                                fontSize: 13.4,
+                                height: 1.8,
+                                fontWeight: FontWeight.w500,
+                              ),
+                              textAlign: TextAlign.justify,
+                            ),
+
+                            const SizedBox(height: 18),
+
+                            Wrap(
+                              spacing: 10,
+                              runSpacing: 10,
+                              children: [
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                                  decoration: BoxDecoration(
+                                    color: isDark
+                                        ? Colors.white.withOpacity(0.055)
+                                        : Colors.white.withOpacity(0.72),
+                                    borderRadius: BorderRadius.circular(18),
+                                    border: Border.all(
+                                      color: gold.withOpacity(isDark ? 0.18 : 0.14),
+                                    ),
+                                  ),
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Icon(Icons.article_rounded, color: gold, size: 18),
+                                      const SizedBox(width: 7),
+                                      Text(
+                                        'المنشورات',
+                                        style: TextStyle(
+                                          color: isDark ? Colors.white : const Color(0xFF1A1000),
+                                          fontSize: 12.5,
+                                          fontWeight: FontWeight.w800,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                                  decoration: BoxDecoration(
+                                    color: isDark
+                                        ? Colors.white.withOpacity(0.055)
+                                        : Colors.white.withOpacity(0.72),
+                                    borderRadius: BorderRadius.circular(18),
+                                    border: Border.all(
+                                      color: gold.withOpacity(isDark ? 0.18 : 0.14),
+                                    ),
+                                  ),
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Icon(Icons.folder_rounded, color: gold, size: 18),
+                                      const SizedBox(width: 7),
+                                      Text(
+                                        'الملفات',
+                                        style: TextStyle(
+                                          color: isDark ? Colors.white : const Color(0xFF1A1000),
+                                          fontSize: 12.5,
+                                          fontWeight: FontWeight.w800,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                                  decoration: BoxDecoration(
+                                    color: isDark
+                                        ? Colors.white.withOpacity(0.055)
+                                        : Colors.white.withOpacity(0.72),
+                                    borderRadius: BorderRadius.circular(18),
+                                    border: Border.all(
+                                      color: gold.withOpacity(isDark ? 0.18 : 0.14),
+                                    ),
+                                  ),
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Icon(Icons.school_rounded, color: gold, size: 18),
+                                      const SizedBox(width: 7),
+                                      Text(
+                                        'الدورات',
+                                        style: TextStyle(
+                                          color: isDark ? Colors.white : const Color(0xFF1A1000),
+                                          fontSize: 12.5,
+                                          fontWeight: FontWeight.w800,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                                  decoration: BoxDecoration(
+                                    color: isDark
+                                        ? Colors.white.withOpacity(0.055)
+                                        : Colors.white.withOpacity(0.72),
+                                    borderRadius: BorderRadius.circular(18),
+                                    border: Border.all(
+                                      color: gold.withOpacity(isDark ? 0.18 : 0.14),
+                                    ),
+                                  ),
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Icon(Icons.tune_rounded, color: gold, size: 18),
+                                      const SizedBox(width: 7),
+                                      Text(
+                                        'الإعدادات',
+                                        style: TextStyle(
+                                          color: isDark ? Colors.white : const Color(0xFF1A1000),
+                                          fontSize: 12.5,
+                                          fontWeight: FontWeight.w800,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
+
+                            const SizedBox(height: 18),
+
+                            Container(
+                              padding: const EdgeInsets.all(14),
+                              decoration: BoxDecoration(
+                                color: isDark
+                                    ? Colors.black.withOpacity(0.20)
+                                    : const Color(0xFFFFF8E6),
+                                borderRadius: BorderRadius.circular(22),
+                                border: Border.all(
+                                  color: gold.withOpacity(isDark ? 0.18 : 0.16),
+                                ),
+                              ),
+                              child: Column(
+                                children: [
+                                  Row(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Icon(Icons.article_outlined, color: gold, size: 21),
+                                      const SizedBox(width: 10),
+                                      Expanded(
+                                        child: Text(
+                                          'المنشورات: مقالات وتحديثات ومحتوى معرفي يعرض أحدث الأخبار والمعلومات بطريقة واضحة وسريعة.',
+                                          style: TextStyle(
+                                            color: textSub,
+                                            fontSize: 12.8,
+                                            height: 1.6,
+                                            fontWeight: FontWeight.w600,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 12),
+                                  Row(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Icon(Icons.insert_drive_file_outlined, color: gold, size: 21),
+                                      const SizedBox(width: 10),
+                                      Expanded(
+                                        child: Text(
+                                          'الملفات: مكتبة منظمة تضم المخططات، الكتب، المراجع والملفات المهمة للتحميل أو القراءة.',
+                                          style: TextStyle(
+                                            color: textSub,
+                                            fontSize: 12.8,
+                                            height: 1.6,
+                                            fontWeight: FontWeight.w600,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 12),
+                                  Row(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Icon(Icons.workspace_premium_outlined, color: gold, size: 21),
+                                      const SizedBox(width: 10),
+                                      Expanded(
+                                        child: Text(
+                                          'الدورات: متابعة مواعيد المحاضرات والدورات التدريبية مع تفاصيل المكان والوقت وروابط الوصول.',
+                                          style: TextStyle(
+                                            color: textSub,
+                                            fontSize: 12.8,
+                                            height: 1.6,
+                                            fontWeight: FontWeight.w600,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 12),
+                                  Row(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Icon(Icons.settings_outlined, color: gold, size: 21),
+                                      const SizedBox(width: 10),
+                                      Expanded(
+                                        child: Text(
+                                          'الإعدادات: تخصيص تجربة التطبيق والتحكم بالمظهر والحساب والتنبيهات بما يناسب استخدامك.',
+                                          style: TextStyle(
+                                            color: textSub,
+                                            fontSize: 12.8,
+                                            height: 1.6,
+                                            fontWeight: FontWeight.w600,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+
+                const SizedBox(height: 20),
+
+// ── كرت تواصل معنا بتصميم زجاجي ذهبي ──
+Container(
+  key: _contactCardKey,
+  decoration: BoxDecoration(
                     borderRadius: BorderRadius.circular(34),
                     gradient: LinearGradient(
                       colors: isDark
@@ -3233,13 +3882,14 @@ const SizedBox(height: 20),
                                         const SizedBox(height: 10),
                                         Row(
                                           children: [
-                                            _buildContactInfoPill(
-                                              icon: Icons.call_rounded,
-                                              title: 'الهاتف',
-                                              value: '+964 770 272 4811',
-                                              accent: const Color(0xFF1E88E5),
-                                              isDark: isDark,
-                                            ),
+                                           _buildContactInfoPill(
+  icon: Icons.call_rounded,
+  title: 'الهاتف',
+  value: '+964 770 272 4811',
+  accent: const Color(0xFF1E88E5),
+  isDark: isDark,
+  valueDirection: TextDirection.ltr,
+),
                                             const SizedBox(width: 10),
                                             _buildContactInfoPill(
                                               icon: Icons.alternate_email_rounded,
@@ -3399,7 +4049,7 @@ class _UserAvatarButtonState extends State<_UserAvatarButton>
                 opacity: _fadeAnim,
                 child: ScaleTransition(
                   scale: _scaleAnim,
-                  alignment: Alignment.topRight,
+                  alignment: Alignment.topLeft,
                   child: child,
                 ),
               ),
@@ -3864,15 +4514,18 @@ child: ClipOval(
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: [
                               Container(
-                                width: 22,
-                                height: 22,
-                                decoration: BoxDecoration(
-                                  color: Colors.white,
-                                  shape: BoxShape.circle,
-                                ),
-                                child: const Icon(Icons.g_mobiledata_rounded,
-                                    color: ui.Color.fromARGB(255, 23, 89, 212), size: 18),
-                              ),
+  width: 22,
+  height: 22,
+  padding: const EdgeInsets.all(3),
+  decoration: const BoxDecoration(
+    color: Colors.white,
+    shape: BoxShape.circle,
+  ),
+  child: Image.asset(
+    'assets/images/google.webp',
+    fit: BoxFit.contain,
+  ),
+),
                               const SizedBox(width: 8),
                               const Text(
                                 'تسجيل الدخول بـ Google',

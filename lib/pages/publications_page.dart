@@ -5877,6 +5877,7 @@ Future<void> _editComment(int commentId, String newText) async {
       onHorizontalDragEnd: (details) {
         if (details.primaryVelocity != null &&
             details.primaryVelocity!.abs() > 300) {
+          HapticFeedback.lightImpact();
           Navigator.of(context).pop();
         }
       },
