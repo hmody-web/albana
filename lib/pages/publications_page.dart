@@ -206,6 +206,109 @@ class PublicationsPageDeepLinkBus {
   }
 }
 
+
+class PublicationDirectPage extends StatefulWidget {
+  final int postId;
+  final bool isDark;
+
+  const PublicationDirectPage({
+    super.key,
+    required this.postId,
+    required this.isDark,
+  });
+
+  @override
+  State<PublicationDirectPage> createState() => _PublicationDirectPageState();
+}
+
+class _PublicationDirectPageState extends State<PublicationDirectPage> {
+  static const String _singlePostApi =
+      'https://majidalbana.com/admin/posts/get_post.php';
+
+  late final Future<_PublicationPost?> _futurePost;
+
+  @override
+  void initState() {
+    super.initState();
+    _futurePost = _fetchPost();
+  }
+
+  Future<_PublicationPost?> _fetchPost() async {
+    try {
+      final uri = Uri.parse(_singlePostApi).replace(
+        queryParameters: {'id': '${widget.postId}'},
+      );
+      final response = await http.get(uri).timeout(const Duration(seconds: 15));
+      if (response.statusCode != 200) return null;
+
+      final decoded = jsonDecode(utf8.decode(response.bodyBytes));
+      if (decoded is Map && decoded['success'] == true && decoded['post'] is Map) {
+        return _PublicationPost.fromJson(
+          Map<String, dynamic>.from(decoded['post'] as Map),
+        );
+      }
+      if (decoded is Map && decoded['id'] != null) {
+        return _PublicationPost.fromJson(Map<String, dynamic>.from(decoded));
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final pageBg = widget.isDark ? const Color(0xFF050505) : const Color(0xFFF8F6F0);
+
+    return FutureBuilder<_PublicationPost?>(
+      future: _futurePost,
+      builder: (context, snapshot) {
+        if (snapshot.connectionState != ConnectionState.done) {
+          return Scaffold(
+            backgroundColor: pageBg,
+            body: const Center(
+              child: CircularProgressIndicator(color: Color(0xFFD4A017)),
+            ),
+          );
+        }
+
+        final post = snapshot.data;
+        if (post == null) {
+          return Scaffold(
+            backgroundColor: pageBg,
+            appBar: AppBar(
+              backgroundColor: Colors.transparent,
+              elevation: 0,
+              iconTheme: IconThemeData(
+                color: widget.isDark ? Colors.white : Colors.black87,
+              ),
+            ),
+            body: Center(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Text(
+                  'تعذر فتح المنشور المطلوب',
+                  textDirection: TextDirection.rtl,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: widget.isDark ? Colors.white70 : Colors.black54,
+                    fontSize: 15,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+            ),
+          );
+        }
+
+        return _PostDetailPage(
+          post: post,
+          isDark: widget.isDark,
+          isSupervisor: _isCurrentUserSupervisor(),
+        );
+      },
+    );
+  }
+}
+
 class PublicationsPage extends StatefulWidget {
   final bool isDark;
   const PublicationsPage({super.key, required this.isDark});
@@ -2515,14 +2618,6 @@ Future<void> _sharePublicationPost(
   _PublicationPost post,
 ) async {
   final url = 'https://majidalbana.com/post/index.php?id=${post.id}';
-  final cleanContent = post.content.trim().replaceAll(RegExp(r'\s+'), ' ');
-  final preview = cleanContent.length > 200
-      ? '${cleanContent.substring(0, 200)}...'
-      : cleanContent;
-
-  final text = preview.isNotEmpty
-      ? '$preview\n\nادخل على الرابط لقراءة المقال:\n$url'
-      : 'منشور د.ماجد البنا\n\nادخل على الرابط لقراءة المقال:\n$url';
 
   Rect? shareOrigin;
   try {
@@ -2535,14 +2630,13 @@ Future<void> _sharePublicationPost(
 
   try {
     await Share.share(
-      text,
-      subject: 'منشور د.ماجد البنا',
+      url,
       sharePositionOrigin:
           shareOrigin ?? const Rect.fromLTWH(0, 0, 1, 1),
     );
   } catch (_) {
     try {
-      await Clipboard.setData(ClipboardData(text: text));
+      await Clipboard.setData(ClipboardData(text: url));
     } catch (_) {}
 
     try {
@@ -5800,40 +5894,44 @@ Future<void> _editComment(int commentId, String newText) async {
             fontWeight: FontWeight.w800,
           ),
         ),
+        leadingWidth: 112,
         leading: GestureDetector(
-          onTap: () => Navigator.pop(context),
+          onTap: () => _sharePublicationPost(context, p),
           child: Container(
-            margin: const EdgeInsets.all(8),
+            margin: const EdgeInsets.only(left: 12, top: 8, bottom: 8),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
             decoration: BoxDecoration(
-              color: gold.withOpacity(0.12),
-              shape: BoxShape.circle,
+              color: gold.withOpacity(0.10),
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: gold.withOpacity(0.3)),
             ),
-            child: Icon(Icons.arrow_back_ios_new_rounded,
-                color: gold, size: 18),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.share_rounded, size: 16, color: gold),
+                const SizedBox(width: 6),
+                Text('مشاركة',
+                    style: TextStyle(
+                        color: textPrimary,
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w600)),
+              ],
+            ),
           ),
         ),
         actions: [
           GestureDetector(
-            onTap: () => _sharePublicationPost(context, p),
+            onTap: () => Navigator.pop(context),
             child: Container(
-              margin: const EdgeInsets.only(right: 12),
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+              width: 40,
+              height: 40,
+              margin: const EdgeInsets.only(right: 12, top: 8, bottom: 8),
               decoration: BoxDecoration(
-                color: gold.withOpacity(0.10),
-                borderRadius: BorderRadius.circular(20),
-                border: Border.all(color: gold.withOpacity(0.3)),
+                color: gold.withOpacity(0.12),
+                shape: BoxShape.circle,
               ),
-              child: Row(
-                children: [
-                  Icon(Icons.share_rounded, size: 16, color: gold),
-                  const SizedBox(width: 6),
-                  Text('مشاركة',
-                      style: TextStyle(
-                          color: textPrimary,
-                          fontSize: 12.5,
-                          fontWeight: FontWeight.w600)),
-                ],
-              ),
+              child: Icon(Icons.arrow_forward_ios_rounded,
+                  color: gold, size: 18),
             ),
           ),
         ],

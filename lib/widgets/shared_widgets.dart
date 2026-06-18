@@ -48,69 +48,82 @@ class PremiumAppBar extends StatelessWidget {
           ),
         ),
       ),
-      title: Directionality(
-        textDirection: TextDirection.rtl,
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Container(
+title: Row(
+  textDirection: TextDirection.ltr,
+  children: [
+    onSearchTap != null
+        ? GestureDetector(
+            onTap: onSearchTap,
+            child: Container(
               width: 40,
               height: 40,
               decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                gradient: const LinearGradient(
-                  colors: [Color(0xFFE8B84B), Color(0xFF8A5E00)],
-                ),
-                boxShadow: [
-                  BoxShadow(
-                    color: gold.withOpacity(0.35),
-                    blurRadius: 10,
-                    offset: const Offset(0, 3),
-                  ),
-                ],
+                color: gold.withOpacity(0.12),
+                borderRadius: BorderRadius.circular(13),
+                border: Border.all(color: gold.withOpacity(0.35)),
               ),
-              child: Padding(
-                padding: const EdgeInsets.all(8),
-                child: Image.asset(
-                  'assets/images/logo.png',
-                  fit: BoxFit.contain,
-                  color: Colors.white,
-                  colorBlendMode: BlendMode.srcIn,
-                ),
-              ),
-            ),
-            Text(
-              title,
-              style: const TextStyle(
+              child: Icon(
+                searchActive ? Icons.close_rounded : Icons.search_rounded,
                 color: gold,
-                fontSize: 18,
-                fontWeight: FontWeight.w800,
-                letterSpacing: 0.3,
+                size: 22,
               ),
             ),
-            if (onSearchTap != null)
-              GestureDetector(
-                onTap: onSearchTap,
-                child: Container(
-                  width: 40,
-                  height: 40,
-                  decoration: BoxDecoration(
-                    color: gold.withOpacity(0.12),
-                    borderRadius: BorderRadius.circular(13),
-                    border: Border.all(color: gold.withOpacity(0.35)),
-                  ),
-                  child: Icon(
-                    searchActive ? Icons.close_rounded : Icons.search_rounded,
-                    color: gold,
-                    size: 22,
-                  ),
-                ),
-              )
-            else
-              const SizedBox(width: 40),
-          ],
+          )
+        : const SizedBox(width: 40),
+
+    const Spacer(),
+
+    Row(
+      mainAxisSize: MainAxisSize.min,
+      textDirection: TextDirection.rtl,
+      children: [
+        SizedBox(
+          width: 42,
+          height: 42,
+          child: Padding(
+            padding: const EdgeInsets.all(3),
+            child: Image.asset(
+  'assets/images/logo.png',
+  fit: BoxFit.contain,
+  color: gold,
+  colorBlendMode: BlendMode.srcIn,
+),
+          ),
         ),
-      ),
+
+        Container(
+          width: 1,
+          height: 30,
+          margin: const EdgeInsets.symmetric(horizontal: 10),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(99),
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [
+                Colors.transparent,
+                gold.withOpacity(isDark ? 0.55 : 0.42),
+                Colors.transparent,
+              ],
+            ),
+          ),
+        ),
+
+        Text(
+          title,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(
+            color: gold,
+            fontSize: 18,
+            fontWeight: FontWeight.w800,
+            letterSpacing: 0.3,
+          ),
+        ),
+      ],
+    ),
+  ],
+),
     );
   }
 }

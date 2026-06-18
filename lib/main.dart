@@ -1,9 +1,11 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/scheduler.dart';
+import 'package:http/http.dart' as http;
 import 'pages/publications_page.dart';
 import 'pages/files_page.dart';
 import 'pages/courses_page.dart';
@@ -15,7 +17,25 @@ import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'firebase_options.dart';
 import 'package:app_links/app_links.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'firebase_notification_service.dart';
+
+SystemUiOverlayStyle appSystemBarsStyle(bool isDark) {
+  return SystemUiOverlayStyle(
+    statusBarColor: Colors.transparent,
+    systemNavigationBarColor: isDark ? const Color(0xFF050505) : const Color(0xFFF7F4EE),
+    systemNavigationBarDividerColor: Colors.transparent,
+    statusBarIconBrightness: isDark ? Brightness.light : Brightness.dark,
+    systemNavigationBarIconBrightness: isDark ? Brightness.light : Brightness.dark,
+    // مهم جداً للـ iOS: الثيم الفاتح يحتاج light حتى تظهر الأيقونات/النصوص بالأسود.
+    statusBarBrightness: isDark ? Brightness.dark : Brightness.light,
+  );
+}
+
+void applyAppSystemBarsStyle(bool isDark) {
+  SystemChrome.setSystemUIOverlayStyle(appSystemBarsStyle(isDark));
+}
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
@@ -34,6 +54,8 @@ void main() async {
     DeviceOrientation.portraitUp,
   ]);
 
+  applyAppSystemBarsStyle(false);
+
   runApp(const DrMajedApp());
 }
 
@@ -43,18 +65,77 @@ class DrMajedApp extends StatefulWidget {
   State<DrMajedApp> createState() => _DrMajedAppState();
 }
 
-class _DrMajedAppState extends State<DrMajedApp> {
-  bool _isDark = true;
-  void _toggleTheme(bool val) => setState(() => _isDark = val);
+class _DrMajedAppState extends State<DrMajedApp> with WidgetsBindingObserver {
+  static const String _themePrefsKey = 'app_is_dark_theme';
+
+  // الثيم الافتراضي للتطبيق هو الوضع الفاتح.
+  bool _isDark = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _applySystemBarsStyle(_isDark);
+    _loadSavedTheme();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _applySystemBarsStyle(_isDark);
+    }
+  }
+
+  Future<void> _loadSavedTheme() async {
+    final prefs = await SharedPreferences.getInstance();
+    final savedIsDark = prefs.getBool(_themePrefsKey) ?? false;
+
+    if (!mounted) return;
+    setState(() => _isDark = savedIsDark);
+    _applySystemBarsStyle(savedIsDark);
+  }
+
+  void _toggleTheme(bool val) {
+    setState(() => _isDark = val);
+    _applySystemBarsStyle(val);
+    unawaited(_saveThemePreference(val));
+  }
+
+  Future<void> _saveThemePreference(bool val) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_themePrefsKey, val);
+  }
+
+  SystemUiOverlayStyle _systemBarsStyle(bool dark) => appSystemBarsStyle(dark);
+
+  void _applySystemBarsStyle(bool dark) {
+    applyAppSystemBarsStyle(dark);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      applyAppSystemBarsStyle(dark);
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'د. ماجد البنا',
-      debugShowCheckedModeBanner: false,
-      locale: const Locale('ar'),
-      theme: _buildTheme(_isDark),
-      home: MainScaffold(isDark: _isDark, onThemeToggle: _toggleTheme),
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) applyAppSystemBarsStyle(_isDark);
+    });
+
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: _systemBarsStyle(_isDark),
+      child: MaterialApp(
+        title: 'د. ماجد البنا',
+        debugShowCheckedModeBanner: false,
+        locale: const Locale('ar'),
+        theme: _buildTheme(_isDark),
+        home: MainScaffold(isDark: _isDark, onThemeToggle: _toggleTheme),
+      ),
     );
   }
 
@@ -71,6 +152,7 @@ class _DrMajedAppState extends State<DrMajedApp> {
           secondary: Color(0xFFD48D09),
           surface: Color(0xFF101010),
         ),
+        appBarTheme: AppBarTheme(systemOverlayStyle: appSystemBarsStyle(true)),
         fontFamily: 'Cairo',
         useMaterial3: true,
       );
@@ -84,6 +166,7 @@ class _DrMajedAppState extends State<DrMajedApp> {
         secondary: goldLight,
         surface: Colors.white,
       ),
+      appBarTheme: AppBarTheme(systemOverlayStyle: appSystemBarsStyle(false)),
       fontFamily: 'Cairo',
       useMaterial3: true,
     );
@@ -110,6 +193,9 @@ class _MainScaffoldState extends State<MainScaffold>
   late PageController _pageController;
   late AnimationController _navAnimCtrl;
   final AppLinks _appLinks = AppLinks();
+  bool _isNavCompact = false;
+  double _navScrollDelta = 0;
+  bool _navAnimationTargetCompact = false;
 StreamSubscription<Uri>? _deepLinkSub;
 StreamSubscription<Map<String, dynamic>>? _notificationClickSub;
 int? _pendingPostId;
@@ -117,14 +203,24 @@ int? _pendingPostId;
   @override
   void initState() {
     super.initState();
+    applyAppSystemBarsStyle(widget.isDark);
     _pageController = PageController(initialPage: 2, keepPage: true);
     _navAnimCtrl = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 200),
-    )..forward();
+      duration: const Duration(milliseconds: 420),
+      reverseDuration: const Duration(milliseconds: 360),
+    );
 
     _initDeepLinks();
     _initNotificationClicks();
+  }
+
+  @override
+  void didUpdateWidget(covariant MainScaffold oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.isDark != widget.isDark) {
+      applyAppSystemBarsStyle(widget.isDark);
+    }
   }
 
   Future<void> _initDeepLinks() async {
@@ -174,7 +270,10 @@ void _openPublicationsPageFromNotification() {
     return;
   }
 
-  setState(() => _currentIndex = 0);
+  _expandNavBar();
+  setState(() {
+    _currentIndex = 0;
+  });
 
   if (_pageController.hasClients) {
     _pageController.animateToPage(
@@ -228,7 +327,10 @@ void _openPublicationsPageFromNotification() {
     if (!mounted) return;
 
     if (_currentIndex != 0) {
-      setState(() => _currentIndex = 0);
+      _expandNavBar();
+      setState(() {
+        _currentIndex = 0;
+      });
       if (_pageController.hasClients) {
         _pageController.animateToPage(
           0,
@@ -257,10 +359,60 @@ _navAnimCtrl.dispose();
 super.dispose();
   }
 
+  void _animateNavBar({required bool compact}) {
+    if (_navAnimationTargetCompact == compact) return;
+    _navAnimationTargetCompact = compact;
+    _isNavCompact = compact;
+
+    _navAnimCtrl.animateTo(
+      compact ? 1.0 : 0.0,
+      duration: compact
+          ? const Duration(milliseconds: 420)
+          : const Duration(milliseconds: 360),
+      curve: compact ? Curves.easeOutCubic : Curves.easeOutQuart,
+    );
+  }
+
+  void _expandNavBar() {
+    _navScrollDelta = 0;
+    _animateNavBar(compact: false);
+  }
+
+  bool _handleNavScrollNotification(ScrollNotification notification) {
+    if (notification.metrics.axis != Axis.vertical) return false;
+
+    if (notification is ScrollUpdateNotification && notification.scrollDelta != null) {
+      final delta = notification.scrollDelta!;
+
+      if (delta > 0) {
+        _navScrollDelta = (_navScrollDelta + delta).clamp(0.0, 120.0).toDouble();
+        if (!_isNavCompact && _navScrollDelta >= 76) {
+          _navScrollDelta = 0;
+          _animateNavBar(compact: true);
+        }
+      } else if (delta < 0) {
+        _navScrollDelta = (_navScrollDelta + delta).clamp(-120.0, 0.0).toDouble();
+        if (_isNavCompact && _navScrollDelta <= -52) {
+          _navScrollDelta = 0;
+          _animateNavBar(compact: false);
+        }
+      }
+    }
+
+    if (notification is ScrollEndNotification || notification is UserScrollNotification) {
+      _navScrollDelta = 0;
+    }
+
+    return false;
+  }
+
   void _onTabTapped(int index) {
     // 0 = المنشورات، 1 = الملفات
     // إذا أنت داخل نفس القسم وضغطت زر القسم مرة ثانية، يصعد لأعلى الصفحة.
     if (_currentIndex == index) {
+      if (_isNavCompact || _navScrollDelta != 0) {
+        _expandNavBar();
+      }
       if (index == 0) {
         PublicationsPageScrollBus.goTop();
       } else if (index == 1) {
@@ -269,7 +421,10 @@ super.dispose();
       return;
     }
 
-    setState(() => _currentIndex = index);
+    _expandNavBar();
+    setState(() {
+      _currentIndex = index;
+    });
 
     _pageController.animateToPage(
       index,
@@ -283,7 +438,13 @@ super.dispose();
     final isDark = widget.isDark;
     final bg = isDark ? const Color(0xFF0A0A0A) : const Color(0xFFF5F0E8);
 
-    return Directionality(
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) applyAppSystemBarsStyle(isDark);
+    });
+
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: appSystemBarsStyle(isDark),
+      child: Directionality(
       textDirection: TextDirection.rtl,
 child: Scaffold(
   resizeToAvoidBottomInset: false,
@@ -291,33 +452,121 @@ child: Scaffold(
   body: Stack(
           children: [
             // ── PageView for swipe navigation ──
-            PageView(
-              controller: _pageController,
-              physics: const BouncingScrollPhysics(),
-              onPageChanged: (index) {
-                setState(() => _currentIndex = index);
-              },
-              children: [
-                PublicationsPage(isDark: isDark),
-                FilesPage(isDark: isDark),
-                HomePage(isDark: isDark),
-                CoursesPage(isDark: isDark),
-                SettingsPage(isDark: isDark, onThemeToggle: widget.onThemeToggle),
-              ],
+            NotificationListener<ScrollNotification>(
+              onNotification: _handleNavScrollNotification,
+              child: PageView(
+                controller: _pageController,
+                physics: const BouncingScrollPhysics(),
+                onPageChanged: (index) {
+                  applyAppSystemBarsStyle(isDark);
+                  _expandNavBar();
+                  setState(() {
+                    _currentIndex = index;
+                  });
+                },
+                children: [
+                  PublicationsPage(isDark: isDark),
+                  FilesPage(isDark: isDark),
+                  HomePage(isDark: isDark, onOpenSection: _onTabTapped),
+                  CoursesPage(isDark: isDark),
+                  SettingsPage(isDark: isDark, onThemeToggle: widget.onThemeToggle),
+                ],
+              ),
             ),
+
+// ── Real gradient blur box behind bottom glass nav ──
+Positioned(
+  left: 0,
+  right: 0,
+  bottom: 0,
+  height: 115 + (MediaQuery.of(context).padding.bottom > 30
+      ? MediaQuery.of(context).padding.bottom
+      : 30),
+  child: IgnorePointer(
+    child: RepaintBoundary(
+      child: ClipRect(
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            const int blurSteps = 10;
+            final double totalHeight = constraints.maxHeight;
+            final double stepHeight = totalHeight / blurSteps;
+
+            return Stack(
+              children: List.generate(blurSteps, (index) {
+                final double progress = index / (blurSteps - 1);
+
+                // 1.0 بالأسفل، 0.0 بالأعلى
+                final double strength = 1.0 - progress;
+
+                // تدرج ناعم لكن بعدد طبقات أقل حتى لا يقطع التصفح
+                final double sigma = 24.0 * strength * strength;
+
+                if (sigma <= 0.45) {
+                  return const SizedBox.shrink();
+                }
+
+                return Positioned(
+                  left: 0,
+                  right: 0,
+                  bottom: index * stepHeight,
+                  height: stepHeight + 3,
+                  child: ClipRect(
+                    child: BackdropFilter(
+                      filter: ui.ImageFilter.blur(
+                        sigmaX: sigma,
+                        sigmaY: sigma,
+                      ),
+                      child: const ColoredBox(
+                        color: Color(0x01000000),
+                      ),
+                    ),
+                  ),
+                );
+              }),
+            );
+          },
+        ),
+      ),
+    ),
+  ),
+),
+
             // ── Premium Floating Nav Bar ──
             Positioned(
-              bottom: 18,
               left: 16,
               right: 16,
-              child: _PremiumNavBar(
-                currentIndex: _currentIndex,
-                isDark: isDark,
-                onTap: _onTabTapped,
+              bottom: 0,
+              child: SafeArea(
+                top: false,
+                minimum: const EdgeInsets.only(bottom: 30),
+child: AnimatedBuilder(
+  animation: _navAnimCtrl,
+  builder: (context, _) {
+    final t = Curves.easeOutCubic.transform(_navAnimCtrl.value);
+    final scale = ui.lerpDouble(1.0, 0.80, t)!;
+    final translateY = ui.lerpDouble(0.0, 16.0, t)!;
+
+    return Transform.translate(
+      offset: Offset(0, translateY),
+      child: Transform.scale(
+        scale: scale,
+        alignment: Alignment.bottomCenter,
+        filterQuality: FilterQuality.medium,
+        child: _PremiumNavBar(
+          currentIndex: _currentIndex,
+          isDark: isDark,
+          compactAmount: t,
+          onTap: _onTabTapped,
+        ),
+      ),
+    );
+  },
+),
               ),
             ),
           ],
         ),
+      ),
       ),
     );
   }
@@ -330,11 +579,27 @@ child: Scaffold(
 class _PremiumNavBar extends StatelessWidget {
   final int currentIndex;
   final bool isDark;
-  final ValueChanged<int> onTap;
+final double compactAmount;
+final ValueChanged<int> onTap;
+
+// تحكم بالغواش
+// كلما زادت القيمة يصير الخلف مغوش أكثر
+static const double normalBlur = 18;
+static const double compactBlur = 18;
+
+// تحكم بتعتيم / صلابة خلفية البار
+// كلما زادت القيمة يصير البار أغمق / أصلب ويقل ظهور الغواش
+// كلما قلت القيمة يصير زجاجي أكثر ويبين الغواش
+static const double darkNormalOpacity = 0.42;
+static const double darkCompactOpacity = 0.9;
+
+static const double lightNormalOpacity = 0.55;
+static const double lightCompactOpacity = 0.9;
 
   const _PremiumNavBar({
     required this.currentIndex,
     required this.isDark,
+    required this.compactAmount,
     required this.onTap,
   });
 
@@ -342,51 +607,58 @@ class _PremiumNavBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(40),
-      child: BackdropFilter(
-        filter: ui.ImageFilter.blur(sigmaX: 15, sigmaY: 15),
-        child: Container(
-          height: 58,
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(40),
-            gradient: isDark
-                ? LinearGradient(
-                    colors: [
-                      const ui.Color.fromARGB(255, 0, 0, 0).withOpacity(0.08),
-                      const ui.Color.fromARGB(255, 0, 0, 0).withOpacity(0.04),
-                    ],
-                    begin: Alignment.topCenter,
-                    end: Alignment.bottomCenter,
-                  )
-                : LinearGradient(
-                    colors: [
-                      Colors.white.withOpacity(0.85),
-                      Colors.white.withOpacity(0.65),
-                    ],
-                    begin: Alignment.topCenter,
-                    end: Alignment.bottomCenter,
-                  ),
-            border: Border.all(
-              color: isDark
-                  ? Colors.white.withOpacity(0.12)
-                  : Colors.white.withOpacity(0.9),
-              width: 1.5,
-            ),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(isDark ? 0.5 : 0.12),
-                blurRadius: 40,
-                spreadRadius: -6,
-                offset: const Offset(0, 12),
-              ),
-              BoxShadow(
-                color: gold.withOpacity(isDark ? 0.08 : 0.06),
-                blurRadius: 30,
-                offset: const Offset(0, 4),
-              ),
-            ],
-          ),
+    return Container(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(40),
+boxShadow: isDark
+    ? [
+        BoxShadow(
+          color: const ui.Color.fromARGB(255, 0, 0, 0).withOpacity(0.2),
+          blurRadius: 26,
+          spreadRadius: -8,
+          offset: const Offset(0, 0),
+        ),
+      ]
+    : [
+        BoxShadow(
+          color: Colors.black.withOpacity(0.28),
+          blurRadius: 18,
+          spreadRadius: -3,
+          offset: const Offset(0, 0),
+        ),
+      ],
+      ),
+child: ClipRRect(
+  borderRadius: BorderRadius.circular(40),
+  clipBehavior: Clip.antiAlias,
+  child: BackdropFilter(
+filter: ui.ImageFilter.blur(
+  sigmaX: ui.lerpDouble(normalBlur, compactBlur, compactAmount)!,
+  sigmaY: ui.lerpDouble(normalBlur, compactBlur, compactAmount)!,
+),
+    child: Container(
+      height: 64,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(40),
+color: isDark
+    ? const ui.Color(0xFF101010).withOpacity(
+        ui.lerpDouble(darkNormalOpacity, darkCompactOpacity, compactAmount)!,
+      )
+    : Colors.white.withOpacity(
+        ui.lerpDouble(lightNormalOpacity, lightCompactOpacity, compactAmount)!,
+      ),
+        border: Border.all(
+          color: isDark
+              ? Colors.white.withOpacity(
+                  ui.lerpDouble(0.14, 0.20, compactAmount)!,
+                )
+              : Colors.white.withOpacity(
+                  ui.lerpDouble(0.65, 0.50, compactAmount)!,
+                ),
+          width: 1.5,
+        ),
+        boxShadow: const [],
+      ),
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceAround,
             children: [
@@ -432,6 +704,7 @@ class _PremiumNavBar extends StatelessWidget {
                 onTap: onTap,
               ),
             ],
+          ),
           ),
         ),
       ),
@@ -645,6 +918,353 @@ class _CenterLogoButtonState extends State<_CenterLogoButton>
 // ─────────────────────────────────────────────
 //  SHARED WIDGETS
 // ─────────────────────────────────────────────
+
+
+
+enum _LatestUpdateType { publication, file, lecture }
+
+class _LatestHomeUpdate {
+  final _LatestUpdateType type;
+  final int sectionIndex;
+  final int itemId;
+  final IconData icon;
+  final String title;
+  final String headline;
+  final String subtitle;
+  final String imageUrl;
+  final String targetUrl;
+  final Color accent;
+
+  const _LatestHomeUpdate({
+    required this.type,
+    required this.sectionIndex,
+    required this.itemId,
+    required this.icon,
+    required String? title,
+    required String? headline,
+    required String? subtitle,
+    required String? imageUrl,
+    required String? targetUrl,
+    required this.accent,
+  })  : title = title ?? '',
+        headline = headline ?? '',
+        subtitle = subtitle ?? '',
+        imageUrl = imageUrl ?? '',
+        targetUrl = targetUrl ?? '';
+
+  String get signature =>
+      '${type.name}|$itemId|$headline|$subtitle|$imageUrl|$targetUrl';
+
+  Map<String, dynamic> toJson() => {
+        'type': type.name,
+        'sectionIndex': sectionIndex,
+        'itemId': itemId,
+        'title': title,
+        'headline': headline,
+        'subtitle': subtitle,
+        'imageUrl': imageUrl,
+        'targetUrl': targetUrl,
+      };
+
+  static _LatestHomeUpdate? fromJson(Map<String, dynamic> json) {
+    final typeName = '${json['type'] ?? ''}';
+    _LatestUpdateType? type;
+    for (final value in _LatestUpdateType.values) {
+      if (value.name == typeName) {
+        type = value;
+        break;
+      }
+    }
+    if (type == null) return null;
+
+    return _LatestHomeUpdate(
+      type: type,
+      sectionIndex: int.tryParse('${json['sectionIndex'] ?? _sectionIndexFor(type)}') ??
+          _sectionIndexFor(type),
+      itemId: int.tryParse('${json['itemId'] ?? 0}') ?? 0,
+      icon: _iconFor(type),
+      title: '${json['title'] ?? _titleFor(type)}',
+      headline: '${json['headline'] ?? ''}',
+      subtitle: '${json['subtitle'] ?? ''}',
+      imageUrl: '${json['imageUrl'] ?? ''}',
+      targetUrl: '${json['targetUrl'] ?? ''}',
+      accent: _accentFor(type),
+    );
+  }
+
+  static int _sectionIndexFor(_LatestUpdateType type) {
+    switch (type) {
+      case _LatestUpdateType.publication:
+        return 0;
+      case _LatestUpdateType.file:
+        return 1;
+      case _LatestUpdateType.lecture:
+        return 3;
+    }
+  }
+
+  static IconData _iconFor(_LatestUpdateType type) {
+    switch (type) {
+      case _LatestUpdateType.publication:
+        return Icons.photo_library_rounded;
+      case _LatestUpdateType.file:
+        return Icons.picture_as_pdf_rounded;
+      case _LatestUpdateType.lecture:
+        return Icons.school_rounded;
+    }
+  }
+
+  static Color _accentFor(_LatestUpdateType type) {
+    switch (type) {
+      case _LatestUpdateType.publication:
+        return const Color(0xFFD4A017);
+      case _LatestUpdateType.file:
+        return const ui.Color.fromARGB(255, 232, 75, 75);
+      case _LatestUpdateType.lecture:
+        return const Color(0xFF43A047);
+    }
+  }
+
+  static String _titleFor(_LatestUpdateType type) {
+    switch (type) {
+      case _LatestUpdateType.publication:
+        return 'آخر منشور';
+      case _LatestUpdateType.file:
+        return 'آخر ملف';
+      case _LatestUpdateType.lecture:
+        return 'آخر محاضرة';
+    }
+  }
+}
+
+class _LatestUpdateTile extends StatefulWidget {
+  final _LatestHomeUpdate update;
+  final bool isDark;
+  final Color innerBg;
+  final Color textPrimary;
+  final Color textSub;
+  final VoidCallback onTap;
+
+  const _LatestUpdateTile({
+    required this.update,
+    required this.isDark,
+    required this.innerBg,
+    required this.textPrimary,
+    required this.textSub,
+    required this.onTap,
+  });
+
+  @override
+  State<_LatestUpdateTile> createState() => _LatestUpdateTileState();
+}
+
+class _LatestUpdateTileState extends State<_LatestUpdateTile> {
+  bool _pressed = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final update = widget.update;
+
+    return GestureDetector(
+      onTapDown: (_) => setState(() => _pressed = true),
+      onTapCancel: () => setState(() => _pressed = false),
+      onTapUp: (_) {
+        setState(() => _pressed = false);
+        HapticFeedback.selectionClick();
+        widget.onTap();
+      },
+      child: AnimatedScale(
+        duration: const Duration(milliseconds: 140),
+        scale: _pressed ? 0.985 : 1,
+        curve: Curves.easeOut,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: widget.innerBg.withOpacity(widget.isDark ? 0.78 : 0.92),
+            borderRadius: BorderRadius.circular(22),
+            border: Border.all(
+              color: _pressed ? update.accent.withOpacity(0.45) : update.accent.withOpacity(0.18),
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: update.accent.withOpacity(_pressed ? 0.14 : 0.07),
+                blurRadius: _pressed ? 18 : 12,
+                offset: const Offset(0, 7),
+              ),
+            ],
+          ),
+          child: Row(
+            children: [
+              _LatestUpdateIcon(update: update, isDark: widget.isDark),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Text(
+                          update.title,
+                          style: TextStyle(
+                            color: update.accent,
+                            fontSize: 11.5,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                        const SizedBox(width: 7),
+                        Container(
+                          width: 4,
+                          height: 4,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: update.accent.withOpacity(0.65),
+                          ),
+                        ),
+                        const SizedBox(width: 7),
+                        Expanded(
+                          child: Text(
+                            'اضغط للانتقال',
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: widget.textSub.withOpacity(0.2),
+                              fontSize: 10.5,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 5),
+                    Text(
+                      update.headline,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: widget.textPrimary,
+                        fontSize: 13.5,
+                        fontWeight: FontWeight.w900,
+                        height: 1.35,
+                      ),
+                    ),
+                    if (update.subtitle.trim().isNotEmpty) ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        update.subtitle.trim(),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: widget.textSub,
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              Icon(Icons.arrow_back_ios_new_rounded, color: update.accent, size: 16),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _LatestUpdateIcon extends StatelessWidget {
+  final _LatestHomeUpdate update;
+  final bool isDark;
+
+  const _LatestUpdateIcon({
+    required this.update,
+    required this.isDark,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final hasNetworkImage = update.imageUrl.trim().isNotEmpty;
+    final isLecture = update.type == _LatestUpdateType.lecture;
+
+    return Container(
+      width: 46,
+      height: 46,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: update.accent.withOpacity(0.30)),
+        boxShadow: [
+          BoxShadow(
+            color: update.accent.withOpacity(0.12),
+            blurRadius: 12,
+            offset: const Offset(0, 5),
+          ),
+        ],
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(15),
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            if (isLecture)
+              Image.asset(
+                'assets/images/map.png',
+                fit: BoxFit.cover,
+                errorBuilder: (_, __, ___) => _fallbackBackground(),
+              )
+            else if (hasNetworkImage)
+              Image.network(
+                update.imageUrl,
+                fit: BoxFit.cover,
+                filterQuality: FilterQuality.medium,
+                errorBuilder: (_, __, ___) => _fallbackBackground(),
+              )
+            else
+              _fallbackBackground(),
+            Container(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topRight,
+                  end: Alignment.bottomLeft,
+                  colors: [
+                    Colors.black.withOpacity(isDark ? 0.46 : 0.34),
+                    update.accent.withOpacity(isDark ? 0.34 : 0.28),
+                  ],
+                ),
+              ),
+            ),
+            Center(
+              child: Container(
+                width: 28,
+                height: 28,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: Colors.white.withOpacity(0.7),
+                ),
+                child: Icon(update.icon, color: update.accent, size: 16),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _fallbackBackground() {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topRight,
+          end: Alignment.bottomLeft,
+          colors: [
+            update.accent.withOpacity(0.25),
+            update.accent.withOpacity(0.08),
+          ],
+        ),
+      ),
+    );
+  }
+}
 
 class _GoldDivider extends StatelessWidget {
   const _GoldDivider();
@@ -1155,7 +1775,8 @@ class _SettingsCard extends StatelessWidget {
 
 class HomePage extends StatefulWidget {
   final bool isDark;
-  const HomePage({super.key, required this.isDark});
+  final ValueChanged<int> onOpenSection;
+  const HomePage({super.key, required this.isDark, required this.onOpenSection});
   @override
   State<HomePage> createState() => _HomePageState();
 }
@@ -1163,7 +1784,20 @@ class HomePage extends StatefulWidget {
 class _HomePageState extends State<HomePage>
     with SingleTickerProviderStateMixin {
 
-      
+  static const String _latestPostsApi =
+      'https://majidalbana.com/admin/posts/load_posts.php';
+  static const String _latestFilesApi =
+      'https://majidalbana.com/admin/pdf-posts/load_pdf_posts.php';
+  static const String _latestCoursesApi =
+      'https://majidalbana.com/admin/table/load_schedule.php';
+  static const String _latestHomeCacheKey = 'latest_home_updates_cache_v2';
+  static const String _postImageBaseUrl = 'https://majidalbana.com/uploads/';
+  static const String _fileThumbBaseUrl = 'https://majidalbana.com/uploads-pdf/img/';
+
+  Timer? _latestUpdatesTimer;
+  bool _loadingLatestUpdates = true;
+  List<_LatestHomeUpdate> _latestUpdates = [];
+
   late AnimationController _ctrl;
   late Animation<double> _heroFade;
   late Animation<Offset> _heroSlide;
@@ -1338,6 +1972,490 @@ Widget _buildSocialBtn(IconData icon, Color color) {
   );
 }
 
+  Future<void> _loadLatestHomeUpdates({bool silent = false}) async {
+    if (!mounted) return;
+
+    if (!silent && _latestUpdates.isEmpty) {
+      final cached = await _loadCachedLatestHomeUpdates();
+      if (cached.isNotEmpty && mounted) {
+        setState(() {
+          _latestUpdates = cached;
+          _loadingLatestUpdates = false;
+        });
+      }
+    }
+
+    if (!silent && _latestUpdates.isEmpty && mounted) {
+      setState(() => _loadingLatestUpdates = true);
+    }
+
+    try {
+      final results = await Future.wait<_LatestHomeUpdate?>([
+        _fetchLatestPublication(),
+        _fetchLatestFile(),
+        _fetchLatestLecture(),
+      ]);
+
+      if (!mounted) return;
+
+      final freshUpdates = results.whereType<_LatestHomeUpdate>().toList();
+      await _saveLatestHomeUpdatesToCache(freshUpdates);
+
+      final oldSignature = _latestUpdates.map((e) => e.signature).join(':::');
+      final newSignature = freshUpdates.map((e) => e.signature).join(':::');
+
+      if (oldSignature != newSignature || _loadingLatestUpdates) {
+        setState(() {
+          _latestUpdates = freshUpdates;
+          _loadingLatestUpdates = false;
+        });
+      } else if (_loadingLatestUpdates) {
+        setState(() => _loadingLatestUpdates = false);
+      }
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _loadingLatestUpdates = false);
+    }
+  }
+
+  Future<List<_LatestHomeUpdate>> _loadCachedLatestHomeUpdates() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(_latestHomeCacheKey);
+      if (raw == null || raw.trim().isEmpty) return [];
+      final decoded = jsonDecode(raw);
+      if (decoded is! List) return [];
+      return decoded
+          .whereType<Map>()
+          .map((e) => _LatestHomeUpdate.fromJson(Map<String, dynamic>.from(e)))
+          .whereType<_LatestHomeUpdate>()
+          .toList();
+    } catch (_) {
+      return [];
+    }
+  }
+
+  Future<void> _saveLatestHomeUpdatesToCache(List<_LatestHomeUpdate> updates) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(
+        _latestHomeCacheKey,
+        jsonEncode(updates.map((e) => e.toJson()).toList()),
+      );
+    } catch (_) {}
+  }
+
+  Future<_LatestHomeUpdate?> _fetchLatestPublication() async {
+    final response = await http
+        .get(Uri.parse(_latestPostsApi))
+        .timeout(const Duration(seconds: 12));
+    if (response.statusCode != 200) return null;
+
+    final decoded = jsonDecode(utf8.decode(response.bodyBytes));
+    if (decoded is! List || decoded.isEmpty) return null;
+
+    final items = decoded.whereType<Map>().toList()
+      ..sort((a, b) {
+        final ad = DateTime.tryParse('${a['created_at'] ?? ''}') ?? DateTime(1970);
+        final bd = DateTime.tryParse('${b['created_at'] ?? ''}') ?? DateTime(1970);
+        return bd.compareTo(ad);
+      });
+
+    final item = Map<String, dynamic>.from(items.first);
+    final text = _cleanLatestText(item['content']);
+
+    return _LatestHomeUpdate(
+      type: _LatestUpdateType.publication,
+      sectionIndex: 0,
+      itemId: int.tryParse('${item['id'] ?? 0}') ?? 0,
+      icon: Icons.photo_library_rounded,
+      title: 'آخر منشور',
+      headline: text.isEmpty ? 'منشور جديد من د.ماجد البنا' : text,
+      subtitle: _formatLatestDate('${item['created_at'] ?? ''}'),
+      imageUrl: _resolveLatestImageUrl(item['image'], _postImageBaseUrl),
+      targetUrl: '',
+      accent: const Color(0xFFD4A017),
+    );
+  }
+
+  Future<_LatestHomeUpdate?> _fetchLatestFile() async {
+    final uri = Uri.parse(_latestFilesApi);
+    final response = await http.get(uri).timeout(const Duration(seconds: 12));
+    if (response.statusCode != 200) return null;
+
+    final decoded = jsonDecode(utf8.decode(response.bodyBytes));
+    if (decoded is! List || decoded.isEmpty) return null;
+
+    final items = decoded.whereType<Map>().toList()
+      ..sort((a, b) {
+        final ad = DateTime.tryParse('${a['created_at'] ?? ''}') ?? DateTime(1970);
+        final bd = DateTime.tryParse('${b['created_at'] ?? ''}') ?? DateTime(1970);
+        return bd.compareTo(ad);
+      });
+
+    final item = Map<String, dynamic>.from(items.first);
+    final title = _cleanLatestText(item['title']);
+    final category = _cleanLatestText(item['category']);
+    final date = _formatLatestDate('${item['created_at'] ?? ''}');
+
+    return _LatestHomeUpdate(
+      type: _LatestUpdateType.file,
+      sectionIndex: 1,
+      itemId: int.tryParse('${item['id'] ?? 0}') ?? 0,
+      icon: Icons.picture_as_pdf_rounded,
+      title: 'آخر ملف',
+      headline: title.isEmpty ? 'ملف جديد متاح للعرض' : title,
+      subtitle: category.isEmpty ? date : '$category  •  $date',
+      imageUrl: _resolveLatestImageUrl(item['thumbnail'], _fileThumbBaseUrl),
+      targetUrl: '',
+      accent: const Color(0xFFE8B84B),
+    );
+  }
+
+  Future<_LatestHomeUpdate?> _fetchLatestLecture() async {
+    final response = await http
+        .get(Uri.parse(_latestCoursesApi))
+        .timeout(const Duration(seconds: 12));
+    if (response.statusCode != 200) return null;
+
+    final html = utf8.decode(response.bodyBytes);
+    final rows = RegExp(r'<tr[^>]*>(.*?)</tr>', dotAll: true, caseSensitive: false)
+        .allMatches(html)
+        .map((m) => m.group(1) ?? '')
+        .toList();
+
+    for (final rowHtml in rows) {
+      final cells = RegExp(r'<td[^>]*>(.*?)</td>', dotAll: true, caseSensitive: false)
+          .allMatches(rowHtml)
+          .map((m) => _cleanHtmlLatest(m.group(1) ?? ''))
+          .toList();
+      if (cells.length < 4) continue;
+
+      final lectureNumber = cells[0];
+      final day = cells[1];
+      final time = cells[2];
+      final location = cells[3];
+      final urlMatch = RegExp(r'''href=["']([^"']+)["']''', caseSensitive: false)
+          .firstMatch(rowHtml);
+      final idMatch =
+          RegExp(r'''data-id=["']?(\d+)["']?''', caseSensitive: false)
+              .firstMatch(rowHtml);
+
+      return _LatestHomeUpdate(
+        type: _LatestUpdateType.lecture,
+        sectionIndex: 3,
+        itemId: int.tryParse(idMatch?.group(1) ?? '0') ?? 0,
+        icon: Icons.school_rounded,
+        title: 'آخر محاضرة',
+        headline: lectureNumber.isEmpty ? 'محاضرة جديدة' : 'محاضرة $lectureNumber',
+        subtitle: [day, time, location].where((e) => e.trim().isNotEmpty).join('  •  '),
+        imageUrl: '',
+        targetUrl: urlMatch?.group(1)?.trim() ?? '',
+        accent: const Color(0xFF43A047),
+      );
+    }
+
+    return null;
+  }
+
+  String _cleanLatestText(dynamic value) {
+    return '${value ?? ''}'
+        .replaceAll(RegExp(r'<[^>]*>', dotAll: true), ' ')
+        .replaceAll('&nbsp;', ' ')
+        .replaceAll('&amp;', '&')
+        .replaceAll('&quot;', '"')
+        .replaceAll('&#039;', "'")
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+  }
+
+  String _cleanHtmlLatest(String value) => _cleanLatestText(value);
+
+  String _formatLatestDate(String value) {
+    final raw = value.trim();
+    if (raw.isEmpty) return 'تحديث جديد';
+    final dateOnly = raw.split(' ').first;
+    return dateOnly.isEmpty ? 'تحديث جديد' : dateOnly;
+  }
+
+  String _resolveLatestImageUrl(dynamic value, String baseUrl) {
+    final raw = '${value ?? ''}'.trim();
+    if (raw.isEmpty) return '';
+    if (raw.startsWith('http://') || raw.startsWith('https://')) return raw;
+    return '$baseUrl$raw';
+  }
+
+  Future<void> _openLatestUpdate(_LatestHomeUpdate update) async {
+    HapticFeedback.selectionClick();
+
+    if (update.type == _LatestUpdateType.lecture) {
+      final rawUrl = update.targetUrl.trim();
+      final uri = Uri.tryParse(rawUrl);
+      if (uri != null && rawUrl.isNotEmpty) {
+        await launchUrl(uri, mode: LaunchMode.externalApplication);
+      }
+      return;
+    }
+
+    if (update.itemId <= 0 || !mounted) return;
+
+    Widget page;
+    switch (update.type) {
+      case _LatestUpdateType.publication:
+        page = PublicationDirectPage(
+          postId: update.itemId,
+          isDark: widget.isDark,
+        );
+        break;
+      case _LatestUpdateType.file:
+        page = FileDirectPage(
+          fileId: update.itemId,
+          isDark: widget.isDark,
+        );
+        break;
+      case _LatestUpdateType.lecture:
+        return;
+    }
+
+    Navigator.of(context).push(
+      PageRouteBuilder(
+        transitionDuration: const Duration(milliseconds: 320),
+        reverseTransitionDuration: const Duration(milliseconds: 240),
+        pageBuilder: (_, animation, __) {
+          return FadeTransition(
+            opacity: CurvedAnimation(
+              parent: animation,
+              curve: Curves.easeOutCubic,
+            ),
+            child: page,
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildLatestUpdatesCard({
+    required bool isDark,
+    required Color cardBg,
+    required Color textPrimary,
+    required Color textSub,
+  }) {
+    final borderColor = gold.withOpacity(isDark ? 0.22 : 0.18);
+    final innerBg = isDark ? const Color(0xFF101010) : const Color(0xFFFFFBF2);
+
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 320),
+      curve: Curves.easeOutCubic,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(28),
+        gradient: LinearGradient(
+          begin: Alignment.topRight,
+          end: Alignment.bottomLeft,
+          colors: isDark
+              ? [const Color(0xFF191409), const Color(0xFF0E0E0E)]
+              : [const Color(0xFFFFF6DF), Colors.white],
+        ),
+        border: Border.all(color: borderColor, width: 1.2),
+        boxShadow: [
+          BoxShadow(
+            color: gold.withOpacity(isDark ? 0.13 : 0.10),
+            blurRadius: 28,
+            spreadRadius: -8,
+            offset: const Offset(0, 12),
+          ),
+          BoxShadow(
+            color: Colors.black.withOpacity(isDark ? 0.32 : 0.07),
+            blurRadius: 20,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(28),
+        child: Stack(
+          children: [
+            Positioned(
+              top: -42,
+              left: -30,
+              child: Container(
+                width: 130,
+                height: 130,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: gold.withOpacity(0.10),
+                ),
+              ),
+            ),
+            Positioned(
+              bottom: -54,
+              right: -36,
+              child: Container(
+                width: 150,
+                height: 150,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: Colors.white.withOpacity(isDark ? 0.035 : 0.42),
+                ),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Container(
+                        width: 46,
+                        height: 46,
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(16),
+                          gradient: const LinearGradient(
+                            colors: [Color(0xFFEEC04F), Color(0xFFAD7A00)],
+                            begin: Alignment.topRight,
+                            end: Alignment.bottomLeft,
+                          ),
+                          boxShadow: [
+                            BoxShadow(
+                              color: gold.withOpacity(0.32),
+                              blurRadius: 16,
+                              offset: const Offset(0, 7),
+                            ),
+                          ],
+                        ),
+                        child: const Icon(Icons.auto_awesome_rounded, color: Colors.white, size: 22),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'آخر التحديثات',
+                              style: TextStyle(
+                                color: textPrimary,
+                                fontSize: 18,
+                                fontWeight: FontWeight.w900,
+                              ),
+                            ),
+                            const SizedBox(height: 3),
+                            Text(
+                              'منشور، ملف، ومحاضرة في مكان واحد',
+                              style: TextStyle(
+                                color: textSub,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                        decoration: BoxDecoration(
+                          color: gold.withOpacity(0.12),
+                          borderRadius: BorderRadius.circular(999),
+                          border: Border.all(color: gold.withOpacity(0.24)),
+                        ),
+                        child: const Text(
+                          'جديد',
+                          style: TextStyle(color: gold, fontSize: 11, fontWeight: FontWeight.w900),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  if (_loadingLatestUpdates && _latestUpdates.isEmpty)
+                    _buildLatestSkeleton(isDark: isDark)
+                  else if (_latestUpdates.isEmpty)
+                    _buildLatestEmptyState(isDark: isDark, textSub: textSub)
+                  else
+                    Column(
+                      children: [
+                        for (int i = 0; i < _latestUpdates.length; i++) ...[
+                          _LatestUpdateTile(
+                            update: _latestUpdates[i],
+                            isDark: isDark,
+                            innerBg: innerBg,
+                            textPrimary: textPrimary,
+                            textSub: textSub,
+                            onTap: () => _openLatestUpdate(_latestUpdates[i]),
+                          ),
+                          if (i != _latestUpdates.length - 1) const SizedBox(height: 10),
+                        ],
+                      ],
+                    ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildLatestSkeleton({required bool isDark}) {
+    return Column(
+      children: List.generate(3, (index) {
+        return Padding(
+          padding: EdgeInsets.only(bottom: index == 2 ? 0 : 10),
+          child: Container(
+            height: 72,
+            decoration: BoxDecoration(
+              color: isDark ? Colors.white.withOpacity(0.055) : Colors.black.withOpacity(0.045),
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: gold.withOpacity(0.08)),
+            ),
+            child: Row(
+              children: [
+                const SizedBox(width: 14),
+                Container(
+                  width: 38,
+                  height: 38,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: gold.withOpacity(0.14),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Container(height: 9, width: 100, color: gold.withOpacity(0.12)),
+                      const SizedBox(height: 8),
+                      Container(height: 8, width: 180, color: gold.withOpacity(0.08)),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 14),
+              ],
+            ),
+          ),
+        );
+      }),
+    );
+  }
+
+  Widget _buildLatestEmptyState({required bool isDark, required Color textSub}) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 18),
+      decoration: BoxDecoration(
+        color: isDark ? Colors.white.withOpacity(0.05) : Colors.black.withOpacity(0.035),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: gold.withOpacity(0.10)),
+      ),
+      child: Text(
+        'لم يتم العثور على تحديثات حالياً',
+        textAlign: TextAlign.center,
+        style: TextStyle(color: textSub, fontSize: 12.5, fontWeight: FontWeight.w700),
+      ),
+    );
+  }
+
+
 
   @override
   void initState() {
@@ -1349,10 +2467,16 @@ Widget _buildSocialBtn(IconData icon, Color color) {
             begin: const Offset(0, 0.1), end: Offset.zero)
         .animate(CurvedAnimation(parent: _ctrl, curve: Curves.easeOutCubic));
     _ctrl.forward();
+    _loadLatestHomeUpdates();
+    _latestUpdatesTimer = Timer.periodic(
+      const Duration(seconds: 8),
+      (_) => _loadLatestHomeUpdates(silent: true),
+    );
   }
 
   @override
   void dispose() {
+    _latestUpdatesTimer?.cancel();
     _ctrl.dispose();
     super.dispose();
   }
@@ -1588,6 +2712,13 @@ Row(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [
+                _buildLatestUpdatesCard(
+                  isDark: isDark,
+                  cardBg: cardBg,
+                  textPrimary: textPrimary,
+                  textSub: textSub,
+                ),
+                const SizedBox(height: 22),
                 const _GoldDivider(),
                 const SizedBox(height: 16),
                 _SectionTitle('الدكتور ماجد البنا', isDark: isDark),

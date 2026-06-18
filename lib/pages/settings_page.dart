@@ -1,7 +1,25 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../widgets/shared_widgets.dart';
 import 'package:google_sign_in/google_sign_in.dart';
+
+
+SystemUiOverlayStyle settingsSystemUiOverlayStyle(bool isDark) {
+  return SystemUiOverlayStyle(
+    statusBarColor: Colors.transparent,
+    systemNavigationBarColor: isDark ? const Color(0xFF050505) : const Color(0xFFF7F4EE),
+    systemNavigationBarDividerColor: Colors.transparent,
+    statusBarIconBrightness: isDark ? Brightness.light : Brightness.dark,
+    systemNavigationBarIconBrightness: isDark ? Brightness.light : Brightness.dark,
+    // للـ iOS: في الثيم الفاتح هذا يخلي نص/أيقونات شريط الحالة سوداء وواضحة.
+    statusBarBrightness: isDark ? Brightness.dark : Brightness.light,
+  );
+}
+
+void applySettingsSystemUiOverlayStyle(bool isDark) {
+  SystemChrome.setSystemUIOverlayStyle(settingsSystemUiOverlayStyle(isDark));
+}
 
 class SettingsPage extends StatefulWidget {
   final bool isDark;
@@ -15,6 +33,20 @@ class SettingsPage extends StatefulWidget {
 class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClientMixin {
   @override
   bool get wantKeepAlive => true;
+
+  @override
+  void initState() {
+    super.initState();
+    applySettingsSystemUiOverlayStyle(widget.isDark);
+  }
+
+  @override
+  void didUpdateWidget(covariant SettingsPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.isDark != widget.isDark) {
+      applySettingsSystemUiOverlayStyle(widget.isDark);
+    }
+  }
 
   static const gold = Color(0xFFD4A017);
 
@@ -49,10 +81,15 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
   @override
   Widget build(BuildContext context) {
     super.build(context);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) applySettingsSystemUiOverlayStyle(widget.isDark);
+    });
     final textPrimary = widget.isDark ? Colors.white : const Color(0xFF1A1000);
     final textSub = widget.isDark ? Colors.white60 : Colors.black54;
 
-    return CustomScrollView(
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: settingsSystemUiOverlayStyle(widget.isDark),
+      child: CustomScrollView(
       physics: const BouncingScrollPhysics(),
       slivers: [
         PremiumAppBar(title: 'الإعدادات', isDark: widget.isDark),
@@ -486,6 +523,7 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
           ),
         ),
       ],
+    ),
     );
   }
 }

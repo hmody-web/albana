@@ -99,6 +99,253 @@ class FilesPageScrollBus {
   }
 }
 
+class FilesPageDeepLinkBus {
+  static final ValueNotifier<int?> requestedFileId = ValueNotifier<int?>(null);
+
+  static void openFile(int fileId) {
+    requestedFileId.value = null;
+    requestedFileId.value = fileId;
+  }
+}
+
+
+class FileDirectPage extends StatefulWidget {
+  final int fileId;
+  final bool isDark;
+
+  const FileDirectPage({
+    super.key,
+    required this.fileId,
+    required this.isDark,
+  });
+
+  @override
+  State<FileDirectPage> createState() => _FileDirectPageState();
+}
+
+class _FileDirectPageState extends State<FileDirectPage> {
+  static const String _apiUrl =
+      'https://majidalbana.com/admin/pdf-posts/load_pdf_posts.php';
+
+  final Map<int, double> _downloadProgress = {};
+  final Set<int> _downloading = {};
+  final Set<int> _downloaded = {};
+  final ValueNotifier<int> _downloadSignal = ValueNotifier<int>(0);
+
+  late final Future<PdfFileItem?> _futureFile;
+
+  @override
+  void initState() {
+    super.initState();
+    _futureFile = _fetchFile();
+  }
+
+  @override
+  void dispose() {
+    _downloadSignal.dispose();
+    super.dispose();
+  }
+
+  Future<PdfFileItem?> _fetchFile() async {
+    try {
+      for (final file in _FilesPageMemory.files) {
+        if (file.id == widget.fileId) return file;
+      }
+
+      final response = await http.get(Uri.parse(_apiUrl)).timeout(const Duration(seconds: 15));
+      if (response.statusCode != 200) return null;
+      final decoded = jsonDecode(utf8.decode(response.bodyBytes));
+      if (decoded is! List) return null;
+
+      for (final item in decoded.whereType<Map>()) {
+        final file = PdfFileItem.fromJson(Map<String, dynamic>.from(item));
+        if (file.id == widget.fileId) return file;
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  void _notifyDownloadUpdate() => _downloadSignal.value++;
+
+  void _openFile(PdfFileItem file) {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => _PdfBrowserPage(file: file, isDark: widget.isDark),
+      ),
+    );
+  }
+
+  Future<void> _shareFile(BuildContext shareContext, PdfFileItem file) async {
+    final box = shareContext.findRenderObject() as RenderBox?;
+    final title = file.title.trim().isEmpty
+        ? 'ملف من منصة د.ماجد البنا'
+        : file.title.trim();
+    final fileLink = Uri.encodeFull(file.fileUrl);
+
+    await Share.share(
+      '$title\n\n$fileLink',
+      subject: title,
+      sharePositionOrigin: box == null
+          ? const Rect.fromLTWH(0, 0, 1, 1)
+          : box.localToGlobal(Offset.zero) & box.size,
+    );
+  }
+
+  void _showDownloadSnack({required String message, required bool success}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        behavior: SnackBarBehavior.floating,
+        backgroundColor: success ? const Color(0xFF1B8F4D) : const Color(0xFFB3261E),
+        margin: const EdgeInsets.fromLTRB(18, 0, 18, 92),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+        content: Text(
+          message,
+          textDirection: TextDirection.rtl,
+          style: const TextStyle(fontWeight: FontWeight.w800),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _downloadFile(PdfFileItem file) async {
+    if (_downloading.contains(file.id)) return;
+    HapticFeedback.lightImpact();
+    setState(() {
+      _downloading.add(file.id);
+      _downloadProgress[file.id] = 0.001;
+    });
+    _notifyDownloadUpdate();
+
+    IOSink? output;
+    try {
+      final request = await HttpClient().getUrl(Uri.parse(file.fileUrl));
+      final response = await request.close();
+      if (response.statusCode != 200) throw Exception('download failed');
+
+      final dir = await getApplicationDocumentsDirectory();
+      final localFile = File('${dir.path}/${file.safeFileName}');
+      final tempFile = File('${dir.path}/.${file.safeFileName}.download');
+      if (await tempFile.exists()) await tempFile.delete();
+
+      output = tempFile.openWrite();
+      final totalBytes = response.contentLength;
+      int receivedBytes = 0;
+
+      await for (final chunk in response) {
+        receivedBytes += chunk.length;
+        output.add(chunk);
+        if (mounted) {
+          final nextProgress = totalBytes > 0
+              ? (receivedBytes / totalBytes).clamp(0.001, 0.999).toDouble()
+              : 0.001;
+          setState(() => _downloadProgress[file.id] = nextProgress);
+          _notifyDownloadUpdate();
+        }
+      }
+
+      await output.flush();
+      await output.close();
+      output = null;
+
+      if (await localFile.exists()) await localFile.delete();
+      await tempFile.rename(localFile.path);
+
+      if (!mounted) return;
+      setState(() {
+        _downloading.remove(file.id);
+        _downloadProgress[file.id] = 1;
+        _downloaded.add(file.id);
+      });
+      _notifyDownloadUpdate();
+
+      _showDownloadSnack(
+        message: 'تم تحميل الملف بنجاح: ${file.title.isEmpty ? file.fileName : file.title}',
+        success: true,
+      );
+
+      Future.delayed(const Duration(milliseconds: 650), () {
+        if (!mounted) return;
+        setState(() => _downloadProgress.remove(file.id));
+        _notifyDownloadUpdate();
+      });
+    } catch (_) {
+      try { await output?.close(); } catch (_) {}
+      if (!mounted) return;
+      setState(() {
+        _downloading.remove(file.id);
+        _downloadProgress.remove(file.id);
+      });
+      _notifyDownloadUpdate();
+      _showDownloadSnack(
+        message: 'فشل تحميل الملف. الإنترنت قرر يتدلل علينا كالعادة.',
+        success: false,
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final pageBg = widget.isDark ? const Color(0xFF050505) : const Color(0xFFF8F6F0);
+
+    return FutureBuilder<PdfFileItem?>(
+      future: _futureFile,
+      builder: (context, snapshot) {
+        if (snapshot.connectionState != ConnectionState.done) {
+          return Scaffold(
+            backgroundColor: pageBg,
+            body: const Center(
+              child: CircularProgressIndicator(color: Color(0xFFD4A017)),
+            ),
+          );
+        }
+
+        final file = snapshot.data;
+        if (file == null) {
+          return Scaffold(
+            backgroundColor: pageBg,
+            appBar: AppBar(
+              backgroundColor: Colors.transparent,
+              elevation: 0,
+              iconTheme: IconThemeData(
+                color: widget.isDark ? Colors.white : Colors.black87,
+              ),
+            ),
+            body: Center(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Text(
+                  'تعذر فتح الملف المطلوب',
+                  textDirection: TextDirection.rtl,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: widget.isDark ? Colors.white70 : Colors.black54,
+                    fontSize: 15,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+            ),
+          );
+        }
+
+        return _PdfFileDetailsPage(
+          file: file,
+          isDark: widget.isDark,
+          downloadSignal: _downloadSignal,
+          isDownloading: () => _downloading.contains(file.id),
+          isDownloaded: () => _downloaded.contains(file.id),
+          progress: () => _downloadProgress[file.id] ?? 0,
+          onView: () => _openFile(file),
+          onDownload: () => _downloadFile(file),
+          onShare: (shareContext) => _shareFile(shareContext, file),
+        );
+      },
+    );
+  }
+}
+
 class _FilesPageMemory {
   static List<PdfFileItem> files = [];
   static String? selectedCategory;
@@ -226,6 +473,8 @@ bool _isSupervisor() {
   void initState() {
     super.initState();
     FilesPageScrollBus.register(_scrollToTopFromNav);
+    FilesPageDeepLinkBus.requestedFileId.addListener(_onDeepLinkFileRequested);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _onDeepLinkFileRequested());
     _pageScrollController.addListener(_rememberScrollOffset);
 
     _searchAnimCtrl = AnimationController(
@@ -261,6 +510,7 @@ bool _isSupervisor() {
   void dispose() {
     _savePageMemory();
     FilesPageScrollBus.unregister(_scrollToTopFromNav);
+    FilesPageDeepLinkBus.requestedFileId.removeListener(_onDeepLinkFileRequested);
     _refreshTimer?.cancel();
     _pageScrollController.removeListener(_rememberScrollOffset);
     _pageScrollController.dispose();
@@ -665,6 +915,51 @@ bool _isSupervisor() {
         success: false,
       );
     }
+  }
+
+
+  void _onDeepLinkFileRequested() {
+    final fileId = FilesPageDeepLinkBus.requestedFileId.value;
+    if (fileId == null || fileId <= 0) return;
+
+    FilesPageDeepLinkBus.requestedFileId.value = null;
+    _openFileDetailsFromDeepLink(fileId);
+  }
+
+  Future<void> _openFileDetailsFromDeepLink(int fileId) async {
+    PdfFileItem? file;
+    for (final item in _files) {
+      if (item.id == fileId) {
+        file = item;
+        break;
+      }
+    }
+
+    if (file == null) {
+      await _fetchFromNetwork(silent: true);
+      for (final item in _files) {
+        if (item.id == fileId) {
+          file = item;
+          break;
+        }
+      }
+    }
+
+    if (!mounted) return;
+
+    if (file == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'تعذر فتح الملف المطلوب',
+            textDirection: TextDirection.rtl,
+          ),
+        ),
+      );
+      return;
+    }
+
+    _openFileDetails(file);
   }
 
   void _openFile(PdfFileItem file) {
@@ -2571,13 +2866,22 @@ class _PdfFileDetailsPage extends StatelessWidget {
 
     return Scaffold(
       backgroundColor: pageBg,
-      body: Directionality(
-        textDirection: TextDirection.rtl,
-        child: SafeArea(
-          bottom: false,
-          child: CustomScrollView(
-            physics: const BouncingScrollPhysics(),
-            slivers: [
+      body: GestureDetector(
+        behavior: HitTestBehavior.translucent,
+        onHorizontalDragEnd: (details) {
+          final velocity = details.primaryVelocity ?? 0;
+          if (velocity.abs() > 320 && Navigator.of(context).canPop()) {
+            HapticFeedback.lightImpact();
+            Navigator.of(context).pop();
+          }
+        },
+        child: Directionality(
+          textDirection: TextDirection.rtl,
+          child: SafeArea(
+            bottom: false,
+            child: CustomScrollView(
+              physics: const BouncingScrollPhysics(),
+              slivers: [
               SliverAppBar(
                 pinned: true,
                 elevation: 0,
@@ -2829,7 +3133,8 @@ class _PdfFileDetailsPage extends StatelessWidget {
                   ),
                 ),
               ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
