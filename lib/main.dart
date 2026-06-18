@@ -4,7 +4,6 @@ import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter/scheduler.dart';
 import 'package:http/http.dart' as http;
 import 'pages/publications_page.dart';
 import 'pages/files_page.dart';
@@ -123,10 +122,6 @@ class _DrMajedAppState extends State<DrMajedApp> with WidgetsBindingObserver {
 
   @override
   Widget build(BuildContext context) {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) applyAppSystemBarsStyle(_isDark);
-    });
-
     return AnnotatedRegion<SystemUiOverlayStyle>(
       value: _systemBarsStyle(_isDark),
       child: MaterialApp(
@@ -207,8 +202,8 @@ int? _pendingPostId;
     _pageController = PageController(initialPage: 2, keepPage: true);
     _navAnimCtrl = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 420),
-      reverseDuration: const Duration(milliseconds: 360),
+      duration: const Duration(milliseconds: 560),
+      reverseDuration: const Duration(milliseconds: 500),
     );
 
     _initDeepLinks();
@@ -367,8 +362,8 @@ super.dispose();
     _navAnimCtrl.animateTo(
       compact ? 1.0 : 0.0,
       duration: compact
-          ? const Duration(milliseconds: 420)
-          : const Duration(milliseconds: 360),
+          ? const Duration(milliseconds: 1260)
+          : const Duration(milliseconds: 500),
       curve: compact ? Curves.easeOutCubic : Curves.easeOutQuart,
     );
   }
@@ -438,10 +433,6 @@ super.dispose();
     final isDark = widget.isDark;
     final bg = isDark ? const Color(0xFF0A0A0A) : const Color(0xFFF5F0E8);
 
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) applyAppSystemBarsStyle(isDark);
-    });
-
     return AnnotatedRegion<SystemUiOverlayStyle>(
       value: appSystemBarsStyle(isDark),
       child: Directionality(
@@ -467,69 +458,14 @@ child: Scaffold(
                 children: [
                   PublicationsPage(isDark: isDark),
                   FilesPage(isDark: isDark),
-                  HomePage(isDark: isDark, onOpenSection: _onTabTapped),
+                  HomePage(isDark: isDark, isActive: _currentIndex == 2, onOpenSection: _onTabTapped),
                   CoursesPage(isDark: isDark),
                   SettingsPage(isDark: isDark, onThemeToggle: widget.onThemeToggle),
                 ],
               ),
             ),
 
-// ── Real gradient blur box behind bottom glass nav ──
-Positioned(
-  left: 0,
-  right: 0,
-  bottom: 0,
-  height: 115 + (MediaQuery.of(context).padding.bottom > 30
-      ? MediaQuery.of(context).padding.bottom
-      : 30),
-  child: IgnorePointer(
-    child: RepaintBoundary(
-      child: ClipRect(
-        child: LayoutBuilder(
-          builder: (context, constraints) {
-            const int blurSteps = 10;
-            final double totalHeight = constraints.maxHeight;
-            final double stepHeight = totalHeight / blurSteps;
 
-            return Stack(
-              children: List.generate(blurSteps, (index) {
-                final double progress = index / (blurSteps - 1);
-
-                // 1.0 بالأسفل، 0.0 بالأعلى
-                final double strength = 1.0 - progress;
-
-                // تدرج ناعم لكن بعدد طبقات أقل حتى لا يقطع التصفح
-                final double sigma = 24.0 * strength * strength;
-
-                if (sigma <= 0.45) {
-                  return const SizedBox.shrink();
-                }
-
-                return Positioned(
-                  left: 0,
-                  right: 0,
-                  bottom: index * stepHeight,
-                  height: stepHeight + 3,
-                  child: ClipRect(
-                    child: BackdropFilter(
-                      filter: ui.ImageFilter.blur(
-                        sigmaX: sigma,
-                        sigmaY: sigma,
-                      ),
-                      child: const ColoredBox(
-                        color: Color(0x01000000),
-                      ),
-                    ),
-                  ),
-                );
-              }),
-            );
-          },
-        ),
-      ),
-    ),
-  ),
-),
 
             // ── Premium Floating Nav Bar ──
             Positioned(
@@ -551,12 +487,14 @@ child: AnimatedBuilder(
       child: Transform.scale(
         scale: scale,
         alignment: Alignment.bottomCenter,
-        filterQuality: FilterQuality.medium,
-        child: _PremiumNavBar(
-          currentIndex: _currentIndex,
-          isDark: isDark,
-          compactAmount: t,
-          onTap: _onTabTapped,
+        filterQuality: FilterQuality.low,
+        child: RepaintBoundary(
+          child: _PremiumNavBar(
+            currentIndex: _currentIndex,
+            isDark: isDark,
+            compactAmount: t,
+            onTap: _onTabTapped,
+          ),
         ),
       ),
     );
@@ -584,8 +522,8 @@ final ValueChanged<int> onTap;
 
 // تحكم بالغواش
 // كلما زادت القيمة يصير الخلف مغوش أكثر
-static const double normalBlur = 18;
-static const double compactBlur = 18;
+static const double normalBlur = 12;
+static const double compactBlur = 10;
 
 // تحكم بتعتيم / صلابة خلفية البار
 // كلما زادت القيمة يصير البار أغمق / أصلب ويقل ظهور الغواش
@@ -1216,7 +1154,10 @@ class _LatestUpdateIcon extends StatelessWidget {
               Image.network(
                 update.imageUrl,
                 fit: BoxFit.cover,
-                filterQuality: FilterQuality.medium,
+                cacheWidth: 96,
+                cacheHeight: 96,
+                gaplessPlayback: true,
+                filterQuality: FilterQuality.low,
                 errorBuilder: (_, __, ___) => _fallbackBackground(),
               )
             else
@@ -1341,22 +1282,12 @@ class _TiledImagePainter extends StatefulWidget {
   State<_TiledImagePainter> createState() => _TiledImagePainterState();
 }
 
-class _TiledImagePainterState extends State<_TiledImagePainter>
-    with SingleTickerProviderStateMixin {
+class _TiledImagePainterState extends State<_TiledImagePainter> {
   ui.Image? _image;
-  late Ticker _ticker;
-  double _offsetY = 0.0;
-  Duration _last = Duration.zero;
 
   @override
   void initState() {
     super.initState();
-    _ticker = createTicker((elapsed) {
-      final dt = (elapsed - _last).inMicroseconds / 1000000.0;
-      _last = elapsed;
-      if (mounted) setState(() => _offsetY -= widget.speed * dt);
-    })
-      ..start();
     _loadImage();
   }
 
@@ -1368,23 +1299,21 @@ class _TiledImagePainterState extends State<_TiledImagePainter>
   }
 
   @override
-  void dispose() {
-    _ticker.dispose();
-    super.dispose();
-  }
-
-  @override
   Widget build(BuildContext context) {
     if (_image == null) return const SizedBox.expand();
-    return CustomPaint(
-      painter: _WatermarkPainter(
-        image: _image!,
-        scale: widget.scale,
-        offsetX: widget.offsetX,
-        offsetY: _offsetY,
-        color: widget.color,
+    return RepaintBoundary(
+      child: CustomPaint(
+        isComplex: true,
+        willChange: false,
+        painter: _WatermarkPainter(
+          image: _image!,
+          scale: widget.scale,
+          offsetX: widget.offsetX,
+          offsetY: 0,
+          color: widget.color,
+        ),
+        child: const SizedBox.expand(),
       ),
-      child: const SizedBox.expand(),
     );
   }
 }
@@ -1425,7 +1354,12 @@ class _WatermarkPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(_WatermarkPainter old) => true;
+  bool shouldRepaint(_WatermarkPainter old) =>
+      old.image != image ||
+      old.scale != scale ||
+      old.offsetX != offsetX ||
+      old.offsetY != offsetY ||
+      old.color != color;
 }
 
 // ─────────────────────────────────────────────
@@ -1447,11 +1381,12 @@ class _PremiumAppBar extends StatelessWidget {
       pinned: true,
       toolbarHeight: 68,
       automaticallyImplyLeading: false,
-      flexibleSpace: ClipRect(
-        child: BackdropFilter(
-          filter: ui.ImageFilter.blur(sigmaX: 20, sigmaY: 20),
-          child: Container(
-            decoration: BoxDecoration(
+      flexibleSpace: RepaintBoundary(
+        child: ClipRect(
+          child: BackdropFilter(
+            filter: ui.ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+            child: Container(
+              decoration: BoxDecoration(
               color: isDark
                   ? Colors.black.withOpacity(0.6)
                   : Colors.white.withOpacity(0.75),
@@ -1460,6 +1395,7 @@ class _PremiumAppBar extends StatelessWidget {
                   color: gold.withOpacity(0.18),
                   width: 0.8,
                 ),
+              ),
               ),
             ),
           ),
@@ -1775,8 +1711,14 @@ class _SettingsCard extends StatelessWidget {
 
 class HomePage extends StatefulWidget {
   final bool isDark;
+  final bool isActive;
   final ValueChanged<int> onOpenSection;
-  const HomePage({super.key, required this.isDark, required this.onOpenSection});
+  const HomePage({
+    super.key,
+    required this.isDark,
+    required this.isActive,
+    required this.onOpenSection,
+  });
   @override
   State<HomePage> createState() => _HomePageState();
 }
@@ -1796,6 +1738,7 @@ class _HomePageState extends State<HomePage>
 
   Timer? _latestUpdatesTimer;
   bool _loadingLatestUpdates = true;
+  bool _isFetchingLatestUpdates = false;
   List<_LatestHomeUpdate> _latestUpdates = [];
 
   late AnimationController _ctrl;
@@ -1891,6 +1834,210 @@ Widget _buildSocialTile({
     ),
   );
 }
+
+void _showContactLaunchError() {
+  if (!mounted) return;
+  ScaffoldMessenger.of(context).showSnackBar(
+    SnackBar(
+      behavior: SnackBarBehavior.floating,
+      margin: const EdgeInsets.fromLTRB(18, 0, 18, 96),
+      elevation: 0,
+      backgroundColor: gold,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+      content: const Text(
+        'تعذر فتح طريقة التواصل حالياً',
+        textAlign: TextAlign.center,
+        style: TextStyle(
+          color: Color(0xFF1A1000),
+          fontWeight: FontWeight.w800,
+        ),
+      ),
+    ),
+  );
+}
+
+Future<void> _launchContactUri(Uri uri) async {
+  try {
+    final opened = await launchUrl(uri, mode: LaunchMode.externalApplication);
+    if (!opened) _showContactLaunchError();
+  } catch (_) {
+    _showContactLaunchError();
+  }
+}
+
+Widget _buildContactInfoPill({
+  required IconData icon,
+  required String title,
+  required String value,
+  required Color accent,
+  required bool isDark,
+}) {
+  final textColor = isDark ? Colors.white : const Color(0xFF211600);
+  return Expanded(
+    child: Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: isDark ? Colors.white.withOpacity(0.045) : Colors.white.withOpacity(0.72),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: accent.withOpacity(isDark ? 0.22 : 0.28)),
+        boxShadow: [
+          BoxShadow(
+            color: accent.withOpacity(isDark ? 0.05 : 0.08),
+            blurRadius: 16,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 38,
+            height: 38,
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: [
+                  accent.withOpacity(0.22),
+                  accent.withOpacity(0.08),
+                ],
+                begin: Alignment.topRight,
+                end: Alignment.bottomLeft,
+              ),
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: accent.withOpacity(0.22)),
+            ),
+            child: Icon(icon, color: accent, size: 19),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: isDark ? Colors.white54 : Colors.black45,
+                    fontSize: 10,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  value,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: textColor,
+                    fontSize: 11.5,
+                    height: 1.35,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
+Widget _buildContactMiniStat({
+  required String value,
+  required String label,
+  required bool isDark,
+}) {
+  return Expanded(
+    child: Column(
+      children: [
+        Text(
+          value,
+          style: TextStyle(
+            color: isDark ? Colors.white : const Color(0xFF1A1000),
+            fontSize: 13,
+            fontWeight: FontWeight.w900,
+          ),
+        ),
+        const SizedBox(height: 3),
+        Text(
+          label,
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            color: isDark ? Colors.white54 : Colors.black45,
+            fontSize: 9.5,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
+Widget _buildContactActionButton({
+  required IconData icon,
+  required String label,
+  required String hint,
+  required Color color,
+  required bool isDark,
+  required VoidCallback onTap,
+}) {
+  return Expanded(
+    child: Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(20),
+        splashColor: color.withOpacity(0.12),
+        highlightColor: color.withOpacity(0.07),
+        child: Ink(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 12),
+          decoration: BoxDecoration(
+            color: color.withOpacity(isDark ? 0.14 : 0.10),
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: color.withOpacity(isDark ? 0.34 : 0.26)),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 38,
+                height: 38,
+                decoration: BoxDecoration(
+                  color: color.withOpacity(isDark ? 0.18 : 0.13),
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(icon, color: color, size: 20),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: isDark ? Colors.white : const Color(0xFF211600),
+                  fontSize: 11,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                hint,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: isDark ? Colors.white54 : Colors.black45,
+                  fontSize: 9,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    ),
+  );
+}
 Widget _buildStat(String value, String label, bool isDark) {
   return Expanded(
     child: Column(
@@ -1973,23 +2120,26 @@ Widget _buildSocialBtn(IconData icon, Color color) {
 }
 
   Future<void> _loadLatestHomeUpdates({bool silent = false}) async {
-    if (!mounted) return;
+    if (!mounted || _isFetchingLatestUpdates) return;
+    if (silent && !widget.isActive) return;
 
-    if (!silent && _latestUpdates.isEmpty) {
-      final cached = await _loadCachedLatestHomeUpdates();
-      if (cached.isNotEmpty && mounted) {
-        setState(() {
-          _latestUpdates = cached;
-          _loadingLatestUpdates = false;
-        });
-      }
-    }
-
-    if (!silent && _latestUpdates.isEmpty && mounted) {
-      setState(() => _loadingLatestUpdates = true);
-    }
+    _isFetchingLatestUpdates = true;
 
     try {
+      if (!silent && _latestUpdates.isEmpty) {
+        final cached = await _loadCachedLatestHomeUpdates();
+        if (cached.isNotEmpty && mounted) {
+          setState(() {
+            _latestUpdates = cached;
+            _loadingLatestUpdates = false;
+          });
+        }
+      }
+
+      if (!silent && _latestUpdates.isEmpty && mounted) {
+        setState(() => _loadingLatestUpdates = true);
+      }
+
       final results = await Future.wait<_LatestHomeUpdate?>([
         _fetchLatestPublication(),
         _fetchLatestFile(),
@@ -1999,12 +2149,12 @@ Widget _buildSocialBtn(IconData icon, Color color) {
       if (!mounted) return;
 
       final freshUpdates = results.whereType<_LatestHomeUpdate>().toList();
-      await _saveLatestHomeUpdatesToCache(freshUpdates);
-
       final oldSignature = _latestUpdates.map((e) => e.signature).join(':::');
       final newSignature = freshUpdates.map((e) => e.signature).join(':::');
 
       if (oldSignature != newSignature || _loadingLatestUpdates) {
+        await _saveLatestHomeUpdatesToCache(freshUpdates);
+        if (!mounted) return;
         setState(() {
           _latestUpdates = freshUpdates;
           _loadingLatestUpdates = false;
@@ -2015,6 +2165,8 @@ Widget _buildSocialBtn(IconData icon, Color color) {
     } catch (_) {
       if (!mounted) return;
       setState(() => _loadingLatestUpdates = false);
+    } finally {
+      _isFetchingLatestUpdates = false;
     }
   }
 
@@ -2045,6 +2197,22 @@ Widget _buildSocialBtn(IconData icon, Color color) {
     } catch (_) {}
   }
 
+  Map<String, dynamic>? _findNewestLatestItem(List<Map> items) {
+    Map<String, dynamic>? newest;
+    DateTime newestDate = DateTime(1970);
+
+    for (final rawItem in items) {
+      final item = Map<String, dynamic>.from(rawItem);
+      final date = DateTime.tryParse('${item['created_at'] ?? ''}') ?? DateTime(1970);
+      if (newest == null || date.isAfter(newestDate)) {
+        newest = item;
+        newestDate = date;
+      }
+    }
+
+    return newest;
+  }
+
   Future<_LatestHomeUpdate?> _fetchLatestPublication() async {
     final response = await http
         .get(Uri.parse(_latestPostsApi))
@@ -2054,14 +2222,8 @@ Widget _buildSocialBtn(IconData icon, Color color) {
     final decoded = jsonDecode(utf8.decode(response.bodyBytes));
     if (decoded is! List || decoded.isEmpty) return null;
 
-    final items = decoded.whereType<Map>().toList()
-      ..sort((a, b) {
-        final ad = DateTime.tryParse('${a['created_at'] ?? ''}') ?? DateTime(1970);
-        final bd = DateTime.tryParse('${b['created_at'] ?? ''}') ?? DateTime(1970);
-        return bd.compareTo(ad);
-      });
-
-    final item = Map<String, dynamic>.from(items.first);
+    final item = _findNewestLatestItem(decoded.whereType<Map>().toList());
+    if (item == null) return null;
     final text = _cleanLatestText(item['content']);
 
     return _LatestHomeUpdate(
@@ -2086,14 +2248,8 @@ Widget _buildSocialBtn(IconData icon, Color color) {
     final decoded = jsonDecode(utf8.decode(response.bodyBytes));
     if (decoded is! List || decoded.isEmpty) return null;
 
-    final items = decoded.whereType<Map>().toList()
-      ..sort((a, b) {
-        final ad = DateTime.tryParse('${a['created_at'] ?? ''}') ?? DateTime(1970);
-        final bd = DateTime.tryParse('${b['created_at'] ?? ''}') ?? DateTime(1970);
-        return bd.compareTo(ad);
-      });
-
-    final item = Map<String, dynamic>.from(items.first);
+    final item = _findNewestLatestItem(decoded.whereType<Map>().toList());
+    if (item == null) return null;
     final title = _cleanLatestText(item['title']);
     final category = _cleanLatestText(item['category']);
     final date = _formatLatestDate('${item['created_at'] ?? ''}');
@@ -2468,15 +2624,38 @@ Widget _buildSocialBtn(IconData icon, Color color) {
         .animate(CurvedAnimation(parent: _ctrl, curve: Curves.easeOutCubic));
     _ctrl.forward();
     _loadLatestHomeUpdates();
+    if (widget.isActive) _startLatestUpdatesTimer();
+  }
+
+  @override
+  void didUpdateWidget(covariant HomePage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.isActive == widget.isActive) return;
+
+    if (widget.isActive) {
+      _loadLatestHomeUpdates(silent: true);
+      _startLatestUpdatesTimer();
+    } else {
+      _stopLatestUpdatesTimer();
+    }
+  }
+
+  void _startLatestUpdatesTimer() {
+    _latestUpdatesTimer?.cancel();
     _latestUpdatesTimer = Timer.periodic(
-      const Duration(seconds: 8),
+      const Duration(seconds: 20),
       (_) => _loadLatestHomeUpdates(silent: true),
     );
   }
 
+  void _stopLatestUpdatesTimer() {
+    _latestUpdatesTimer?.cancel();
+    _latestUpdatesTimer = null;
+  }
+
   @override
   void dispose() {
-    _latestUpdatesTimer?.cancel();
+    _stopLatestUpdatesTimer();
     _ctrl.dispose();
     super.dispose();
   }
@@ -2505,11 +2684,12 @@ return CustomScrollView(
           pinned: true,
           toolbarHeight: 58,
           automaticallyImplyLeading: false,
-          flexibleSpace: ClipRect(
-            child: BackdropFilter(
-              filter: ui.ImageFilter.blur(sigmaX: 20, sigmaY: 20),
-              child: Container(
-                decoration: BoxDecoration(
+          flexibleSpace: RepaintBoundary(
+            child: ClipRect(
+              child: BackdropFilter(
+                filter: ui.ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+                child: Container(
+                  decoration: BoxDecoration(
                   color: isDark
                       ? Colors.black.withOpacity(0.6)
                       : Colors.white.withOpacity(0.75),
@@ -2518,6 +2698,7 @@ return CustomScrollView(
                       color: gold.withOpacity(0.18),
                       width: 0.8,
                     ),
+                  ),
                   ),
                 ),
               ),
@@ -2867,192 +3048,266 @@ Row(
                 const SizedBox(height: 18),
 const SizedBox(height: 20),
          const SizedBox(height: 20),
-                // ── كرت التواصل الاحترافي ──
+                // ── كرت تواصل معنا بتصميم زجاجي ذهبي ──
                 Container(
                   decoration: BoxDecoration(
-                    color: cardBg,
-                    borderRadius: BorderRadius.circular(28),
-                    border: Border.all(color: gold.withOpacity(0.15)),
+                    borderRadius: BorderRadius.circular(34),
+                    gradient: LinearGradient(
+                      colors: isDark
+                          ? [
+                              const Color(0xFF18130A),
+                              const Color(0xFF101010),
+                              const Color(0xFF070707),
+                            ]
+                          : [
+                              const Color(0xFFFFFCF4),
+                              const Color(0xFFFFF3D2),
+                              Colors.white,
+                            ],
+                      begin: Alignment.topRight,
+                      end: Alignment.bottomLeft,
+                    ),
+                    border: Border.all(color: gold.withOpacity(isDark ? 0.22 : 0.18)),
                     boxShadow: [
                       BoxShadow(
-                        color: gold.withOpacity(isDark ? 0.08 : 0.06),
-                        blurRadius: 30,
-                        offset: const Offset(0, 8),
+                        color: gold.withOpacity(isDark ? 0.13 : 0.10),
+                        blurRadius: 34,
+                        offset: const Offset(0, 16),
                       ),
                       BoxShadow(
-                        color: Colors.black.withOpacity(isDark ? 0.35 : 0.07),
-                        blurRadius: 20,
-                        offset: const Offset(0, 6),
+                        color: Colors.black.withOpacity(isDark ? 0.38 : 0.07),
+                        blurRadius: 24,
+                        offset: const Offset(0, 10),
                       ),
                     ],
                   ),
-                  child: Column(
-                    children: [
-                      // ── هيدر مع خط ذهبي متوهج ──
-                      ClipRRect(
-                        borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
-                        child: Stack(
-                          children: [
-                            Container(
-                              width: double.infinity,
-                              padding: const EdgeInsets.fromLTRB(22, 22, 22, 18),
-                              decoration: BoxDecoration(
-                                color: isDark ? const Color(0xFF111111) : const Color(0xFFFFF8E7),
-                              ),
-                              child: Row(
-                                children: [
-                                  Container(
-                                    width: 48,
-                                    height: 48,
-                                    decoration: BoxDecoration(
-                                      borderRadius: BorderRadius.circular(16),
-                                      gradient: const LinearGradient(
-                                        colors: [Color(0xFFEEC04F), Color(0xFFAD7A00)],
-                                        begin: Alignment.topLeft,
-                                        end: Alignment.bottomRight,
-                                      ),
-                                      boxShadow: [
-                                        BoxShadow(
-                                          color: gold.withOpacity(0.4),
-                                          blurRadius: 12,
-                                          offset: const Offset(0, 4),
-                                        ),
-                                      ],
-                                    ),
-                                    child: const Icon(Icons.contact_phone_rounded, color: Colors.white, size: 22),
-                                  ),
-                                  const SizedBox(width: 14),
-                                  Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      Text(
-                                        'تواصل معنا',
-                                        style: TextStyle(
-                                          color: isDark ? Colors.white : const Color(0xFF1A1000),
-                                          fontSize: 17,
-                                          fontWeight: FontWeight.w900,
-                                        ),
-                                      ),
-                                      const SizedBox(height: 3),
-                                      Text(
-                                        'نحن هنا لخدمتك',
-                                        style: TextStyle(color: gold, fontSize: 12, fontWeight: FontWeight.w500),
-                                      ),
-                                    ],
-                                  ),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(34),
+                    child: Stack(
+                      children: [
+                        Positioned(
+                          top: -64,
+                          right: -44,
+                          child: Container(
+                            width: 165,
+                            height: 165,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              gradient: RadialGradient(
+                                colors: [
+                                  gold.withOpacity(isDark ? 0.26 : 0.22),
+                                  gold.withOpacity(0.00),
                                 ],
                               ),
                             ),
-                            // خط ذهبي سفلي متوهج
-                            Positioned(
-                              bottom: 0, left: 0, right: 0,
-                              child: Container(
-                                height: 1.5,
-                                decoration: const BoxDecoration(
-                                  gradient: LinearGradient(
-                                    colors: [Colors.transparent, Color(0xFFD4A017), Color(0xFFEEC04F), Color(0xFFD4A017), Colors.transparent],
+                          ),
+                        ),
+                        Positioned(
+                          bottom: -58,
+                          left: -46,
+                          child: Container(
+                            width: 150,
+                            height: 150,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              gradient: RadialGradient(
+                                colors: [
+                                  const Color(0xFFAD7A00).withOpacity(isDark ? 0.23 : 0.14),
+                                  Colors.transparent,
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                        Padding(
+                          padding: const EdgeInsets.all(20),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                crossAxisAlignment: CrossAxisAlignment.center,
+                                children: [
+                                  Container(
+                                    width: 58,
+                                    height: 58,
+                                    decoration: BoxDecoration(
+                                      borderRadius: BorderRadius.circular(22),
+                                      gradient: const LinearGradient(
+                                        colors: [Color(0xFFFFD970), Color(0xFFD4A017), Color(0xFF9B6A00)],
+                                        begin: Alignment.topRight,
+                                        end: Alignment.bottomLeft,
+                                      ),
+                                      boxShadow: [
+                                        BoxShadow(
+                                          color: gold.withOpacity(0.35),
+                                          blurRadius: 22,
+                                          offset: const Offset(0, 10),
+                                        ),
+                                      ],
+                                    ),
+                                    child: const Icon(Icons.support_agent_rounded, color: Colors.white, size: 28),
+                                  ),
+                                  const SizedBox(width: 14),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          'تواصل معنا',
+                                          style: TextStyle(
+                                            color: isDark ? Colors.white : const Color(0xFF1A1000),
+                                            fontSize: 20,
+                                            fontWeight: FontWeight.w900,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 4),
+                                        Text(
+                                          'اختر الطريق الأسرع، والباقي علينا.',
+                                          maxLines: 2,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: TextStyle(
+                                            color: isDark ? Colors.white60 : Colors.black54,
+                                            fontSize: 12.5,
+                                            height: 1.45,
+                                            fontWeight: FontWeight.w700,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xFF21C45D).withOpacity(isDark ? 0.13 : 0.11),
+                                      borderRadius: BorderRadius.circular(999),
+                                      border: Border.all(color: const Color(0xFF21C45D).withOpacity(0.35)),
+                                    ),
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: const [
+                                        Icon(Icons.circle, size: 7, color: Color(0xFF21C45D)),
+                                        SizedBox(width: 6),
+                                        Text(
+                                          'متاح',
+                                          style: TextStyle(
+                                            color: Color(0xFF21C45D),
+                                            fontSize: 10,
+                                            fontWeight: FontWeight.w900,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 18),
+                              RepaintBoundary(
+                                child: Container(
+                                  padding: const EdgeInsets.all(14),
+                                  decoration: BoxDecoration(
+                                    color: isDark ? Colors.black.withOpacity(0.24) : Colors.white.withOpacity(0.72),
+                                    borderRadius: BorderRadius.circular(26),
+                                    border: Border.all(color: Colors.white.withOpacity(isDark ? 0.08 : 0.62)),
+                                  ),
+                                  child: Column(
+                                      children: [
+                                        Row(
+                                          children: [
+                                            _buildContactInfoPill(
+                                              icon: Icons.location_on_rounded,
+                                              title: 'العنوان',
+                                              value: 'زيونة - بغداد',
+                                              accent: const Color(0xFFE53935),
+                                              isDark: isDark,
+                                            ),
+                                            const SizedBox(width: 10),
+                                            _buildContactInfoPill(
+                                              icon: Icons.schedule_rounded,
+                                              title: 'الدوام',
+                                              value: 'الأحد - الخميس',
+                                              accent: const Color(0xFF21C45D),
+                                              isDark: isDark,
+                                            ),
+                                          ],
+                                        ),
+                                        const SizedBox(height: 10),
+                                        Row(
+                                          children: [
+                                            _buildContactInfoPill(
+                                              icon: Icons.call_rounded,
+                                              title: 'الهاتف',
+                                              value: '+964 770 272 4811',
+                                              accent: const Color(0xFF1E88E5),
+                                              isDark: isDark,
+                                            ),
+                                            const SizedBox(width: 10),
+                                            _buildContactInfoPill(
+                                              icon: Icons.alternate_email_rounded,
+                                              title: 'البريد',
+                                              value: 'info@majidalbana.com',
+                                              accent: const Color(0xFF8E24AA),
+                                              isDark: isDark,
+                                            ),
+                                          ],
+                                        ),
+                                      ],
+                                    ),
                                   ),
                                 ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-
-                      // ── بطاقات المعلومات ──
-                      Padding(
-                        padding: const EdgeInsets.all(16),
-                        child: Column(
-                          children: [
-                            // شبكة 2x2 للمعلومات
-                            Row(
-                              children: [
-                                _buildInfoTile(
-                                  icon: Icons.location_on_rounded,
-                                  title: 'العنوان',
-                                  value: 'زيونة - بغداد',
-                                  color: const Color(0xFFE53935),
-                                  isDark: isDark,
+                              const SizedBox(height: 14),
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
+                                decoration: BoxDecoration(
+                                  color: isDark ? Colors.white.withOpacity(0.04) : const Color(0xFFFFF9EA),
+                                  borderRadius: BorderRadius.circular(22),
+                                  border: Border.all(color: gold.withOpacity(0.16)),
                                 ),
-                                const SizedBox(width: 10),
-                                _buildInfoTile(
-                                  icon: Icons.access_time_rounded,
-                                  title: 'الدوام',
-                                  value: 'أحد - خميس\n٨ص - ٦م',
-                                  color: const Color(0xFF43A047),
-                                  isDark: isDark,
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 10),
-                            Row(
-                              children: [
-                                _buildInfoTile(
-                                  icon: Icons.phone_rounded,
-                                  title: 'الهاتف',
-                                  value: '+964 770 272 4811',
-                                  color: const Color(0xFF1E88E5),
-                                  isDark: isDark,
-                                ),
-                                const SizedBox(width: 10),
-                                _buildInfoTile(
-                                  icon: Icons.email_rounded,
-                                  title: 'البريد',
-                                  value: 'info@majidalbana\n.com',
-                                  color: const Color(0xFF8E24AA),
-                                  isDark: isDark,
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 16),
-
-                            // ── فاصل ──
-                            Container(
-                              height: 1,
-                              decoration: BoxDecoration(
-                                gradient: LinearGradient(
-                                  colors: [Colors.transparent, gold.withOpacity(0.2), Colors.transparent],
+                                child: Row(
+                                  children: [
+                                    _buildContactMiniStat(value: '3', label: 'طرق تواصل', isDark: isDark),
+                                    Container(width: 1, height: 28, color: gold.withOpacity(0.16), margin: const EdgeInsets.symmetric(horizontal: 10)),
+                                    _buildContactMiniStat(value: '24h', label: 'استقبال الطلبات', isDark: isDark),
+                                    Container(width: 1, height: 28, color: gold.withOpacity(0.16), margin: const EdgeInsets.symmetric(horizontal: 10)),
+                                    _buildContactMiniStat(value: 'IQ', label: 'داخل العراق', isDark: isDark),
+                                  ],
                                 ),
                               ),
-                            ),
-                            const SizedBox(height: 16),
-
-                            // ── أزرار التواصل الاجتماعي ──
-                            Row(
-                              children: [
-                                _buildSocialTile(
-                                  icon: Icons.email_rounded,
-                                  label: 'إيميل',
-                                  color: const Color(0xFFEA4335),
-                                  isDark: isDark,
-                                ),
-                                const SizedBox(width: 8),
-                                _buildSocialTile(
-                                  icon: Icons.facebook_rounded,
-                                  label: 'فيسبوك',
-                                  color: const Color(0xFF1877F2),
-                                  isDark: isDark,
-                                ),
-                                const SizedBox(width: 8),
-                                _buildSocialTile(
-                                  icon: Icons.telegram_rounded,
-                                  label: 'تيليغرام',
-                                  color: const Color(0xFF229ED9),
-                                  isDark: isDark,
-                                ),
-                                const SizedBox(width: 8),
-                                _buildSocialTile(
-                                  icon: Icons.chat_rounded,
-                                  label: 'واتساب',
-                                  color: const Color(0xFF25D366),
-                                  isDark: isDark,
-                                ),
-                              ],
-                            ),
-                          ],
+                              const SizedBox(height: 14),
+                              Row(
+                                children: [
+                                  _buildContactActionButton(
+                                    icon: Icons.phone_in_talk_rounded,
+                                    label: 'اتصال',
+                                    hint: 'مباشر',
+                                    color: const Color(0xFF1E88E5),
+                                    isDark: isDark,
+                                    onTap: () => unawaited(_launchContactUri(Uri(scheme: 'tel', path: '+9647702724811'))),
+                                  ),
+                                  const SizedBox(width: 10),
+                                  _buildContactActionButton(
+                                    icon: Icons.chat_rounded,
+                                    label: 'واتساب',
+                                    hint: 'رسالة',
+                                    color: const Color(0xFF25D366),
+                                    isDark: isDark,
+                                    onTap: () => unawaited(_launchContactUri(Uri.parse('https://wa.me/9647702724811'))),
+                                  ),
+                                  const SizedBox(width: 10),
+                                  _buildContactActionButton(
+                                    icon: Icons.mail_rounded,
+                                    label: 'البريد',
+                                    hint: 'إيميل',
+                                    color: const Color(0xFFEA4335),
+                                    isDark: isDark,
+                                    onTap: () => unawaited(_launchContactUri(Uri(scheme: 'mailto', path: 'info@majidalbana.com'))),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
                 ),
                 const SizedBox(height: 100),
@@ -3204,6 +3459,10 @@ class _UserAvatarButtonState extends State<_UserAvatarButton>
                   ? Image.network(
                       photoUrl,
                       fit: BoxFit.cover,
+                      cacheWidth: 96,
+                      cacheHeight: 96,
+                      gaplessPlayback: true,
+                      filterQuality: FilterQuality.low,
                       errorBuilder: (_, __, ___) => _DefaultAvatar(),
                     )
                   : _DefaultAvatar(),
@@ -3386,6 +3645,10 @@ class _UserPopupCard extends StatelessWidget {
                                   ? Image.network(
                                       photoUrl,
                                       fit: BoxFit.cover,
+                                      cacheWidth: 112,
+                                      cacheHeight: 112,
+                                      gaplessPlayback: true,
+                                      filterQuality: FilterQuality.low,
                                       errorBuilder: (_, __, ___) =>
                                           const Icon(Icons.person_rounded,
                                               color: Colors.white, size: 28),
