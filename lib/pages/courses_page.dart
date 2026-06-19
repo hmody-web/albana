@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:url_launcher/url_launcher.dart';
-import '../services/map_launcher_service.dart';
+import 'package:map_launcher/map_launcher.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:async';
@@ -266,7 +266,7 @@ final urlMatch =
 
   /// حساب hash بسيط للكشف عن التغييرات
   String _computeHash(List<_ScheduleItem> items) {
-    return items.map((e) => '${e.id}|${e.lectureNumber}|${e.day}|${e.time}|${e.location}').join(';');
+    return items.map((e) => '${e.id}|${e.lectureNumber}|${e.day}|${e.time}|${e.location}|${e.urlLocation}').join(';');
   }
 
   /// مراقبة خفية كل 8 ثواني — لا تُظهر أي loading indicator
@@ -532,6 +532,560 @@ int _parseLectureNumber(String value) {
   var normalized = value;
   arabic.forEach((k, v) => normalized = normalized.replaceAll(k, v));
   return int.tryParse(normalized.replaceAll(RegExp(r'[^0-9]'), '')) ?? 0;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Smart Maps Launcher
+// يحوّل روابط Google Maps، حتى المختصرة maps.app.goo.gl غالباً، إلى إحداثيات
+// ثم يعرض فقط تطبيقات الخرائط المثبتة مثل Google Maps / Waze / Apple Maps.
+// ─────────────────────────────────────────────────────────────────────────────
+class _MapTarget {
+  final double latitude;
+  final double longitude;
+  final String title;
+  final Uri originalUri;
+
+  const _MapTarget({
+    required this.latitude,
+    required this.longitude,
+    required this.title,
+    required this.originalUri,
+  });
+}
+
+Uri? _safeMapUri(String rawUrl) {
+  final trimmed = rawUrl.trim();
+  if (trimmed.isEmpty) return null;
+  final withScheme = trimmed.startsWith('http://') || trimmed.startsWith('https://')
+      ? trimmed
+      : 'https://$trimmed';
+  return Uri.tryParse(withScheme);
+}
+
+Future<Uri> _resolveRedirectedMapUri(Uri uri) async {
+  final host = uri.host.toLowerCase();
+
+  final shouldResolve = host.contains('goo.gl') ||
+      host == 'maps.app.goo.gl' ||
+      host == 'maps.google.com' ||
+      host == 'www.google.com' ||
+      host == 'google.com';
+
+  if (!shouldResolve) return uri;
+
+  final client = http.Client();
+
+  try {
+    // المحاولة الأولى: HEAD أسرع، أحياناً يرجع الرابط النهائي مباشرة
+    final headRequest = http.Request('HEAD', uri)
+      ..followRedirects = true
+      ..maxRedirects = 15
+      ..headers.addAll(_googleMapsHeaders());
+
+    final headResponse = await client.send(headRequest).timeout(
+          const Duration(seconds: 8),
+        );
+
+    await headResponse.stream.drain<void>();
+
+    final headUrl = headResponse.request?.url;
+    if (headUrl != null && headUrl.toString() != uri.toString()) {
+      return headUrl;
+    }
+  } catch (_) {
+    // نكمل للمحاولة الثانية، لأن روابط Google تحب الدراما
+  }
+
+  try {
+    // المحاولة الثانية: GET مع قراءة الصفحة
+    final getResponse = await client
+        .get(
+          uri,
+          headers: _googleMapsHeaders(),
+        )
+        .timeout(const Duration(seconds: 10));
+
+    final finalUrl = getResponse.request?.url;
+    if (finalUrl != null && finalUrl.toString() != uri.toString()) {
+      return finalUrl;
+    }
+
+    // أحياناً Google لا يعطي redirect مباشر، بل يضع الرابط الحقيقي داخل الصفحة
+    final body = getResponse.body;
+
+    final extractedUrl = _extractGoogleMapsUrlFromHtml(body);
+    if (extractedUrl != null) {
+      return extractedUrl;
+    }
+
+    return uri;
+  } catch (_) {
+    return uri;
+  } finally {
+    client.close();
+  }
+}
+Map<String, String> _googleMapsHeaders() {
+  return {
+    'User-Agent':
+        'Mozilla/5.0 (Linux; Android 13; Mobile) AppleWebKit/537.36 '
+        '(KHTML, like Gecko) Chrome/125.0 Mobile Safari/537.36',
+    'Accept':
+        'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+    'Accept-Language': 'ar,en-US;q=0.9,en;q=0.8',
+  };
+}
+
+Uri? _extractGoogleMapsUrlFromHtml(String html) {
+  if (html.isEmpty) return null;
+
+  String decoded = html;
+
+  try {
+    decoded = Uri.decodeFull(decoded);
+  } catch (_) {}
+
+  final patterns = <RegExp>[
+    // رابط Google Maps واضح داخل الصفحة
+    RegExp(
+      r'https:\/\/www\.google\.com\/maps\/[^"<>\\]+',
+      caseSensitive: false,
+    ),
+
+    RegExp(
+      r'https:\/\/maps\.google\.com\/[^"<>\\]+',
+      caseSensitive: false,
+    ),
+
+    // أحياناً يكون الرابط داخل href="/maps/..."
+    RegExp(
+      r'href="(\/maps\/[^"]+)"',
+      caseSensitive: false,
+    ),
+
+    // أحياناً تكون الإحداثيات فقط داخل الصفحة
+    RegExp(
+      r'@(-?\d+(?:\.\d+)?),\s*(-?\d+(?:\.\d+)?)',
+      caseSensitive: false,
+    ),
+
+    RegExp(
+      r'(-?\d{1,2}\.\d{5,}),\s*(-?\d{1,3}\.\d{5,})',
+      caseSensitive: false,
+    ),
+  ];
+
+  for (final pattern in patterns) {
+    final match = pattern.firstMatch(decoded);
+    if (match == null) continue;
+
+    final value = match.group(0);
+    if (value == null || value.trim().isEmpty) continue;
+
+    // href="/maps/..."
+    if (match.groupCount >= 1 && (match.group(1)?.startsWith('/maps/') ?? false)) {
+      return Uri.tryParse('https://www.google.com${match.group(1)}');
+    }
+
+    // إذا وجدنا رابط كامل
+    if (value.startsWith('https://')) {
+      final cleaned = value
+          .replaceAll(r'\u003d', '=')
+          .replaceAll(r'\u0026', '&')
+          .replaceAll('&amp;', '&');
+
+      return Uri.tryParse(cleaned);
+    }
+
+    // إذا وجدنا إحداثيات فقط، نبني رابط Google Maps منها
+    if (match.groupCount >= 2) {
+      final lat = match.group(1);
+      final lng = match.group(2);
+
+      if (lat != null && lng != null) {
+        return Uri.tryParse('https://www.google.com/maps?q=$lat,$lng');
+      }
+    }
+  }
+
+  return null;
+}
+double? _safeDouble(String? value) {
+  if (value == null) return null;
+  return double.tryParse(value.trim());
+}
+
+_MapTarget? _targetFromText(String text, Uri originalUri, String title) {
+  final decoded = (() {
+    try {
+      return Uri.decodeFull(text);
+    } catch (_) {
+      return text;
+    }
+  })();
+
+  final patterns = <RegExp>[
+    RegExp(r'@(-?\d+(?:\.\d+)?),\s*(-?\d+(?:\.\d+)?)'),
+    RegExp(r'(?:[?&]|^)(?:q|query|ll|daddr|destination|center)=(-?\d+(?:\.\d+)?),\s*(-?\d+(?:\.\d+)?)'),
+    RegExp(r'!3d(-?\d+(?:\.\d+)?)!4d(-?\d+(?:\.\d+)?)'),
+  ];
+
+  for (final pattern in patterns) {
+    final match = pattern.firstMatch(decoded);
+    if (match == null) continue;
+    final lat = _safeDouble(match.group(1));
+    final lng = _safeDouble(match.group(2));
+    if (lat != null && lng != null && lat.abs() <= 90 && lng.abs() <= 180) {
+      return _MapTarget(
+        latitude: lat,
+        longitude: lng,
+        title: title,
+        originalUri: originalUri,
+      );
+    }
+  }
+
+  // بعض روابط Google Place تأتي بالترتيب: !2d longitude ثم !3d latitude
+  final lngLatMatch = RegExp(r'!2d(-?\d+(?:\.\d+)?)!3d(-?\d+(?:\.\d+)?)')
+      .firstMatch(decoded);
+  if (lngLatMatch != null) {
+    final lng = _safeDouble(lngLatMatch.group(1));
+    final lat = _safeDouble(lngLatMatch.group(2));
+    if (lat != null && lng != null && lat.abs() <= 90 && lng.abs() <= 180) {
+      return _MapTarget(
+        latitude: lat,
+        longitude: lng,
+        title: title,
+        originalUri: originalUri,
+      );
+    }
+  }
+
+  return null;
+}
+
+Future<_MapTarget?> _resolveMapTarget(String rawUrl, String title) async {
+  final originalUri = _safeMapUri(rawUrl);
+  if (originalUri == null) return null;
+
+  // 1) إذا الرابط نفسه يحتوي إحداثيات
+  final direct = _targetFromText(originalUri.toString(), originalUri, title);
+  if (direct != null) return direct;
+
+  // 2) فك رابط Google المختصر أو الطويل
+  final resolvedUri = await _resolveRedirectedMapUri(originalUri);
+
+  // 3) محاولة استخراج الإحداثيات من الرابط النهائي
+  final resolved = _targetFromText(resolvedUri.toString(), originalUri, title);
+  if (resolved != null) return resolved;
+
+  // 4) محاولة أخيرة: بعض روابط Google تحتوي query مشفر
+  final decodedResolved = Uri.decodeComponent(resolvedUri.toString());
+  final decoded = _targetFromText(decodedResolved, originalUri, title);
+  if (decoded != null) return decoded;
+
+  return null;
+}
+
+Future<void> _openOriginalMapUrl(Uri uri) async {
+  if (await canLaunchUrl(uri)) {
+    await launchUrl(uri, mode: LaunchMode.externalApplication);
+  }
+}
+
+Future<void> _openSmartMapPicker({
+  required BuildContext context,
+  required String rawUrl,
+  required bool isDark,
+  required String title,
+}) async {
+  final originalUri = _safeMapUri(rawUrl);
+  if (originalUri == null) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('رابط الموقع غير موجود')),
+    );
+    return;
+  }
+
+  final messenger = ScaffoldMessenger.of(context);
+  messenger.hideCurrentSnackBar();
+  messenger.showSnackBar(
+    const SnackBar(
+      duration: Duration(seconds: 1),
+      content: Text('جارٍ تجهيز الموقع بدقة...'),
+    ),
+  );
+
+  final target = await _resolveMapTarget(rawUrl, title);
+  if (!context.mounted) return;
+  messenger.hideCurrentSnackBar();
+
+  final List<AvailableMap> availableMaps;
+  try {
+    availableMaps = await MapLauncher.installedMaps;
+  } catch (_) {
+    await _openOriginalMapUrl(originalUri);
+    return;
+  }
+  if (!context.mounted) return;
+
+  if (target == null) {
+    await showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (_) => _MapFallbackSheet(
+        isDark: isDark,
+        uri: originalUri,
+      ),
+    );
+    return;
+  }
+
+  if (availableMaps.isEmpty) {
+    await _openOriginalMapUrl(originalUri);
+    return;
+  }
+
+  await showModalBottomSheet(
+    context: context,
+    backgroundColor: Colors.transparent,
+    builder: (_) => _MapPickerSheet(
+      isDark: isDark,
+      maps: availableMaps,
+      target: target,
+    ),
+  );
+}
+
+class _MapPickerSheet extends StatelessWidget {
+  final bool isDark;
+  final List<AvailableMap> maps;
+  final _MapTarget target;
+
+  const _MapPickerSheet({
+    required this.isDark,
+    required this.maps,
+    required this.target,
+  });
+
+  static const gold = Color(0xFFD4A017);
+
+  @override
+  Widget build(BuildContext context) {
+    final bg = isDark ? const Color(0xFF171717) : Colors.white;
+    final textPrimary = isDark ? Colors.white : const Color(0xFF1A1000);
+    final textSub = isDark ? Colors.white60 : Colors.black54;
+
+    return SafeArea(
+      child: Container(
+        margin: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: bg,
+          borderRadius: BorderRadius.circular(24),
+          border: Border.all(color: gold.withOpacity(0.22)),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(isDark ? 0.5 : 0.15),
+              blurRadius: 26,
+            ),
+          ],
+        ),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Center(
+                child: Container(
+                  width: 44,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: gold.withOpacity(0.35),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+              Row(
+                children: [
+                  Container(
+                    width: 38,
+                    height: 38,
+                    decoration: const BoxDecoration(
+                      shape: BoxShape.circle,
+                      gradient: LinearGradient(
+                        colors: [Color(0xFFFFD86B), Color(0xFFD4A017)],
+                      ),
+                    ),
+                    child: const Icon(Icons.map_rounded,
+                        color: Colors.black, size: 20),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'اختر تطبيق الخرائط',
+                          style: TextStyle(
+                            color: textPrimary,
+                            fontSize: 16,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          'سيتم فتح نفس الإحداثيات بدقة داخل التطبيق المختار',
+                          style: TextStyle(color: textSub, fontSize: 11.5),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 14),
+              ...maps.map((map) {
+                return Container(
+                  margin: const EdgeInsets.only(bottom: 8),
+                  decoration: BoxDecoration(
+                    color: isDark
+                        ? Colors.white.withOpacity(0.06)
+                        : const Color(0xFFFFF8E8),
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: gold.withOpacity(0.14)),
+                  ),
+                  child: ListTile(
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                    leading: Container(
+                      width: 38,
+                      height: 38,
+                      decoration: BoxDecoration(
+                        color: gold.withOpacity(0.14),
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(Icons.navigation_rounded,
+                          color: gold, size: 20),
+                    ),
+                    title: Text(
+                      map.mapName,
+                      style: TextStyle(
+                        color: textPrimary,
+                        fontWeight: FontWeight.w800,
+                        fontSize: 13.5,
+                      ),
+                    ),
+                    subtitle: Text(
+                      '${target.latitude.toStringAsFixed(6)}, ${target.longitude.toStringAsFixed(6)}',
+                      textDirection: TextDirection.ltr,
+                      style: TextStyle(color: textSub, fontSize: 11),
+                    ),
+                    trailing: const Icon(Icons.open_in_new_rounded,
+                        color: gold, size: 18),
+                    onTap: () async {
+                      Navigator.pop(context);
+                      await map.showMarker(
+                        coords: Coords(target.latitude, target.longitude),
+                        title: target.title,
+                      );
+                    },
+                  ),
+                );
+              }),
+              const SizedBox(height: 4),
+              Center(
+                child: TextButton.icon(
+                  onPressed: () async {
+                    Navigator.pop(context);
+                    await _openOriginalMapUrl(target.originalUri);
+                  },
+                  icon: const Icon(Icons.link_rounded, size: 16),
+                  label: const Text('فتح رابط Google الأصلي'),
+                  style: TextButton.styleFrom(foregroundColor: gold),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _MapFallbackSheet extends StatelessWidget {
+  final bool isDark;
+  final Uri uri;
+
+  const _MapFallbackSheet({
+    required this.isDark,
+    required this.uri,
+  });
+
+  static const gold = Color(0xFFD4A017);
+
+  @override
+  Widget build(BuildContext context) {
+    final bg = isDark ? const Color(0xFF171717) : Colors.white;
+    final textPrimary = isDark ? Colors.white : const Color(0xFF1A1000);
+    final textSub = isDark ? Colors.white60 : Colors.black54;
+
+    return SafeArea(
+      child: Container(
+        margin: const EdgeInsets.all(12),
+        padding: const EdgeInsets.all(18),
+        decoration: BoxDecoration(
+          color: bg,
+          borderRadius: BorderRadius.circular(24),
+          border: Border.all(color: gold.withOpacity(0.22)),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.location_searching_rounded,
+                color: gold, size: 36),
+            const SizedBox(height: 10),
+            Text(
+              'تعذّر استخراج الإحداثيات من الرابط',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: textPrimary,
+                fontSize: 15,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'سيتم فتح رابط Google Maps الأصلي. بعض روابط Google لا تعطي الإحداثيات للتطبيق مباشرة، لكن الرابط نفسه سيُفتح بشكل صحيح.',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: textSub, fontSize: 12, height: 1.5),
+            ),
+            const SizedBox(height: 14),
+            SizedBox(
+              width: double.infinity,
+              height: 44,
+              child: ElevatedButton.icon(
+                onPressed: () async {
+                  Navigator.pop(context);
+                  await _openOriginalMapUrl(uri);
+                },
+                icon: const Icon(Icons.open_in_new_rounded, size: 17),
+                label: const Text('فتح الرابط الأصلي'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: gold,
+                  foregroundColor: Colors.black,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1092,18 +1646,14 @@ class _AdminAddBoxState extends State<_AdminAddBox>
                       ),
                       const SizedBox(width: 8),
                       GestureDetector(
-                        onTap: () async {
-                          final raw = _urlCtrl.text.trim();
-                          if (raw.isEmpty) return;
-                          var url = raw;
-                          if (!url.startsWith('http://') && !url.startsWith('https://')) {
-                            url = 'https://$url';
-                          }
-                          final uri = Uri.tryParse(url);
-                          if (uri != null && await canLaunchUrl(uri)) {
-                            await launchUrl(uri, mode: LaunchMode.externalApplication);
-                          }
-                        },
+                        onTap: () => _openSmartMapPicker(
+                          context: context,
+                          rawUrl: _urlCtrl.text.trim(),
+                          isDark: isDark,
+                          title: _locCtrl.text.trim().isEmpty
+                              ? 'موقع المحاضرة'
+                              : _locCtrl.text.trim(),
+                        ),
                         child: Container(
                           width: 44,
                           height: 44,
@@ -1289,11 +1839,12 @@ class _ScheduleTable extends StatelessWidget {
 
   static const gold = Color(0xFFD4A017);
 
-  void _openLocation(BuildContext context, String rawUrl) {
-    MapLauncherService.openMapPicker(
+  void _openLocation(BuildContext context, _ScheduleItem item) {
+    _openSmartMapPicker(
       context: context,
-      rawUrl: rawUrl,
+      rawUrl: item.urlLocation,
       isDark: isDark,
+      title: item.location.isEmpty ? 'موقع المحاضرة' : item.location,
     );
   }
 
@@ -1517,7 +2068,7 @@ class _ScheduleTable extends StatelessWidget {
                 if (row.urlLocation.isNotEmpty) ...[
                   const SizedBox(width: 5),
                   GestureDetector(
-                    onTap: () => _openLocation(context, row.urlLocation),
+                    onTap: () => _openLocation(context, row),
                     child: Container(
                       padding: const EdgeInsets.all(5),
                       decoration: BoxDecoration(
@@ -1810,18 +2361,14 @@ class _EditBottomSheetState extends State<_EditBottomSheet> {
                     StatefulBuilder(
                       builder: (ctx, setLocal) {
                         return GestureDetector(
-                          onTap: () async {
-                            final raw = widget.urlCtrl.text.trim();
-                            if (raw.isEmpty) return;
-                            var url = raw;
-                            if (!url.startsWith('http://') && !url.startsWith('https://')) {
-                              url = 'https://$url';
-                            }
-                            final uri = Uri.tryParse(url);
-                            if (uri != null && await canLaunchUrl(uri)) {
-                              await launchUrl(uri, mode: LaunchMode.externalApplication);
-                            }
-                          },
+                          onTap: () => _openSmartMapPicker(
+                            context: context,
+                            rawUrl: widget.urlCtrl.text.trim(),
+                            isDark: isDark,
+                            title: widget.locCtrl.text.trim().isEmpty
+                                ? 'موقع المحاضرة'
+                                : widget.locCtrl.text.trim(),
+                          ),
                           child: Container(
                             width: 44,
                             height: 44,
