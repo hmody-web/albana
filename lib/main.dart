@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:typed_data';
 import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -195,6 +196,7 @@ class _MainScaffoldState extends State<MainScaffold>
 StreamSubscription<Uri>? _deepLinkSub;
 StreamSubscription<Map<String, dynamic>>? _notificationClickSub;
 int? _pendingPostId;
+int? _pendingFileId;
 
   @override
   void initState() {
@@ -247,6 +249,21 @@ void _initNotificationClicks() {
 }
 
 void _openFromNotificationData(Map<String, dynamic> data) {
+  final rawFileId = data['file_id'] ?? data['fileId'] ?? data['pdf_id'] ?? data['pdfId'];
+  final fileId = int.tryParse('$rawFileId');
+
+  if (fileId != null && fileId > 0) {
+    _openSharedFile(fileId);
+    return;
+  }
+
+  final screen = '${data['screen'] ?? ''}'.toLowerCase().trim();
+
+  if (screen == 'files' || screen == 'pdf' || screen == 'pdf_files') {
+    _openFilesPageFromNotification();
+    return;
+  }
+
   final rawPostId = data['post_id'] ?? data['postId'];
   final postId = int.tryParse('$rawPostId');
 
@@ -279,6 +296,28 @@ void _openPublicationsPageFromNotification() {
     );
   }
 }
+void _openFilesPageFromNotification() {
+  if (!mounted) return;
+
+  if (_currentIndex == 1) {
+    FilesPageScrollBus.goTop();
+    return;
+  }
+
+  _expandNavBar();
+  setState(() {
+    _currentIndex = 1;
+  });
+
+  if (_pageController.hasClients) {
+    _pageController.animateToPage(
+      1,
+      duration: const Duration(milliseconds: 280),
+      curve: Curves.easeOutCubic,
+    );
+  }
+}
+
   void _handleDeepLink(Uri uri) {
     int? postId;
 
@@ -342,6 +381,35 @@ void _openPublicationsPageFromNotification() {
         if (!mounted || id == null) return;
         _pendingPostId = null;
         PublicationsPageDeepLinkBus.openPost(id);
+      });
+    });
+  }
+
+  void _openSharedFile(int fileId) {
+    _pendingFileId = fileId;
+
+    if (!mounted) return;
+
+    if (_currentIndex != 1) {
+      _expandNavBar();
+      setState(() {
+        _currentIndex = 1;
+      });
+      if (_pageController.hasClients) {
+        _pageController.animateToPage(
+          1,
+          duration: const Duration(milliseconds: 280),
+          curve: Curves.easeOutCubic,
+        );
+      }
+    }
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      Future.delayed(const Duration(milliseconds: 360), () {
+        final id = _pendingFileId;
+        if (!mounted || id == null) return;
+        _pendingFileId = null;
+        FilesPageDeepLinkBus.openFile(id);
       });
     });
   }
@@ -1816,6 +1884,799 @@ class _SettingsCard extends StatelessWidget {
   }
 }
 
+class _HomeProjectItem {
+  final int id;
+  final String title;
+  final String description;
+  final List<String> images;
+
+  const _HomeProjectItem({
+    required this.id,
+    required this.title,
+    required this.description,
+    required this.images,
+  });
+
+  String get signature => '$id::$title::$description::${images.join('|')}';
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'title': title,
+        'description': description,
+        'images': images,
+      };
+
+  static _HomeProjectItem? fromJson(Map<String, dynamic> json) {
+    final images = _extractImages(json);
+    if (images.isEmpty) return null;
+
+    return _HomeProjectItem(
+      id: int.tryParse('${json['id'] ?? json['project_id'] ?? 0}') ?? 0,
+      title: _clean('${json['title'] ?? json['name'] ?? ''}'),
+      description: _clean('${json['description'] ?? json['desc'] ?? json['content'] ?? ''}'),
+      images: images,
+    );
+  }
+
+  static List<String> _extractImages(Map<String, dynamic> json) {
+    final rawImages = json['images'] ?? json['project_images'] ?? json['gallery'];
+    final result = <String>[];
+
+    if (rawImages is List) {
+      for (final item in rawImages) {
+        if (item is Map) {
+          final map = Map<String, dynamic>.from(item);
+          final raw = '${map['image_path'] ?? map['path'] ?? map['image'] ?? map['url'] ?? ''}'.trim();
+          final url = _resolveImageUrl(raw);
+          if (url.isNotEmpty) result.add(url);
+        } else {
+          final url = _resolveImageUrl('$item'.trim());
+          if (url.isNotEmpty) result.add(url);
+        }
+      }
+    }
+
+    for (final key in ['image_path', 'image', 'thumbnail', 'photo']) {
+      final url = _resolveImageUrl('${json[key] ?? ''}'.trim());
+      if (url.isNotEmpty && !result.contains(url)) result.add(url);
+    }
+
+    return result.take(15).toList();
+  }
+
+  static String _clean(String value) {
+    return value
+        .replaceAll(RegExp(r'<[^>]*>', dotAll: true), ' ')
+        .replaceAll('&nbsp;', ' ')
+        .replaceAll('&amp;', '&')
+        .replaceAll('&quot;', '"')
+        .replaceAll('&#039;', "'")
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+  }
+
+  static String _resolveImageUrl(String raw) {
+    if (raw.isEmpty) return '';
+    if (raw.startsWith('http://') || raw.startsWith('https://')) return raw;
+    final cleaned = raw.replaceFirst(RegExp(r'^/+'), '');
+    return 'https://majidalbana.com/admin/projects/$cleaned';
+  }
+}
+
+class _ProjectsShowcaseCard extends StatefulWidget {
+  final bool isDark;
+  const _ProjectsShowcaseCard({required this.isDark});
+
+  @override
+  State<_ProjectsShowcaseCard> createState() => _ProjectsShowcaseCardState();
+}
+
+class _ProjectsShowcaseCardState extends State<_ProjectsShowcaseCard> {
+  static const String _projectsApi =
+      'https://majidalbana.com/admin/projects/projects_api.php';
+  static const String _projectsCacheKey = 'home_projects_showcase_cache_v1';
+
+  final PageController _projectPageController = PageController(viewportFraction: 0.90);
+  Timer? _autoTimer;
+  Timer? _refreshTimer;
+  List<_HomeProjectItem> _projects = [];
+  bool _loading = true;
+  bool _fetching = false;
+  int _projectIndex = 0;
+  int _imageIndex = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadProjectsInstantly();
+    _refreshTimer = Timer.periodic(const Duration(seconds: 15), (_) {
+      _fetchProjectsFromServer(silent: true);
+    });
+  }
+
+  @override
+  void dispose() {
+    _autoTimer?.cancel();
+    _refreshTimer?.cancel();
+    _projectPageController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadProjectsInstantly() async {
+    final cached = await _loadCachedProjects();
+    if (!mounted) return;
+
+    if (cached.isNotEmpty) {
+      setState(() {
+        _projects = cached;
+        _loading = false;
+        _projectIndex = 0;
+        _imageIndex = 0;
+      });
+      _startAutoPlay();
+    }
+
+    unawaited(_fetchProjectsFromServer(silent: cached.isNotEmpty));
+  }
+
+  Future<void> _fetchProjectsFromServer({required bool silent}) async {
+    if (_fetching) return;
+    _fetching = true;
+
+    try {
+      final response = await http
+          .get(Uri.parse(_projectsApi), headers: const {'Accept': 'application/json'})
+          .timeout(const Duration(seconds: 10));
+
+      if (response.statusCode != 200) {
+        if (mounted && _projects.isEmpty && !silent) setState(() => _loading = false);
+        return;
+      }
+
+      final decoded = jsonDecode(utf8.decode(response.bodyBytes));
+      final fresh = _parseProjects(decoded);
+      if (!mounted) return;
+
+      final oldSignature = _projectsSignature(_projects);
+      final newSignature = _projectsSignature(fresh);
+
+      if (oldSignature != newSignature) {
+        await _saveProjectsToCache(fresh);
+        if (!mounted) return;
+        _applyFreshProjects(fresh);
+      } else if (_loading) {
+        setState(() => _loading = false);
+      }
+    } catch (_) {
+      if (mounted && _projects.isEmpty && !silent) {
+        setState(() => _loading = false);
+      }
+    } finally {
+      _fetching = false;
+    }
+  }
+
+  void _applyFreshProjects(List<_HomeProjectItem> fresh) {
+    final currentId = _projects.isNotEmpty && _projectIndex < _projects.length
+        ? _projects[_projectIndex].id
+        : null;
+    final nextIndex = currentId == null
+        ? 0
+        : fresh.indexWhere((project) => project.id == currentId);
+
+    setState(() {
+      _projects = fresh;
+      _loading = false;
+      _projectIndex = nextIndex >= 0 ? nextIndex : 0;
+      _imageIndex = 0;
+    });
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_projectPageController.hasClients || _projects.isEmpty) return;
+      final safeIndex = _projectIndex.clamp(0, _projects.length - 1).toInt();
+      _projectPageController.animateToPage(
+        safeIndex,
+        duration: const Duration(milliseconds: 620),
+        curve: Curves.easeOutCubic,
+      );
+    });
+
+    _startAutoPlay();
+  }
+
+  String _projectsSignature(List<_HomeProjectItem> projects) {
+    return projects.map((e) => e.signature).join(':::');
+  }
+
+  List<_HomeProjectItem> _parseProjects(dynamic decoded) {
+    dynamic rows = decoded;
+    if (decoded is Map) {
+      rows = decoded['projects'] ?? decoded['data'] ?? decoded['items'] ?? [];
+    }
+    if (rows is! List) return [];
+
+    return rows
+        .whereType<Map>()
+        .map((e) => _HomeProjectItem.fromJson(Map<String, dynamic>.from(e)))
+        .whereType<_HomeProjectItem>()
+        .toList();
+  }
+
+  Future<List<_HomeProjectItem>> _loadCachedProjects() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(_projectsCacheKey);
+      if (raw == null || raw.trim().isEmpty) return [];
+      final decoded = jsonDecode(raw);
+      if (decoded is! List) return [];
+      return decoded
+          .whereType<Map>()
+          .map((e) => _HomeProjectItem.fromJson(Map<String, dynamic>.from(e)))
+          .whereType<_HomeProjectItem>()
+          .toList();
+    } catch (_) {
+      return [];
+    }
+  }
+
+  Future<void> _saveProjectsToCache(List<_HomeProjectItem> projects) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(
+        _projectsCacheKey,
+        jsonEncode(projects.map((e) => e.toJson()).toList()),
+      );
+    } catch (_) {}
+  }
+
+  void _startAutoPlay() {
+    _autoTimer?.cancel();
+    if (_projects.isEmpty) return;
+
+    _autoTimer = Timer.periodic(const Duration(milliseconds: 2500), (_) {
+      if (!mounted || _projects.isEmpty) return;
+      final currentProject = _projects[_projectIndex.clamp(0, _projects.length - 1).toInt()];
+      final imagesCount = currentProject.images.length;
+
+      if (imagesCount > 1 && _imageIndex < imagesCount - 1) {
+        setState(() => _imageIndex++);
+        return;
+      }
+
+      final nextProject = (_projectIndex + 1) % _projects.length;
+      setState(() {
+        _projectIndex = nextProject;
+        _imageIndex = 0;
+      });
+
+      if (_projectPageController.hasClients) {
+        _projectPageController.animateToPage(
+          nextProject,
+          duration: const Duration(milliseconds: 720),
+          curve: Curves.easeInOutCubic,
+        );
+      }
+    });
+  }
+
+  void _onProjectChanged(int index) {
+    HapticFeedback.selectionClick();
+    setState(() {
+      _projectIndex = index;
+      _imageIndex = 0;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = widget.isDark;
+    final textPrimary = isDark ? Colors.white : const Color(0xFF1A1000);
+    final textSub = isDark ? Colors.white70 : Colors.black54;
+    final cardBg = isDark ? const Color(0xFF111111) : Colors.white;
+
+    return Container(
+      width: double.infinity,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(32),
+        gradient: LinearGradient(
+          begin: Alignment.topRight,
+          end: Alignment.bottomLeft,
+          colors: isDark
+              ? [
+                  const Color(0xFF17120A),
+                  const Color(0xFF0E0E0E),
+                  const Color(0xFF070707),
+                ]
+              : [
+                  const Color(0xFFFFF8E6),
+                  Colors.white,
+                  const Color(0xFFFFFBF3),
+                ],
+        ),
+        border: Border.all(color: const Color(0xFFD4A017).withOpacity(isDark ? 0.22 : 0.18)),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFFD4A017).withOpacity(isDark ? 0.10 : 0.08),
+            blurRadius: 26,
+            offset: const Offset(0, 12),
+          ),
+          BoxShadow(
+            color: Colors.black.withOpacity(isDark ? 0.30 : 0.06),
+            blurRadius: 24,
+            offset: const Offset(0, 10),
+          ),
+        ],
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(32),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(18, 18, 18, 12),
+              child: Row(
+                children: [
+                  Container(
+                    width: 44,
+                    height: 44,
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(16),
+                      gradient: const LinearGradient(
+                        colors: [Color(0xFFD4A017), Color(0xFF8A5600)],
+                      ),
+                      boxShadow: [
+                        BoxShadow(
+                          color: const Color(0xFFD4A017).withOpacity(0.24),
+                          blurRadius: 18,
+                          offset: const Offset(0, 8),
+                        ),
+                      ],
+                    ),
+                    child: const Icon(Icons.architecture_rounded, color: Colors.white, size: 23),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'مشاريعنا الهندسية',
+                          style: TextStyle(
+                            color: textPrimary,
+                            fontSize: 18,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                        const SizedBox(height: 3),
+                        Text(
+                          ' تصفح ابرز مشاريعنا الهندسية المميزة  .',
+                          style: TextStyle(color: textSub, fontSize: 12.5, height: 1.45),
+                        ),
+                      ],
+                    ),
+                  ),
+                  if (_projects.isNotEmpty)
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFD4A017).withOpacity(0.12),
+                        borderRadius: BorderRadius.circular(999),
+                        border: Border.all(color: const Color(0xFFD4A017).withOpacity(0.24)),
+                      ),
+                      child: Text(
+                        '${_projectIndex + 1}/${_projects.length}',
+                        style: const TextStyle(
+                          color: Color(0xFFD4A017),
+                          fontSize: 11,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            if (_loading)
+              _buildLoading(cardBg, isDark)
+            else if (_projects.isEmpty)
+              _buildEmpty(textSub, isDark)
+            else
+              SizedBox(
+                height: 375,
+                child: PageView.builder(
+                  controller: _projectPageController,
+                  onPageChanged: _onProjectChanged,
+                  itemCount: _projects.length,
+                  itemBuilder: (context, index) {
+                    final project = _projects[index];
+                    final active = index == _projectIndex;
+                    return AnimatedScale(
+                      duration: const Duration(milliseconds: 360),
+                      curve: Curves.easeOutCubic,
+                      scale: active ? 1 : 0.94,
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(6, 0, 6, 18),
+                        child: AnimatedSwitcher(
+                          duration: const Duration(milliseconds: 520),
+                          switchInCurve: Curves.easeOutCubic,
+                          switchOutCurve: Curves.easeInCubic,
+                          transitionBuilder: (child, animation) {
+                            final offset = Tween<Offset>(
+                              begin: const Offset(0.06, 0),
+                              end: Offset.zero,
+                            ).animate(animation);
+                            return FadeTransition(
+                              opacity: animation,
+                              child: SlideTransition(position: offset, child: child),
+                            );
+                          },
+                          child: _ProjectShowcaseSlide(
+                            key: ValueKey(project.signature),
+                            project: project,
+                            imageIndex: active ? _imageIndex : 0,
+                            isDark: isDark,
+                            cardBg: cardBg,
+                            textPrimary: textPrimary,
+                            textSub: textSub,
+                          ),
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            if (_projects.length > 1)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(18, 0, 18, 18),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: List.generate(_projects.length, (index) {
+                    final active = index == _projectIndex;
+                    return AnimatedContainer(
+                      duration: const Duration(milliseconds: 280),
+                      margin: const EdgeInsets.symmetric(horizontal: 3),
+                      width: active ? 18 : 7,
+                      height: 7,
+                      decoration: BoxDecoration(
+                        color: active
+                            ? const Color(0xFFD4A017)
+                            : const Color(0xFFD4A017).withOpacity(0.24),
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                    );
+                  }),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildLoading(Color cardBg, bool isDark) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(18, 2, 18, 18),
+      child: Container(
+        height: 280,
+        decoration: BoxDecoration(
+          color: cardBg.withOpacity(isDark ? 0.55 : 0.92),
+          borderRadius: BorderRadius.circular(26),
+          border: Border.all(color: const Color(0xFFD4A017).withOpacity(0.10)),
+        ),
+        child: const Center(
+          child: SizedBox(
+            width: 28,
+            height: 28,
+            child: CircularProgressIndicator(strokeWidth: 2.6, color: Color(0xFFD4A017)),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildEmpty(Color textSub, bool isDark) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(18, 2, 18, 18),
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          color: isDark ? Colors.white.withOpacity(0.04) : Colors.black.withOpacity(0.035),
+          borderRadius: BorderRadius.circular(26),
+          border: Border.all(color: const Color(0xFFD4A017).withOpacity(0.10)),
+        ),
+        child: Text(
+          'لا توجد مشاريع متاحة للعرض حالياً',
+          textAlign: TextAlign.center,
+          style: TextStyle(color: textSub, fontSize: 13, fontWeight: FontWeight.w700),
+        ),
+      ),
+    );
+  }
+}
+
+
+class _ProjectImagePrefsCache {
+  static const String _keyPrefix = 'home_project_image_cache_v1_';
+  static String _keyForUrl(String url) {
+    return '$_keyPrefix${base64Url.encode(utf8.encode(url)).replaceAll('=', '')}';
+  }
+
+  static Future<Uint8List?> cachedBytes(String url) async {
+    try {
+      if (url.trim().isEmpty) return null;
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(_keyForUrl(url));
+      if (raw == null || raw.isEmpty) return null;
+      return base64Decode(raw);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static Future<Uint8List?> saveFromNetwork(String url) async {
+    try {
+      if (url.trim().isEmpty) return null;
+      final existing = await cachedBytes(url);
+      if (existing != null) return existing;
+
+      final response = await http.get(Uri.parse(url)).timeout(const Duration(seconds: 14));
+      if (response.statusCode != 200 || response.bodyBytes.isEmpty) return null;
+
+      final contentType = response.headers['content-type'] ?? '';
+      if (contentType.isNotEmpty && !contentType.toLowerCase().startsWith('image/')) {
+        return null;
+      }
+
+      final bytes = response.bodyBytes;
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_keyForUrl(url), base64Encode(bytes));
+      return bytes;
+    } catch (_) {
+      return null;
+    }
+  }
+}
+
+class _ProjectCachedNetworkImage extends StatefulWidget {
+  final String imageUrl;
+  final bool isDark;
+
+  const _ProjectCachedNetworkImage({
+    required this.imageUrl,
+    required this.isDark,
+  });
+
+  @override
+  State<_ProjectCachedNetworkImage> createState() => _ProjectCachedNetworkImageState();
+}
+
+class _ProjectCachedNetworkImageState extends State<_ProjectCachedNetworkImage> {
+  Uint8List? _cachedBytes;
+  bool _checkedCache = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadCachedImage();
+  }
+
+  @override
+  void didUpdateWidget(covariant _ProjectCachedNetworkImage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.imageUrl != widget.imageUrl) {
+      _cachedBytes = null;
+      _checkedCache = false;
+      _loadCachedImage();
+    }
+  }
+
+  Future<void> _loadCachedImage() async {
+    final bytes = await _ProjectImagePrefsCache.cachedBytes(widget.imageUrl);
+    if (!mounted || widget.imageUrl.isEmpty) return;
+    setState(() {
+      _cachedBytes = bytes;
+      _checkedCache = true;
+    });
+
+    if (bytes == null) {
+      unawaited(_cacheVisibleImage(widget.imageUrl));
+    }
+  }
+
+  Future<void> _cacheVisibleImage(String url) async {
+    final bytes = await _ProjectImagePrefsCache.saveFromNetwork(url);
+    if (!mounted || widget.imageUrl != url || bytes == null) return;
+    setState(() => _cachedBytes = bytes);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_cachedBytes != null) {
+      return Image.memory(
+        _cachedBytes!,
+        width: double.infinity,
+        height: double.infinity,
+        fit: BoxFit.cover,
+        filterQuality: FilterQuality.medium,
+        errorBuilder: (_, __, ___) => _imageFallback(),
+      );
+    }
+
+    return Image.network(
+      widget.imageUrl,
+      width: double.infinity,
+      height: double.infinity,
+      fit: BoxFit.cover,
+      filterQuality: FilterQuality.medium,
+      errorBuilder: (_, __, ___) => _imageFallback(),
+      loadingBuilder: (context, child, progress) {
+        if (progress == null) return child;
+        return _imageLoading();
+      },
+    );
+  }
+
+  Widget _imageFallback() {
+    return Container(
+      color: widget.isDark ? const Color(0xFF191919) : const Color(0xFFF2E8D5),
+      child: const Icon(Icons.broken_image_rounded, color: Color(0xFFD4A017), size: 42),
+    );
+  }
+
+  Widget _imageLoading() {
+    return AnimatedOpacity(
+      duration: const Duration(milliseconds: 180),
+      opacity: _checkedCache ? 1 : 0,
+      child: Container(
+        color: widget.isDark ? const Color(0xFF191919) : const Color(0xFFF2E8D5),
+        child: const Center(
+          child: SizedBox(
+            width: 24,
+            height: 24,
+            child: CircularProgressIndicator(strokeWidth: 2.4, color: Color(0xFFD4A017)),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ProjectShowcaseSlide extends StatelessWidget {
+  final _HomeProjectItem project;
+  final int imageIndex;
+  final bool isDark;
+  final Color cardBg;
+  final Color textPrimary;
+  final Color textSub;
+
+  const _ProjectShowcaseSlide({
+    super.key,
+    required this.project,
+    required this.imageIndex,
+    required this.isDark,
+    required this.cardBg,
+    required this.textPrimary,
+    required this.textSub,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final safeImageIndex = imageIndex.clamp(0, project.images.length - 1).toInt();
+    final imageUrl = project.images[safeImageIndex];
+
+    return Container(
+      decoration: BoxDecoration(
+        color: cardBg.withOpacity(isDark ? 0.72 : 0.96),
+        borderRadius: BorderRadius.circular(28),
+        border: Border.all(color: const Color(0xFFD4A017).withOpacity(isDark ? 0.18 : 0.12)),
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(28),
+        child: Stack(
+          children: [
+            Positioned.fill(
+              child: AnimatedSwitcher(
+                duration: const Duration(milliseconds: 820),
+                switchInCurve: Curves.easeOutCubic,
+                switchOutCurve: Curves.easeInCubic,
+                child: TweenAnimationBuilder<double>(
+                  key: ValueKey(imageUrl),
+                  tween: Tween(begin: 1.2, end: 1.0),
+                  duration: const Duration(milliseconds: 3200),
+                  curve: Curves.easeOutCubic,
+                  builder: (context, scale, child) {
+                    return Transform.scale(scale: scale, child: child);
+                  },
+                  child: _ProjectCachedNetworkImage(
+                    imageUrl: imageUrl,
+                    isDark: isDark,
+                  ),
+                ),
+              ),
+            ),
+            Positioned.fill(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [
+                      Colors.black.withOpacity(0.05),
+                      Colors.black.withOpacity(0.10),
+                      Colors.black.withOpacity(0.78),
+                    ],
+                    stops: const [0.0, 0.42, 1.0],
+                  ),
+                ),
+              ),
+            ),
+            Positioned(
+              top: 14,
+              right: 14,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                decoration: BoxDecoration(
+                  color: Colors.black.withOpacity(0.48),
+                  borderRadius: BorderRadius.circular(999),
+                  border: Border.all(color: Colors.white.withOpacity(0.16)),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.photo_library_rounded, color: Color(0xFFD4A017), size: 14),
+                    const SizedBox(width: 5),
+                    Text(
+                      '${safeImageIndex + 1}/${project.images.length}',
+                      style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w900),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            Positioned(
+              left: 16,
+              right: 16,
+              bottom: 16,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    project.title.isEmpty ? 'مشروع هندسي' : project.title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 20,
+                      fontWeight: FontWeight.w900,
+                      height: 1.25,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    project.description.isEmpty
+                        ? 'تفاصيل المشروع وصوره متاحة ضمن المعرض.'
+                        : project.description,
+                    maxLines: 3,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.82),
+                      fontSize: 13,
+                      height: 1.65,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+
 // ─────────────────────────────────────────────
 //  HOME PAGE
 // ─────────────────────────────────────────────
@@ -2156,11 +3017,32 @@ Widget _buildOfficeLocationCard({required bool isDark}) {
                       fit: StackFit.expand,
                       children: [
                         Image.asset(
-                          'assets/images/mapview.PNG',
-                          width: double.infinity,
-                          height: double.infinity,
-                          fit: BoxFit.cover,
-                        ),
+  'assets/images/mapview.PNG',
+  width: double.infinity,
+  height: double.infinity,
+  fit: BoxFit.cover,
+  errorBuilder: (context, error, stackTrace) {
+    return Container(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topRight,
+          end: Alignment.bottomLeft,
+          colors: [
+            gold.withOpacity(isDark ? 0.22 : 0.16),
+            const Color(0xFF1E88E5).withOpacity(isDark ? 0.16 : 0.10),
+          ],
+        ),
+      ),
+      child: const Center(
+        child: Icon(
+          Icons.map_rounded,
+          color: gold,
+          size: 54,
+        ),
+      ),
+    );
+  },
+),
                         DecoratedBox(
                           decoration: BoxDecoration(
                             gradient: LinearGradient(
@@ -3510,6 +4392,10 @@ _QuickCard(
                   ),
                 ),
                 
+                const SizedBox(height: 18),
+
+                _ProjectsShowcaseCard(isDark: isDark),
+
                 const SizedBox(height: 18),
 
                 // ── كرت الموقع الرسمي ──

@@ -56,6 +56,7 @@ flutter:
   assets:
     - assets/images/
 
+
   fonts:
     - family: Cairo
       fonts:
