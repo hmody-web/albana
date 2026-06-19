@@ -461,16 +461,29 @@ child: Scaffold(
                   });
                 },
                 children: [
-                  PublicationsPage(isDark: isDark),
-                  FilesPage(isDark: isDark),
-                  HomePage(
-                    key: _homePageKey,
-                    isDark: isDark,
-                    isActive: _currentIndex == 2,
-                    onOpenSection: _onTabTapped,
+                  _KeepAlivePage(
+                    child: PublicationsPage(isDark: isDark),
                   ),
-                  CoursesPage(isDark: isDark),
-                  SettingsPage(isDark: isDark, onThemeToggle: widget.onThemeToggle),
+                  _KeepAlivePage(
+                    child: FilesPage(isDark: isDark),
+                  ),
+                  _KeepAlivePage(
+                    child: HomePage(
+                      key: _homePageKey,
+                      isDark: isDark,
+                      isActive: _currentIndex == 2,
+                      onOpenSection: _onTabTapped,
+                    ),
+                  ),
+                  _KeepAlivePage(
+                    child: CoursesPage(isDark: isDark),
+                  ),
+                  _KeepAlivePage(
+                    child: SettingsPage(
+                      isDark: isDark,
+                      onThemeToggle: widget.onThemeToggle,
+                    ),
+                  ),
                 ],
               ),
             ),
@@ -480,20 +493,31 @@ Positioned(
   left: 0,
   right: 0,
   bottom: 0,
-  height: 64 + 30 + MediaQuery.of(context).padding.bottom,
+  height: 64 + 12 + MediaQuery.of(context).padding.bottom,
   child: IgnorePointer(
     child: Container(
       decoration: BoxDecoration(
         gradient: LinearGradient(
           begin: Alignment.bottomCenter,
           end: Alignment.topCenter,
-          colors: [
-            bg,
-            bg.withOpacity(0.7),
-            bg.withOpacity(0.45),
-            bg.withOpacity(0.0),
-          ],
-          stops: const [0.0, 0.38, 0.72, 1.0],
+          colors: isDark
+              ? [
+                  bg,
+                  bg.withOpacity(0.98),
+                  bg.withOpacity(0.82),
+                  bg.withOpacity(0.35),
+                  bg.withOpacity(0.0),
+                ]
+              : [
+                  bg,
+                  bg.withOpacity(0.98),
+                  bg.withOpacity(0.75),
+                  bg.withOpacity(0.25),
+                  bg.withOpacity(0.0),
+                ],
+          stops: isDark
+              ? const [0.0, 0.25, 0.50, 0.75, 1.0]
+              : const [0.0, 0.25, 0.50, 0.75, 1.0],
         ),
       ),
     ),
@@ -540,6 +564,27 @@ child: AnimatedBuilder(
       ),
       ),
     );
+  }
+}
+
+class _KeepAlivePage extends StatefulWidget {
+  final Widget child;
+
+  const _KeepAlivePage({required this.child});
+
+  @override
+  State<_KeepAlivePage> createState() => _KeepAlivePageState();
+}
+
+class _KeepAlivePageState extends State<_KeepAlivePage>
+    with AutomaticKeepAliveClientMixin {
+  @override
+  bool get wantKeepAlive => true;
+
+  @override
+  Widget build(BuildContext context) {
+    super.build(context);
+    return widget.child;
   }
 }
 
@@ -1789,9 +1834,11 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage>
-    with SingleTickerProviderStateMixin {
+    with SingleTickerProviderStateMixin, AutomaticKeepAliveClientMixin {
       final ScrollController _homeScrollController = ScrollController();
 final GlobalKey _contactCardKey = GlobalKey();
+static const String _officeMapOpenUrl =
+    'https://maps.app.goo.gl/UiQdS49bPEEjrfkQ8';
   static const String _latestPostsApi =
       'https://majidalbana.com/admin/posts/load_posts.php';
   static const String _latestFilesApi =
@@ -1937,6 +1984,302 @@ Future<void> _launchContactUri(Uri uri) async {
   } catch (_) {
     _showContactLaunchError();
   }
+}
+
+
+
+Widget _buildOfficeLocationCard({required bool isDark}) {
+  final textPrimary = isDark ? Colors.white : const Color(0xFF1A1000);
+  final textSub = isDark ? Colors.white70 : Colors.black54;
+
+  return Container(
+    width: double.infinity,
+    decoration: BoxDecoration(
+      borderRadius: BorderRadius.circular(34),
+      gradient: LinearGradient(
+        colors: isDark
+            ? [
+                const Color(0xFF151515),
+                const Color(0xFF0E0B06),
+                const Color(0xFF070707),
+              ]
+            : [
+                Colors.white,
+                const Color(0xFFFFF8E7),
+                const Color(0xFFFFFCF5),
+              ],
+        begin: Alignment.topRight,
+        end: Alignment.bottomLeft,
+      ),
+      border: Border.all(color: gold.withOpacity(isDark ? 0.22 : 0.18)),
+      boxShadow: [
+        BoxShadow(
+          color: gold.withOpacity(isDark ? 0.10 : 0.09),
+          blurRadius: 32,
+          offset: const Offset(0, 16),
+        ),
+        BoxShadow(
+          color: Colors.black.withOpacity(isDark ? 0.30 : 0.05),
+          blurRadius: 18,
+          offset: const Offset(0, 10),
+        ),
+      ],
+    ),
+    child: ClipRRect(
+      borderRadius: BorderRadius.circular(34),
+      child: Stack(
+        children: [
+          Positioned(
+            top: -60,
+            right: -45,
+            child: Container(
+              width: 150,
+              height: 150,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: gold.withOpacity(isDark ? 0.12 : 0.16),
+              ),
+            ),
+          ),
+          Positioned(
+            bottom: -55,
+            left: -45,
+            child: Container(
+              width: 145,
+              height: 145,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: const Color(0xFF1E88E5).withOpacity(isDark ? 0.08 : 0.10),
+              ),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.all(18),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Container(
+                      width: 52,
+                      height: 52,
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          colors: [
+                            gold.withOpacity(0.28),
+                            gold.withOpacity(0.10),
+                          ],
+                          begin: Alignment.topRight,
+                          end: Alignment.bottomLeft,
+                        ),
+                        borderRadius: BorderRadius.circular(18),
+                        border: Border.all(color: gold.withOpacity(0.26)),
+                      ),
+                      child: const Icon(
+                        Icons.location_on_rounded,
+                        color: gold,
+                        size: 28,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'موقعنا',
+                            style: TextStyle(
+                              color: textPrimary,
+                              fontSize: 20,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            'مكتب لمسات الهندسي',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: textSub,
+                              fontSize: 13,
+                              height: 1.4,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF1E88E5).withOpacity(isDark ? 0.14 : 0.10),
+                        borderRadius: BorderRadius.circular(999),
+                        border: Border.all(
+                          color: const Color(0xFF1E88E5).withOpacity(0.28),
+                        ),
+                      ),
+                      child: const Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.map_rounded, color: Color(0xFF1E88E5), size: 15),
+                          SizedBox(width: 5),
+                          Text(
+                            'خريطة',
+                            style: TextStyle(
+                              color: Color(0xFF1E88E5),
+                              fontSize: 10.5,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                Container(
+                  height: 220,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(26),
+                    border: Border.all(color: gold.withOpacity(isDark ? 0.20 : 0.16)),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(isDark ? 0.24 : 0.08),
+                        blurRadius: 22,
+                        offset: const Offset(0, 12),
+                      ),
+                    ],
+                  ),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(25),
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        Image.asset(
+                          'assets/images/mapview.PNG',
+                          width: double.infinity,
+                          height: double.infinity,
+                          fit: BoxFit.cover,
+                        ),
+                        DecoratedBox(
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(
+                              colors: [
+                                Colors.black.withOpacity(isDark ? 0.36 : 0.18),
+                                Colors.transparent,
+                                Colors.black.withOpacity(isDark ? 0.18 : 0.08),
+                              ],
+                              begin: Alignment.topCenter,
+                              end: Alignment.bottomCenter,
+                            ),
+                          ),
+                        ),
+                        Positioned(
+                          top: 10,
+                          right: 10,
+                          child: IgnorePointer(
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+                              decoration: BoxDecoration(
+                                color: isDark
+                                    ? Colors.black.withOpacity(0.56)
+                                    : Colors.white.withOpacity(0.88),
+                                borderRadius: BorderRadius.circular(999),
+                                border: Border.all(
+                                  color: Colors.white.withOpacity(isDark ? 0.12 : 0.62),
+                                ),
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  const Icon(Icons.location_on_rounded, color: gold, size: 15),
+                                  const SizedBox(width: 5),
+                                  Text(
+                                    'موقع المكتب',
+                                    style: TextStyle(
+                                      color: textPrimary,
+                                      fontSize: 10.5,
+                                      fontWeight: FontWeight.w800,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 14),
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        'اضغط على الزر للانتقال مباشرة إلى الموقع داخل تطبيق الخرائط.',
+                        style: TextStyle(
+                          color: textSub,
+                          fontSize: 12.3,
+                          height: 1.6,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Material(
+                      color: Colors.transparent,
+                      child: InkWell(
+                        onTap: () => unawaited(
+                          _launchContactUri(Uri.parse(_officeMapOpenUrl)),
+                        ),
+                        borderRadius: BorderRadius.circular(18),
+                        child: Ink(
+                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                          decoration: BoxDecoration(
+                            gradient: const LinearGradient(
+                              colors: [
+                                Color(0xFFD4A017),
+                                Color(0xFFE8B84B),
+                              ],
+                              begin: Alignment.topRight,
+                              end: Alignment.bottomLeft,
+                            ),
+                            borderRadius: BorderRadius.circular(18),
+                            boxShadow: [
+                              BoxShadow(
+                                color: gold.withOpacity(isDark ? 0.22 : 0.24),
+                                blurRadius: 18,
+                                offset: const Offset(0, 8),
+                              ),
+                            ],
+                          ),
+                          child: const Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.navigation_rounded, color: ui.Color.fromARGB(255, 238, 235, 231), size: 18),
+                              SizedBox(width: 7),
+                              Text(
+                                'انتقال إلى الموقع',
+                                style: TextStyle(
+                                  color: ui.Color.fromARGB(255, 250, 249, 247),
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w900,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
 }
 
 Widget _buildContactInfoPill({
@@ -2716,7 +3059,9 @@ void initState() {
     if (oldWidget.isActive == widget.isActive) return;
 
     if (widget.isActive) {
-      _loadLatestHomeUpdates(silent: true);
+      if (_latestUpdates.isEmpty) {
+        _loadLatestHomeUpdates(silent: true);
+      }
       _startLatestUpdatesTimer();
     } else {
       _stopLatestUpdatesTimer();
@@ -2744,11 +3089,15 @@ void dispose() {
   super.dispose();
 }
 
+  @override
+  bool get wantKeepAlive => true;
+
   static const gold = Color(0xFFD4A017);
   static const goldLight = Color(0xFFE8B84B);
 
   @override
   Widget build(BuildContext context) {
+    super.build(context);
     final isDark = widget.isDark;
     final textPrimary = isDark ? Colors.white : const Color(0xFF1A1000);
     final textSub = isDark ? Colors.white70 : Colors.black54;
@@ -2805,20 +3154,35 @@ Row(
       color: gold,
       colorBlendMode: BlendMode.srcIn,
     ),
-    Container(
-      width: 1,
-      height: 24,
-      margin: const EdgeInsets.symmetric(horizontal: 10),
-      color: Colors.white.withOpacity(0.25),
+Container(
+  width: 1,
+  height: 28,
+  margin: const EdgeInsets.symmetric(horizontal: 12),
+  decoration: BoxDecoration(
+    borderRadius: BorderRadius.circular(99),
+    gradient: LinearGradient(
+      begin: Alignment.topCenter,
+      end: Alignment.bottomCenter,
+      colors: [
+        gold.withOpacity(0.0),
+        gold.withOpacity(isDark ? 0.55 : 0.45),
+        gold.withOpacity(0.0),
+      ],
+      stops: const [0.0, 0.5, 1.0],
     ),
-    Text(
-      'الدكتور ماجد البنا',
-      style: const TextStyle(
-        color: gold,
-        fontSize: 22,
-        fontWeight: FontWeight.w800,
-      ),
+  ),
+),
+Transform.translate(
+  offset: const Offset(0, 2),
+  child: const Text(
+    'الدكتور ماجد البنا',
+    style: TextStyle(
+      color: gold,
+      fontSize: 22,
+      fontWeight: FontWeight.w800,
     ),
+  ),
+),
   ],
 ),
   _UserAvatarButton(isDark: isDark),
@@ -3693,6 +4057,10 @@ _QuickCard(
                     ),
                   ),
                 ),
+
+                const SizedBox(height: 20),
+
+                _buildOfficeLocationCard(isDark: isDark),
 
                 const SizedBox(height: 20),
 
