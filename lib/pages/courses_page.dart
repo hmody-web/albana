@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:url_launcher/url_launcher.dart';
-import 'package:map_launcher/map_launcher.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:async';
@@ -535,555 +534,40 @@ int _parseLectureNumber(String value) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Smart Maps Launcher
-// يحوّل روابط Google Maps، حتى المختصرة maps.app.goo.gl غالباً، إلى إحداثيات
-// ثم يعرض فقط تطبيقات الخرائط المثبتة مثل Google Maps / Waze / Apple Maps.
+// Plain URL Launcher
 // ─────────────────────────────────────────────────────────────────────────────
-class _MapTarget {
-  final double latitude;
-  final double longitude;
-  final String title;
-  final Uri originalUri;
-
-  const _MapTarget({
-    required this.latitude,
-    required this.longitude,
-    required this.title,
-    required this.originalUri,
-  });
-}
-
-Uri? _safeMapUri(String rawUrl) {
+Uri? _safeUrl(String rawUrl) {
   final trimmed = rawUrl.trim();
   if (trimmed.isEmpty) return null;
+
   final withScheme = trimmed.startsWith('http://') || trimmed.startsWith('https://')
       ? trimmed
       : 'https://$trimmed';
+
   return Uri.tryParse(withScheme);
 }
 
-Future<Uri> _resolveRedirectedMapUri(Uri uri) async {
-  final host = uri.host.toLowerCase();
+Future<void> _openPlainUrl(BuildContext context, String rawUrl) async {
+  final uri = _safeUrl(rawUrl);
 
-  final shouldResolve = host.contains('goo.gl') ||
-      host == 'maps.app.goo.gl' ||
-      host == 'maps.google.com' ||
-      host == 'www.google.com' ||
-      host == 'google.com';
-
-  if (!shouldResolve) return uri;
-
-  final client = http.Client();
-
-  try {
-    // المحاولة الأولى: HEAD أسرع، أحياناً يرجع الرابط النهائي مباشرة
-    final headRequest = http.Request('HEAD', uri)
-      ..followRedirects = true
-      ..maxRedirects = 15
-      ..headers.addAll(_googleMapsHeaders());
-
-    final headResponse = await client.send(headRequest).timeout(
-          const Duration(seconds: 8),
-        );
-
-    await headResponse.stream.drain<void>();
-
-    final headUrl = headResponse.request?.url;
-    if (headUrl != null && headUrl.toString() != uri.toString()) {
-      return headUrl;
-    }
-  } catch (_) {
-    // نكمل للمحاولة الثانية، لأن روابط Google تحب الدراما
-  }
-
-  try {
-    // المحاولة الثانية: GET مع قراءة الصفحة
-    final getResponse = await client
-        .get(
-          uri,
-          headers: _googleMapsHeaders(),
-        )
-        .timeout(const Duration(seconds: 10));
-
-    final finalUrl = getResponse.request?.url;
-    if (finalUrl != null && finalUrl.toString() != uri.toString()) {
-      return finalUrl;
-    }
-
-    // أحياناً Google لا يعطي redirect مباشر، بل يضع الرابط الحقيقي داخل الصفحة
-    final body = getResponse.body;
-
-    final extractedUrl = _extractGoogleMapsUrlFromHtml(body);
-    if (extractedUrl != null) {
-      return extractedUrl;
-    }
-
-    return uri;
-  } catch (_) {
-    return uri;
-  } finally {
-    client.close();
-  }
-}
-Map<String, String> _googleMapsHeaders() {
-  return {
-    'User-Agent':
-        'Mozilla/5.0 (Linux; Android 13; Mobile) AppleWebKit/537.36 '
-        '(KHTML, like Gecko) Chrome/125.0 Mobile Safari/537.36',
-    'Accept':
-        'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-    'Accept-Language': 'ar,en-US;q=0.9,en;q=0.8',
-  };
-}
-
-Uri? _extractGoogleMapsUrlFromHtml(String html) {
-  if (html.isEmpty) return null;
-
-  String decoded = html;
-
-  try {
-    decoded = Uri.decodeFull(decoded);
-  } catch (_) {}
-
-  final patterns = <RegExp>[
-    // رابط Google Maps واضح داخل الصفحة
-    RegExp(
-      r'https:\/\/www\.google\.com\/maps\/[^"<>\\]+',
-      caseSensitive: false,
-    ),
-
-    RegExp(
-      r'https:\/\/maps\.google\.com\/[^"<>\\]+',
-      caseSensitive: false,
-    ),
-
-    // أحياناً يكون الرابط داخل href="/maps/..."
-    RegExp(
-      r'href="(\/maps\/[^"]+)"',
-      caseSensitive: false,
-    ),
-
-    // أحياناً تكون الإحداثيات فقط داخل الصفحة
-    RegExp(
-      r'@(-?\d+(?:\.\d+)?),\s*(-?\d+(?:\.\d+)?)',
-      caseSensitive: false,
-    ),
-
-    RegExp(
-      r'(-?\d{1,2}\.\d{5,}),\s*(-?\d{1,3}\.\d{5,})',
-      caseSensitive: false,
-    ),
-  ];
-
-  for (final pattern in patterns) {
-    final match = pattern.firstMatch(decoded);
-    if (match == null) continue;
-
-    final value = match.group(0);
-    if (value == null || value.trim().isEmpty) continue;
-
-    // href="/maps/..."
-    if (match.groupCount >= 1 && (match.group(1)?.startsWith('/maps/') ?? false)) {
-      return Uri.tryParse('https://www.google.com${match.group(1)}');
-    }
-
-    // إذا وجدنا رابط كامل
-    if (value.startsWith('https://')) {
-      final cleaned = value
-          .replaceAll(r'\u003d', '=')
-          .replaceAll(r'\u0026', '&')
-          .replaceAll('&amp;', '&');
-
-      return Uri.tryParse(cleaned);
-    }
-
-    // إذا وجدنا إحداثيات فقط، نبني رابط Google Maps منها
-    if (match.groupCount >= 2) {
-      final lat = match.group(1);
-      final lng = match.group(2);
-
-      if (lat != null && lng != null) {
-        return Uri.tryParse('https://www.google.com/maps?q=$lat,$lng');
-      }
-    }
-  }
-
-  return null;
-}
-double? _safeDouble(String? value) {
-  if (value == null) return null;
-  return double.tryParse(value.trim());
-}
-
-_MapTarget? _targetFromText(String text, Uri originalUri, String title) {
-  final decoded = (() {
-    try {
-      return Uri.decodeFull(text);
-    } catch (_) {
-      return text;
-    }
-  })();
-
-  final patterns = <RegExp>[
-    RegExp(r'@(-?\d+(?:\.\d+)?),\s*(-?\d+(?:\.\d+)?)'),
-    RegExp(r'(?:[?&]|^)(?:q|query|ll|daddr|destination|center)=(-?\d+(?:\.\d+)?),\s*(-?\d+(?:\.\d+)?)'),
-    RegExp(r'!3d(-?\d+(?:\.\d+)?)!4d(-?\d+(?:\.\d+)?)'),
-  ];
-
-  for (final pattern in patterns) {
-    final match = pattern.firstMatch(decoded);
-    if (match == null) continue;
-    final lat = _safeDouble(match.group(1));
-    final lng = _safeDouble(match.group(2));
-    if (lat != null && lng != null && lat.abs() <= 90 && lng.abs() <= 180) {
-      return _MapTarget(
-        latitude: lat,
-        longitude: lng,
-        title: title,
-        originalUri: originalUri,
-      );
-    }
-  }
-
-  // بعض روابط Google Place تأتي بالترتيب: !2d longitude ثم !3d latitude
-  final lngLatMatch = RegExp(r'!2d(-?\d+(?:\.\d+)?)!3d(-?\d+(?:\.\d+)?)')
-      .firstMatch(decoded);
-  if (lngLatMatch != null) {
-    final lng = _safeDouble(lngLatMatch.group(1));
-    final lat = _safeDouble(lngLatMatch.group(2));
-    if (lat != null && lng != null && lat.abs() <= 90 && lng.abs() <= 180) {
-      return _MapTarget(
-        latitude: lat,
-        longitude: lng,
-        title: title,
-        originalUri: originalUri,
-      );
-    }
-  }
-
-  return null;
-}
-
-Future<_MapTarget?> _resolveMapTarget(String rawUrl, String title) async {
-  final originalUri = _safeMapUri(rawUrl);
-  if (originalUri == null) return null;
-
-  // 1) إذا الرابط نفسه يحتوي إحداثيات
-  final direct = _targetFromText(originalUri.toString(), originalUri, title);
-  if (direct != null) return direct;
-
-  // 2) فك رابط Google المختصر أو الطويل
-  final resolvedUri = await _resolveRedirectedMapUri(originalUri);
-
-  // 3) محاولة استخراج الإحداثيات من الرابط النهائي
-  final resolved = _targetFromText(resolvedUri.toString(), originalUri, title);
-  if (resolved != null) return resolved;
-
-  // 4) محاولة أخيرة: بعض روابط Google تحتوي query مشفر
-  final decodedResolved = Uri.decodeComponent(resolvedUri.toString());
-  final decoded = _targetFromText(decodedResolved, originalUri, title);
-  if (decoded != null) return decoded;
-
-  return null;
-}
-
-Future<void> _openOriginalMapUrl(Uri uri) async {
-  if (await canLaunchUrl(uri)) {
-    await launchUrl(uri, mode: LaunchMode.externalApplication);
-  }
-}
-
-Future<void> _openSmartMapPicker({
-  required BuildContext context,
-  required String rawUrl,
-  required bool isDark,
-  required String title,
-}) async {
-  final originalUri = _safeMapUri(rawUrl);
-  if (originalUri == null) {
+  if (uri == null) {
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('رابط الموقع غير موجود')),
     );
     return;
   }
 
-  final messenger = ScaffoldMessenger.of(context);
-  messenger.hideCurrentSnackBar();
-  messenger.showSnackBar(
-    const SnackBar(
-      duration: Duration(seconds: 1),
-      content: Text('جارٍ تجهيز الموقع بدقة...'),
-    ),
-  );
-
-  final target = await _resolveMapTarget(rawUrl, title);
-  if (!context.mounted) return;
-  messenger.hideCurrentSnackBar();
-
-  final List<AvailableMap> availableMaps;
   try {
-    availableMaps = await MapLauncher.installedMaps;
+    final opened = await launchUrl(uri, mode: LaunchMode.platformDefault);
+    if (!opened && context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('تعذر فتح الرابط')),
+      );
+    }
   } catch (_) {
-    await _openOriginalMapUrl(originalUri);
-    return;
-  }
-  if (!context.mounted) return;
-
-  if (target == null) {
-    await showModalBottomSheet(
-      context: context,
-      backgroundColor: Colors.transparent,
-      builder: (_) => _MapFallbackSheet(
-        isDark: isDark,
-        uri: originalUri,
-      ),
-    );
-    return;
-  }
-
-  if (availableMaps.isEmpty) {
-    await _openOriginalMapUrl(originalUri);
-    return;
-  }
-
-  await showModalBottomSheet(
-    context: context,
-    backgroundColor: Colors.transparent,
-    builder: (_) => _MapPickerSheet(
-      isDark: isDark,
-      maps: availableMaps,
-      target: target,
-    ),
-  );
-}
-
-class _MapPickerSheet extends StatelessWidget {
-  final bool isDark;
-  final List<AvailableMap> maps;
-  final _MapTarget target;
-
-  const _MapPickerSheet({
-    required this.isDark,
-    required this.maps,
-    required this.target,
-  });
-
-  static const gold = Color(0xFFD4A017);
-
-  @override
-  Widget build(BuildContext context) {
-    final bg = isDark ? const Color(0xFF171717) : Colors.white;
-    final textPrimary = isDark ? Colors.white : const Color(0xFF1A1000);
-    final textSub = isDark ? Colors.white60 : Colors.black54;
-
-    return SafeArea(
-      child: Container(
-        margin: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-          color: bg,
-          borderRadius: BorderRadius.circular(24),
-          border: Border.all(color: gold.withOpacity(0.22)),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(isDark ? 0.5 : 0.15),
-              blurRadius: 26,
-            ),
-          ],
-        ),
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Center(
-                child: Container(
-                  width: 44,
-                  height: 4,
-                  decoration: BoxDecoration(
-                    color: gold.withOpacity(0.35),
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 16),
-              Row(
-                children: [
-                  Container(
-                    width: 38,
-                    height: 38,
-                    decoration: const BoxDecoration(
-                      shape: BoxShape.circle,
-                      gradient: LinearGradient(
-                        colors: [Color(0xFFFFD86B), Color(0xFFD4A017)],
-                      ),
-                    ),
-                    child: const Icon(Icons.map_rounded,
-                        color: Colors.black, size: 20),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'اختر تطبيق الخرائط',
-                          style: TextStyle(
-                            color: textPrimary,
-                            fontSize: 16,
-                            fontWeight: FontWeight.w900,
-                          ),
-                        ),
-                        const SizedBox(height: 2),
-                        Text(
-                          'سيتم فتح نفس الإحداثيات بدقة داخل التطبيق المختار',
-                          style: TextStyle(color: textSub, fontSize: 11.5),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 14),
-              ...maps.map((map) {
-                return Container(
-                  margin: const EdgeInsets.only(bottom: 8),
-                  decoration: BoxDecoration(
-                    color: isDark
-                        ? Colors.white.withOpacity(0.06)
-                        : const Color(0xFFFFF8E8),
-                    borderRadius: BorderRadius.circular(16),
-                    border: Border.all(color: gold.withOpacity(0.14)),
-                  ),
-                  child: ListTile(
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(16),
-                    ),
-                    leading: Container(
-                      width: 38,
-                      height: 38,
-                      decoration: BoxDecoration(
-                        color: gold.withOpacity(0.14),
-                        shape: BoxShape.circle,
-                      ),
-                      child: const Icon(Icons.navigation_rounded,
-                          color: gold, size: 20),
-                    ),
-                    title: Text(
-                      map.mapName,
-                      style: TextStyle(
-                        color: textPrimary,
-                        fontWeight: FontWeight.w800,
-                        fontSize: 13.5,
-                      ),
-                    ),
-                    subtitle: Text(
-                      '${target.latitude.toStringAsFixed(6)}, ${target.longitude.toStringAsFixed(6)}',
-                      textDirection: TextDirection.ltr,
-                      style: TextStyle(color: textSub, fontSize: 11),
-                    ),
-                    trailing: const Icon(Icons.open_in_new_rounded,
-                        color: gold, size: 18),
-                    onTap: () async {
-                      Navigator.pop(context);
-                      await map.showMarker(
-                        coords: Coords(target.latitude, target.longitude),
-                        title: target.title,
-                      );
-                    },
-                  ),
-                );
-              }),
-              const SizedBox(height: 4),
-              Center(
-                child: TextButton.icon(
-                  onPressed: () async {
-                    Navigator.pop(context);
-                    await _openOriginalMapUrl(target.originalUri);
-                  },
-                  icon: const Icon(Icons.link_rounded, size: 16),
-                  label: const Text('فتح رابط Google الأصلي'),
-                  style: TextButton.styleFrom(foregroundColor: gold),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _MapFallbackSheet extends StatelessWidget {
-  final bool isDark;
-  final Uri uri;
-
-  const _MapFallbackSheet({
-    required this.isDark,
-    required this.uri,
-  });
-
-  static const gold = Color(0xFFD4A017);
-
-  @override
-  Widget build(BuildContext context) {
-    final bg = isDark ? const Color(0xFF171717) : Colors.white;
-    final textPrimary = isDark ? Colors.white : const Color(0xFF1A1000);
-    final textSub = isDark ? Colors.white60 : Colors.black54;
-
-    return SafeArea(
-      child: Container(
-        margin: const EdgeInsets.all(12),
-        padding: const EdgeInsets.all(18),
-        decoration: BoxDecoration(
-          color: bg,
-          borderRadius: BorderRadius.circular(24),
-          border: Border.all(color: gold.withOpacity(0.22)),
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(Icons.location_searching_rounded,
-                color: gold, size: 36),
-            const SizedBox(height: 10),
-            Text(
-              'تعذّر استخراج الإحداثيات من الرابط',
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                color: textPrimary,
-                fontSize: 15,
-                fontWeight: FontWeight.w900,
-              ),
-            ),
-            const SizedBox(height: 6),
-            Text(
-              'سيتم فتح رابط Google Maps الأصلي. بعض روابط Google لا تعطي الإحداثيات للتطبيق مباشرة، لكن الرابط نفسه سيُفتح بشكل صحيح.',
-              textAlign: TextAlign.center,
-              style: TextStyle(color: textSub, fontSize: 12, height: 1.5),
-            ),
-            const SizedBox(height: 14),
-            SizedBox(
-              width: double.infinity,
-              height: 44,
-              child: ElevatedButton.icon(
-                onPressed: () async {
-                  Navigator.pop(context);
-                  await _openOriginalMapUrl(uri);
-                },
-                icon: const Icon(Icons.open_in_new_rounded, size: 17),
-                label: const Text('فتح الرابط الأصلي'),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: gold,
-                  foregroundColor: Colors.black,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(14),
-                  ),
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('تعذر فتح الرابط')),
     );
   }
 }
@@ -1363,6 +847,15 @@ class _CoursesTab extends StatelessWidget {
           onDelete: onDeleteSchedule,
           onEdit: onEditSchedule,
           onReorder: onReorderSchedule,
+        ),
+
+        const SizedBox(height: 20),
+
+        _CertificateCard(
+          isDark: isDark,
+          textPrimary: textPrimary,
+          textSub: textSub,
+          cardBg: cardBg,
         ),
       ],
     );
@@ -1646,14 +1139,7 @@ class _AdminAddBoxState extends State<_AdminAddBox>
                       ),
                       const SizedBox(width: 8),
                       GestureDetector(
-                        onTap: () => _openSmartMapPicker(
-                          context: context,
-                          rawUrl: _urlCtrl.text.trim(),
-                          isDark: isDark,
-                          title: _locCtrl.text.trim().isEmpty
-                              ? 'موقع المحاضرة'
-                              : _locCtrl.text.trim(),
-                        ),
+                        onTap: () => _openPlainUrl(context, _urlCtrl.text.trim()),
                         child: Container(
                           width: 44,
                           height: 44,
@@ -1840,45 +1326,45 @@ class _ScheduleTable extends StatelessWidget {
   static const gold = Color(0xFFD4A017);
 
   void _openLocation(BuildContext context, _ScheduleItem item) {
-    _openSmartMapPicker(
-      context: context,
-      rawUrl: item.urlLocation,
-      isDark: isDark,
-      title: item.location.isEmpty ? 'موقع المحاضرة' : item.location,
-    );
+    _openPlainUrl(context, item.urlLocation);
   }
-
-  void _showEditDialog(BuildContext context, _ScheduleItem item, int index) {
+  Future<void> _showEditDialog(
+    BuildContext context,
+    _ScheduleItem item,
+    int index,
+  ) async {
     final numCtrl = TextEditingController(text: item.lectureNumber);
     final dayCtrl = TextEditingController(text: item.day);
     final timeCtrl = TextEditingController(text: item.time);
     final locCtrl = TextEditingController(text: item.location);
     final urlCtrl = TextEditingController(text: item.urlLocation);
 
-    showModalBottomSheet(
+    await showModalBottomSheet(
       context: context,
       isScrollControlled: true,
+      useSafeArea: true,
       backgroundColor: Colors.transparent,
-      builder: (_) => _EditBottomSheet(
-        isDark: isDark,
-        item: item,
-        numCtrl: numCtrl,
-        dayCtrl: dayCtrl,
-        timeCtrl: timeCtrl,
-        locCtrl: locCtrl,
-        urlCtrl: urlCtrl,
-        onSave: (newItem) async {
-          await onEdit(item, newItem);
-        },
-        onDelete: () async {
-          if (item.id.isNotEmpty) {
-            await onDelete(item.id);
-          }
-        },
-      ),
+      builder: (_) {
+        return _EditBottomSheet(
+          isDark: isDark,
+          item: item,
+          numCtrl: numCtrl,
+          dayCtrl: dayCtrl,
+          timeCtrl: timeCtrl,
+          locCtrl: locCtrl,
+          urlCtrl: urlCtrl,
+          onSave: (newItem) => onEdit(item, newItem),
+          onDelete: () => onDelete(item.id),
+        );
+      },
     );
-  }
 
+    numCtrl.dispose();
+    dayCtrl.dispose();
+    timeCtrl.dispose();
+    locCtrl.dispose();
+    urlCtrl.dispose();
+  }
   @override
   Widget build(BuildContext context) {
     if (loading) {
@@ -2361,14 +1847,7 @@ class _EditBottomSheetState extends State<_EditBottomSheet> {
                     StatefulBuilder(
                       builder: (ctx, setLocal) {
                         return GestureDetector(
-                          onTap: () => _openSmartMapPicker(
-                            context: context,
-                            rawUrl: widget.urlCtrl.text.trim(),
-                            isDark: isDark,
-                            title: widget.locCtrl.text.trim().isEmpty
-                                ? 'موقع المحاضرة'
-                                : widget.locCtrl.text.trim(),
-                          ),
+                          onTap: () => _openPlainUrl(context, widget.urlCtrl.text.trim()),
                           child: Container(
                             width: 44,
                             height: 44,
@@ -2503,7 +1982,321 @@ class _EditBottomSheetState extends State<_EditBottomSheet> {
   }
 }
 
+class _CertificateCard extends StatefulWidget {
+  final bool isDark;
+  final Color textPrimary;
+  final Color textSub;
+  final Color cardBg;
 
+  const _CertificateCard({
+    required this.isDark,
+    required this.textPrimary,
+    required this.textSub,
+    required this.cardBg,
+  });
+
+  @override
+  State<_CertificateCard> createState() => _CertificateCardState();
+}
+
+class _CertificateCardState extends State<_CertificateCard>
+    with SingleTickerProviderStateMixin {
+  static const gold = Color(0xFFD4A017);
+
+  late final AnimationController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 2600),
+    )..repeat();
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: widget.cardBg,
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: gold.withOpacity(0.16)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(widget.isDark ? 0.24 : 0.06),
+            blurRadius: 14,
+            offset: const Offset(0, 5),
+          ),
+          BoxShadow(
+            color: gold.withOpacity(0.08),
+            blurRadius: 18,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  width: 4,
+                  height: 20,
+                  decoration: BoxDecoration(
+                    color: gold,
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    'شهادة المشاركة',
+                    style: TextStyle(
+                      color: widget.textPrimary,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                  decoration: BoxDecoration(
+                    gradient: const LinearGradient(
+                      colors: [Color(0xFFFFD86B), Color(0xFFD4A017)],
+                    ),
+                    borderRadius: BorderRadius.circular(100),
+                    boxShadow: [
+                      BoxShadow(
+                        color: gold.withOpacity(0.28),
+                        blurRadius: 10,
+                        offset: const Offset(0, 3),
+                      ),
+                    ],
+                  ),
+                  child: const Text(
+                    'مميزة',
+                    style: TextStyle(
+                      color: Colors.black,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+    
+            const SizedBox(height: 14),
+
+            ClipRRect(
+              borderRadius: BorderRadius.circular(22),
+              child: Container(
+                decoration: BoxDecoration(
+                  color: widget.isDark
+                      ? const Color(0xFF141414)
+                      : const Color(0xFFFFFBF5),
+                ),
+                child: AspectRatio(
+                  aspectRatio: 18 / 12,
+                  child: Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      Image.asset(
+                        'assets/images/cer.jpg',
+                        fit: BoxFit.cover,
+                        errorBuilder: (_, __, ___) => Container(
+                          decoration: const BoxDecoration(
+                            gradient: LinearGradient(
+                              begin: Alignment.topCenter,
+                              end: Alignment.bottomCenter,
+                              colors: [
+                                Color(0xFF2B1D00),
+                                Color(0xFF120D00),
+                              ],
+                            ),
+                          ),
+                          alignment: Alignment.center,
+                          child: const Icon(
+                            Icons.image_not_supported_rounded,
+                            color: Colors.white54,
+                            size: 38,
+                          ),
+                        ),
+                      ),
+
+                      Positioned.fill(
+                        child: DecoratedBox(
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(
+                              begin: Alignment.topCenter,
+                              end: Alignment.bottomCenter,
+                              colors: [
+                                Colors.white.withOpacity(0.04),
+                                Colors.transparent,
+                                Colors.black.withOpacity(0.10),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+
+                      Positioned.fill(
+                        child: IgnorePointer(
+                          child: AnimatedBuilder(
+                            animation: _controller,
+                            builder: (context, _) {
+                              return CustomPaint(
+                                painter: _CertificateEdgeLightPainter(
+                                  progress: _controller.value,
+                                  gold: gold,
+                                  isDark: widget.isDark,
+                                ),
+                              );
+                            },
+                          ),
+                        ),
+                      ),
+
+                      Positioned(
+                        top: 12,
+                        left: 12,
+                        right: 12,
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+          
+
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _CertificateEdgeLightPainter extends CustomPainter {
+  final double progress;
+  final Color gold;
+  final bool isDark;
+
+  _CertificateEdgeLightPainter({
+    required this.progress,
+    required this.gold,
+    required this.isDark,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (size.width <= 0 || size.height <= 0) return;
+
+    final rect = Rect.fromLTWH(
+      5,
+      5,
+      size.width - 10,
+      size.height - 10,
+    );
+
+    final rrect = RRect.fromRectAndRadius(
+      rect,
+      const Radius.circular(20),
+    );
+
+    final path = Path()..addRRect(rrect);
+    final metrics = path.computeMetrics().toList();
+    if (metrics.isEmpty) return;
+
+    final metric = metrics.first;
+    final totalLength = metric.length;
+    final head = progress * totalLength;
+    final lightLength = totalLength * 0.28;
+    const pieces = 22;
+    final pieceLength = lightLength / pieces;
+
+    double normalize(double value) {
+      value %= totalLength;
+      if (value < 0) value += totalLength;
+      return value;
+    }
+
+    void drawWrappedPath({
+      required double from,
+      required double to,
+      required Paint paint,
+    }) {
+      final start = normalize(from);
+      final end = normalize(to);
+
+      if (start <= end) {
+        canvas.drawPath(metric.extractPath(start, end), paint);
+      } else {
+        canvas.drawPath(metric.extractPath(start, totalLength), paint);
+        canvas.drawPath(metric.extractPath(0, end), paint);
+      }
+    }
+
+    final idleBorderPaint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.15
+      ..color = gold.withOpacity(isDark ? 0.28 : 0.22);
+    canvas.drawRRect(rrect, idleBorderPaint);
+
+    for (int i = pieces - 1; i >= 0; i--) {
+      final localProgress = 1.0 - (i / pieces);
+      final opacity = Curves.easeOutCubic.transform(localProgress);
+      final from = head - ((i + 1) * pieceLength);
+      final to = head - (i * pieceLength);
+
+      final glowPaint = Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeCap = StrokeCap.round
+        ..strokeJoin = StrokeJoin.round
+        ..strokeWidth = 11
+        ..color = gold.withOpacity(0.035 + (opacity * 0.20))
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 7);
+
+      final softPaint = Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeCap = StrokeCap.round
+        ..strokeJoin = StrokeJoin.round
+        ..strokeWidth = 5.5
+        ..color = const Color(0xFFFFE8A6).withOpacity(0.04 + (opacity * 0.34))
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 2.5);
+
+      final corePaint = Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeCap = StrokeCap.round
+        ..strokeJoin = StrokeJoin.round
+        ..strokeWidth = 2.2
+        ..color = Colors.white.withOpacity(0.05 + (opacity * 0.58));
+
+      drawWrappedPath(from: from, to: to, paint: glowPaint);
+      drawWrappedPath(from: from, to: to, paint: softPaint);
+      drawWrappedPath(from: from, to: to, paint: corePaint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _CertificateEdgeLightPainter oldDelegate) {
+    return oldDelegate.progress != progress ||
+        oldDelegate.gold != gold ||
+        oldDelegate.isDark != isDark;
+  }
+}
 // ─────────────────────────────────────────────────────────────────────────────
 // TAB 2 – LECTURES (YouTube Videos)
 // ─────────────────────────────────────────────────────────────────────────────
