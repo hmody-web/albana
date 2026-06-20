@@ -3,11 +3,11 @@
 <plist version="1.0">
 <dict>
 	<key>CLIENT_ID</key>
-	<string>14634099103-n5r847gqsgga7hdghhbvblpqg2tnjkc1.apps.googleusercontent.com</string>
+	<string>14634099103-49vla2iok1dqcd3rc8i5ekm603od3v1m.apps.googleusercontent.com</string>
 	<key>REVERSED_CLIENT_ID</key>
-	<string>com.googleusercontent.apps.14634099103-n5r847gqsgga7hdghhbvblpqg2tnjkc1</string>
+	<string>com.googleusercontent.apps.14634099103-49vla2iok1dqcd3rc8i5ekm603od3v1m</string>
 	<key>ANDROID_CLIENT_ID</key>
-	<string>14634099103-jopb3156ul3kgfhihahc56lg1rsvt5lq.apps.googleusercontent.com</string>
+	<string>14634099103-e1o71rr11qkape3gslka0d7d62f6jr4t.apps.googleusercontent.com</string>
 	<key>API_KEY</key>
 	<string>AIzaSyACkgCBefJvqkkZh56fyw78PyQItqeF6fw</string>
 	<key>GCM_SENDER_ID</key>
@@ -15,7 +15,7 @@
 	<key>PLIST_VERSION</key>
 	<string>1</string>
 	<key>BUNDLE_ID</key>
-	<string>com.example.majidalbana</string>
+	<string>com.majidalbana.app</string>
 	<key>PROJECT_ID</key>
 	<string>majidalbana-c2da3</string>
 	<key>STORAGE_BUCKET</key>
@@ -31,6 +31,6 @@
 	<key>IS_SIGNIN_ENABLED</key>
 	<true></true>
 	<key>GOOGLE_APP_ID</key>
-	<string>1:14634099103:ios:67e4f078bed0395f3d1daa</string>
+	<string>1:14634099103:ios:9b4b01c818f8c7b63d1daa</string>
 </dict>
 </plist>

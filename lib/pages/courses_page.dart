@@ -4,8 +4,10 @@ import 'package:http/http.dart' as http;
 import 'package:url_launcher/url_launcher.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:image_picker/image_picker.dart';
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math' as math;
 import '../widgets/shared_widgets.dart';
 
 class CoursesPage extends StatefulWidget {
@@ -381,6 +383,7 @@ final urlMatch =
                     textPrimary: textPrimary,
                     textSub: textSub,
                     cardBg: cardBg,
+                    user: user,
                     schedule: _schedule,
                     loadingSchedule: _loadingSchedule,
                     scheduleError: _scheduleError,
@@ -638,6 +641,7 @@ class _TabBarDelegate extends SliverPersistentHeaderDelegate {
 class _CoursesTab extends StatelessWidget {
   final bool isDark;
   final Color textPrimary, textSub, cardBg;
+  final User? user;
   final List<_ScheduleItem> schedule;
   final bool loadingSchedule;
   final String? scheduleError;
@@ -653,6 +657,7 @@ class _CoursesTab extends StatelessWidget {
     required this.textPrimary,
     required this.textSub,
     required this.cardBg,
+    required this.user,
     required this.schedule,
     required this.loadingSchedule,
     required this.scheduleError,
@@ -794,6 +799,18 @@ class _CoursesTab extends StatelessWidget {
             ),
           ),
         ),
+        const SizedBox(height: 18),
+
+        _RegistrationEntryCard(
+          isDark: isDark,
+          textPrimary: textPrimary,
+          textSub: textSub,
+          cardBg: cardBg,
+          isAdmin: isAdmin,
+          user: user,
+          schedule: schedule,
+        ),
+
         const SizedBox(height: 28),
 
         // ── Schedule Table Header ────────────────────────────────────────────
@@ -851,6 +868,15 @@ class _CoursesTab extends StatelessWidget {
 
         const SizedBox(height: 20),
 
+        _PreviousCoursesGalleryCard(
+          isDark: isDark,
+          textPrimary: textPrimary,
+          textSub: textSub,
+          cardBg: cardBg,
+        ),
+
+        const SizedBox(height: 20),
+
         _CertificateCard(
           isDark: isDark,
           textPrimary: textPrimary,
@@ -865,6 +891,1432 @@ class _CoursesTab extends StatelessWidget {
 // ─────────────────────────────────────────────────────────────────────────────
 // Admin Add Box
 // ─────────────────────────────────────────────────────────────────────────────
+class _RegistrationEntryCard extends StatefulWidget {
+  final bool isDark;
+  final Color textPrimary, textSub, cardBg;
+  final bool isAdmin;
+  final User? user;
+  final List<_ScheduleItem> schedule;
+
+  const _RegistrationEntryCard({
+    required this.isDark,
+    required this.textPrimary,
+    required this.textSub,
+    required this.cardBg,
+    required this.isAdmin,
+    required this.user,
+    required this.schedule,
+  });
+
+  @override
+  State<_RegistrationEntryCard> createState() => _RegistrationEntryCardState();
+}
+
+class _RegistrationEntryCardState extends State<_RegistrationEntryCard> {
+  static const _api = 'https://majidalbana.com/admin/registrations/registrations_api.php';
+  bool _loading = true;
+  bool _active = true;
+  bool _registered = false;
+  String? _message;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadStatus();
+  }
+
+  Future<void> _loadStatus() async {
+    try {
+      final email = (widget.user?.email ?? '').trim().toLowerCase();
+      final uri = Uri.parse('$_api?action=status&account_email=${Uri.encodeComponent(email)}');
+      final res = await http.get(uri).timeout(const Duration(seconds: 12));
+      final data = jsonDecode(res.body) as Map<String, dynamic>;
+      if (!mounted) return;
+      setState(() {
+        _active = data['active'] == true || data['active'].toString() == '1';
+        _registered = data['registered'] == true || data['registered'].toString() == '1';
+        _message = data['message']?.toString();
+        _loading = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _message = 'تعذر الاتصال بسيرفر التسجيل';
+      });
+    }
+  }
+
+Future<void> _openRegistration() async {
+  await Navigator.of(context).push(
+    MaterialPageRoute(
+      builder: (_) => RegistrationFormPage(
+        isDark: widget.isDark,
+        isAdmin: widget.isAdmin,
+        user: widget.user,
+        schedule: widget.schedule,
+      ),
+    ),
+  );
+
+  if (mounted) {
+    _loadStatus();
+  }
+}
+
+  @override
+  Widget build(BuildContext context) {
+    final gold = _CoursesTab.gold;
+    final canOpen = widget.isAdmin || (_active && !_registered);
+    final title = widget.isAdmin
+        ? 'لوحة التسجيل في الاستمارة'
+        : _registered
+            ? 'تم تسجيلك في الاستمارة بنجاح'
+            : _active
+                ? 'استمارة التسجيل في دورة تنمية مهندس الموقع'
+                : 'التسجيل في الاستمارة مغلق حالياً';
+
+    return InkWell(
+      onTap: canOpen ? _openRegistration : null,
+      borderRadius: BorderRadius.circular(26),
+      child: Container(
+        padding: const EdgeInsets.all(18),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(26),
+          gradient: LinearGradient(
+            begin: Alignment.topRight,
+            end: Alignment.bottomLeft,
+            colors: widget.isDark
+                ? [const Color(0xFF211600), const Color(0xFF101010)]
+                : [const Color(0xFFFFFBF2), const Color(0xFFFFE9B8)],
+          ),
+          border: Border.all(color: gold.withOpacity(0.35)),
+          boxShadow: [
+            BoxShadow(
+              color: gold.withOpacity(widget.isDark ? 0.10 : 0.18),
+              blurRadius: 24,
+              offset: const Offset(0, 12),
+            ),
+          ],
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 54,
+              height: 54,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: gold.withOpacity(0.16),
+                border: Border.all(color: gold.withOpacity(0.35)),
+              ),
+              child: Icon(
+                _registered ? Icons.verified_rounded : Icons.assignment_rounded,
+                color: gold,
+                size: 28,
+              ),
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: TextStyle(
+                      color: widget.textPrimary,
+                      fontSize: 15.5,
+                      fontWeight: FontWeight.w900,
+                      height: 1.45,
+                    ),
+                  ),
+                  const SizedBox(height: 5),
+                  Text(
+                    _loading
+                        ? 'جاري التحقق من حالة التسجيل...'
+                        : (_message ?? 'اضغط لفتح صفحة التسجيل وإدخال البيانات المطلوبة.'),
+                    style: TextStyle(
+                      color: widget.textSub,
+                      fontSize: 12,
+                      height: 1.6,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Icon(
+              canOpen ? Icons.arrow_back_ios_new_rounded : Icons.lock_rounded,
+              color: gold,
+              size: 20,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class RegistrationFormPage extends StatefulWidget {
+  final bool isDark;
+  final bool isAdmin;
+  final User? user;
+  final List<_ScheduleItem> schedule;
+
+  const RegistrationFormPage({
+    super.key,
+    required this.isDark,
+    required this.isAdmin,
+    required this.user,
+    required this.schedule,
+  });
+
+  @override
+  State<RegistrationFormPage> createState() => _RegistrationFormPageState();
+}
+
+class _RegistrationFormPageState extends State<RegistrationFormPage> {
+  static const _api = 'https://majidalbana.com/admin/registrations/registrations_api.php';
+  static const _pdfUrl = 'https://majidalbana.com/admin/registrations/export_current_pdf.php';
+  final _formKey = GlobalKey<FormState>();
+  final _emailCtrl = TextEditingController();
+  final _phoneCtrl = TextEditingController();
+  final _nameCtrl = TextEditingController();
+  final _certificateCtrl = TextEditingController();
+  final _governorateCtrl = TextEditingController();
+  final _gradYearCtrl = TextEditingController();
+  final _archiveNameCtrl = TextEditingController();
+
+  bool _loading = true;
+  bool _sending = false;
+  bool _active = true;
+  Map<String, dynamic>? _myRegistration;
+  List<Map<String, dynamic>> _registrations = [];
+  XFile? _photo;
+
+  Color get _gold => const Color(0xFFD4A017);
+  Color get _bg => widget.isDark ? const Color(0xFF101010) : const Color(0xFFF7F3EC);
+  Color get _card => widget.isDark ? const Color(0xFF181818) : Colors.white;
+  Color get _text => widget.isDark ? Colors.white : const Color(0xFF1A1000);
+  Color get _sub => widget.isDark ? Colors.white70 : Colors.black54;
+  String get _accountEmail => (widget.user?.email ?? _emailCtrl.text).trim().toLowerCase();
+
+  @override
+  void initState() {
+    super.initState();
+    _emailCtrl.text = widget.user?.email ?? '';
+    _load();
+  }
+
+  @override
+  void dispose() {
+    _emailCtrl.dispose();
+    _phoneCtrl.dispose();
+    _nameCtrl.dispose();
+    _certificateCtrl.dispose();
+    _governorateCtrl.dispose();
+    _gradYearCtrl.dispose();
+    _archiveNameCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _load() async {
+    try {
+      final uri = Uri.parse('$_api?action=status&account_email=${Uri.encodeComponent(_accountEmail)}&with_list=${widget.isAdmin ? 1 : 0}');
+      final res = await http.get(uri).timeout(const Duration(seconds: 12));
+      final data = jsonDecode(res.body) as Map<String, dynamic>;
+      if (!mounted) return;
+      setState(() {
+        _active = data['active'] == true || data['active'].toString() == '1';
+        _myRegistration = data['registration'] is Map ? Map<String, dynamic>.from(data['registration']) : null;
+        _registrations = data['registrations'] is List
+            ? (data['registrations'] as List).map((e) => Map<String, dynamic>.from(e as Map)).toList()
+            : [];
+        _loading = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _loading = false);
+      _toast('تعذر جلب بيانات التسجيل');
+    }
+  }
+
+  void _toast(String msg) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+  }
+
+  Future<void> _pickPhoto() async {
+    final picked = await ImagePicker().pickImage(
+      source: ImageSource.gallery,
+      imageQuality: 82,
+      maxWidth: 1200,
+    );
+    if (picked != null && mounted) setState(() => _photo = picked);
+  }
+
+  Future<void> _submit() async {
+    if (!_formKey.currentState!.validate()) return;
+    if (_photo == null) {
+      _toast('اختار صورة شخصية أولاً، لأن الاستمارات تحب التعقيد مثل بقية البشرية.');
+      return;
+    }
+    setState(() => _sending = true);
+    try {
+      final req = http.MultipartRequest('POST', Uri.parse(_api));
+      req.fields.addAll({
+        'action': 'submit',
+        'account_email': _accountEmail,
+        'email': _emailCtrl.text.trim(),
+        'phone': _phoneCtrl.text.trim(),
+        'full_name': _nameCtrl.text.trim(),
+        'certificate': _certificateCtrl.text.trim(),
+        'governorate': _governorateCtrl.text.trim(),
+        'graduation_year': _gradYearCtrl.text.trim(),
+      });
+      req.files.add(await http.MultipartFile.fromPath('photo', _photo!.path));
+      final streamed = await req.send().timeout(const Duration(seconds: 25));
+      final body = await streamed.stream.bytesToString();
+      final data = jsonDecode(body) as Map<String, dynamic>;
+      if (!mounted) return;
+      if (data['success'] == true) {
+        setState(() {
+          _myRegistration = Map<String, dynamic>.from(data['registration'] as Map);
+          _sending = false;
+        });
+        _showSuccessDialog(_myRegistration!);
+      } else {
+        setState(() => _sending = false);
+        _toast(data['message']?.toString() ?? 'فشل إرسال الاستمارة');
+      }
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _sending = false);
+      _toast('فشل الاتصال بالخادم');
+    }
+  }
+
+  Future<void> _savePdf() async {
+    final uri = Uri.parse(_pdfUrl);
+    if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
+      _toast('تعذر فتح ملف PDF');
+    }
+  }
+
+  Future<void> _finishForm() async {
+    _archiveNameCtrl.clear();
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        backgroundColor: _card,
+        title: Text('إنهاء الاستمارة', style: TextStyle(color: _text, fontWeight: FontWeight.w900)),
+        content: TextField(
+          controller: _archiveNameCtrl,
+          autofocus: true,
+          style: TextStyle(color: _text),
+          decoration: InputDecoration(
+            labelText: 'اسم الاستمارة / المجلد',
+            labelStyle: TextStyle(color: _sub),
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('إلغاء')),
+          ElevatedButton(onPressed: () => Navigator.pop(context, true), child: const Text('إنهاء')),
+        ],
+      ),
+    );
+    if (ok != true || _archiveNameCtrl.text.trim().isEmpty) return;
+    await _adminAction('finish', {'archive_name': _archiveNameCtrl.text.trim()});
+  }
+
+  Future<void> _newForm() async {
+    await _adminAction('new_form', {});
+  }
+
+  Future<void> _openAttendance() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => AttendancePage(
+          isDark: widget.isDark,
+          schedule: widget.schedule,
+        ),
+      ),
+    );
+    if (mounted) _load();
+  }
+
+  Future<void> _openArchives() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => RegistrationArchivesPage(isDark: widget.isDark),
+      ),
+    );
+    if (mounted) _load();
+  }
+
+  Map<String, dynamic> _safeJson(String body) {
+    final clean = body.trim();
+    if (clean.isEmpty) {
+      return {'success': false, 'message': 'الخادم رجّع رد فارغ. هذا ليس اتصالاً فاشلاً، هذا خادم عامل نفسه نائم.'};
+    }
+    try {
+      final decoded = jsonDecode(clean);
+      if (decoded is Map<String, dynamic>) return decoded;
+      if (decoded is Map) return Map<String, dynamic>.from(decoded);
+      return {'success': false, 'message': 'رد الخادم غير مفهوم.'};
+    } catch (_) {
+      final preview = clean.replaceAll(RegExp(r'<[^>]*>'), ' ').replaceAll(RegExp(r'\s+'), ' ').trim();
+      return {
+        'success': false,
+        'message': preview.isEmpty
+            ? 'الخادم رجّع رد غير صالح.'
+            : 'الخادم رجّع خطأ غير JSON: ${preview.length > 140 ? preview.substring(0, 140) : preview}',
+      };
+    }
+  }
+
+  Future<void> _adminAction(String action, Map<String, String> extra) async {
+    setState(() => _loading = true);
+    try {
+      final res = await http
+          .post(
+            Uri.parse(_api),
+            headers: const {'Accept': 'application/json'},
+            body: {'action': action, ...extra},
+          )
+          .timeout(const Duration(seconds: 75));
+      final data = _safeJson(res.body);
+      if (!mounted) return;
+      if (res.statusCode >= 200 && res.statusCode < 300 && data['success'] == true) {
+        _toast(data['message']?.toString() ?? 'تم التنفيذ بنجاح');
+        await _load();
+      } else {
+        setState(() => _loading = false);
+        final msg = data['message']?.toString();
+        _toast((msg == null || msg.isEmpty) ? 'فشل تنفيذ الأمر من الخادم HTTP ${res.statusCode}' : msg);
+      }
+    } on TimeoutException {
+      if (!mounted) return;
+      setState(() => _loading = false);
+      _toast('الخادم تأخر بالرد. تم رفع مهلة الإنهاء، وإذا تكررت المشكلة افحص صلاحيات archives.');
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _loading = false);
+      _toast('تعذر تنفيذ الأمر: $e');
+    }
+  }
+
+  void _showSuccessDialog(Map<String, dynamic> r) {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => AlertDialog(
+        backgroundColor: _card,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _avatar(r, 76),
+            const SizedBox(height: 12),
+            Text('تم التسجيل بنجاح', style: TextStyle(color: _gold, fontSize: 18, fontWeight: FontWeight.w900)),
+            const SizedBox(height: 10),
+            Text(r['full_name']?.toString() ?? '', textAlign: TextAlign.center, style: TextStyle(color: _text, fontWeight: FontWeight.w800)),
+            const SizedBox(height: 8),
+            Text("${r['certificate'] ?? ''}\n${r['governorate'] ?? ''} - ${r['graduation_year'] ?? ''}", textAlign: TextAlign.center, style: TextStyle(color: _sub, height: 1.6)),
+          ],
+        ),
+        actionsAlignment: MainAxisAlignment.center,
+        actions: [
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(context);
+              Navigator.pop(context);
+            },
+            child: const Text('تم'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _avatar(Map<String, dynamic> r, double size) {
+    final url = r['photo_url']?.toString() ?? '';
+    return ClipOval(
+      child: Container(
+        width: size,
+        height: size,
+        color: _gold.withOpacity(0.13),
+        child: url.isEmpty
+            ? Icon(Icons.person_rounded, color: _gold, size: size * 0.45)
+            : Image.network(url, fit: BoxFit.cover, errorBuilder: (_, __, ___) => Icon(Icons.person_rounded, color: _gold)),
+      ),
+    );
+  }
+
+  Widget _field(TextEditingController c, String label, IconData icon, {TextInputType? keyboard}) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 14),
+      child: TextFormField(
+        controller: c,
+        keyboardType: keyboard,
+        textInputAction: TextInputAction.next,
+        style: TextStyle(color: _text, fontWeight: FontWeight.w700),
+        validator: (v) => (v == null || v.trim().isEmpty) ? 'هذا الحقل مطلوب' : null,
+        decoration: InputDecoration(
+          prefixIcon: Icon(icon, color: _gold),
+          labelText: label,
+          labelStyle: TextStyle(color: _sub),
+          filled: true,
+          fillColor: widget.isDark ? const Color(0xFF111111) : const Color(0xFFFAFAFA),
+          border: OutlineInputBorder(borderRadius: BorderRadius.circular(18), borderSide: BorderSide(color: _gold.withOpacity(0.18))),
+          enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(18), borderSide: BorderSide(color: _gold.withOpacity(0.18))),
+          focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(18), borderSide: BorderSide(color: _gold, width: 1.4)),
+        ),
+      ),
+    );
+  }
+
+  Widget _registrationForm() {
+    if (!_active && !widget.isAdmin) {
+      return _stateBox(Icons.lock_rounded, 'انتهت الاستمارة', 'التسجيل مغلق حالياً، لأن أحدهم ضغط زر النهاية وهذا هو النظام الآن.');
+    }
+    if (_myRegistration != null && !widget.isAdmin) {
+      return _registeredBox(_myRegistration!);
+    }
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(color: _card, borderRadius: BorderRadius.circular(24), border: Border.all(color: _gold.withOpacity(0.16))),
+      child: Form(
+        key: _formKey,
+        child: Column(
+          children: [
+            _field(_emailCtrl, 'البريد الإلكتروني EMAIL', Icons.email_rounded, keyboard: TextInputType.emailAddress),
+            _field(_phoneCtrl, 'رقم الهاتف PHONE', Icons.phone_rounded, keyboard: TextInputType.phone),
+            _field(_nameCtrl, 'الاسم الثلاثي', Icons.badge_rounded),
+            _field(_certificateCtrl, 'الشهادة والاختصاص', Icons.school_rounded),
+            _field(_governorateCtrl, 'المحافظة', Icons.location_city_rounded),
+            _field(_gradYearCtrl, 'سنة التخرج', Icons.date_range_rounded, keyboard: TextInputType.number),
+            InkWell(
+              onTap: _pickPhoto,
+              borderRadius: BorderRadius.circular(18),
+              child: Container(
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(18),
+                  border: Border.all(color: _gold.withOpacity(0.28)),
+                  color: _gold.withOpacity(0.08),
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.cloud_upload_rounded, color: _gold),
+                    const SizedBox(width: 10),
+                    Expanded(child: Text(_photo == null ? 'إرفاق صورة شخصية حديثة' : 'تم اختيار الصورة: ${_photo!.name}', style: TextStyle(color: _text, fontWeight: FontWeight.w700))),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 18),
+            SizedBox(
+              width: double.infinity,
+              height: 52,
+              child: ElevatedButton.icon(
+                onPressed: _sending ? null : _submit,
+                icon: _sending ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2)) : const Icon(Icons.send_rounded),
+                label: Text(_sending ? 'جاري الإرسال...' : 'إرسال الاستمارة'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: _gold,
+                  foregroundColor: const Color(0xFF1A1000),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+                  textStyle: const TextStyle(fontWeight: FontWeight.w900),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _registeredBox(Map<String, dynamic> r) {
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(color: _card, borderRadius: BorderRadius.circular(24), border: Border.all(color: Colors.green.withOpacity(0.35))),
+      child: Row(
+        children: [
+          _avatar(r, 58),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text('تم تسجيلك في الاستمارة بنجاح', style: TextStyle(color: Colors.green.shade600, fontWeight: FontWeight.w900)),
+              const SizedBox(height: 6),
+              Text(r['full_name']?.toString() ?? '', style: TextStyle(color: _text, fontWeight: FontWeight.w900)),
+              Text("${r['certificate'] ?? ''} • ${r['phone'] ?? ''}", style: TextStyle(color: _sub, height: 1.5)),
+            ]),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _stateBox(IconData icon, String title, String msg) {
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(color: _card, borderRadius: BorderRadius.circular(24), border: Border.all(color: _gold.withOpacity(0.16))),
+      child: Row(children: [Icon(icon, color: _gold, size: 34), const SizedBox(width: 12), Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(title, style: TextStyle(color: _text, fontWeight: FontWeight.w900)), const SizedBox(height: 6), Text(msg, style: TextStyle(color: _sub, height: 1.6))]))]),
+    );
+  }
+
+  Widget _adminPanel() {
+    if (!widget.isAdmin) return const SizedBox.shrink();
+    return Container(
+      margin: const EdgeInsets.only(bottom: 16),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: _card,
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: _gold.withOpacity(0.22)),
+        boxShadow: [
+          BoxShadow(
+            color: _gold.withOpacity(widget.isDark ? 0.08 : 0.10),
+            blurRadius: 24,
+            offset: const Offset(0, 12),
+          ),
+        ],
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          Icon(Icons.admin_panel_settings_rounded, color: _gold),
+          const SizedBox(width: 8),
+          Expanded(child: Text('لوحة تحكم الاستمارة', style: TextStyle(color: _text, fontWeight: FontWeight.w900, fontSize: 16))),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+            decoration: BoxDecoration(color: _active ? Colors.green.withOpacity(0.14) : Colors.red.withOpacity(0.14), borderRadius: BorderRadius.circular(99)),
+            child: Text(_active ? 'مفتوحة' : 'منتهية', style: TextStyle(color: _active ? Colors.green.shade600 : Colors.red.shade500, fontWeight: FontWeight.w900, fontSize: 11)),
+          ),
+        ]),
+        const SizedBox(height: 14),
+        Row(children: [
+          Expanded(
+            child: OutlinedButton.icon(
+              onPressed: _active ? null : _newForm,
+              icon: const Icon(Icons.add_circle_rounded),
+              label: const Text('استمارة جديدة'),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: ElevatedButton.icon(
+              onPressed: _active ? _finishForm : null,
+              icon: const Icon(Icons.stop_circle_rounded),
+              label: const Text('إنهاء الاستمارة'),
+            ),
+          ),
+        ]),
+        const SizedBox(height: 10),
+        Row(children: [
+          Expanded(
+            child: OutlinedButton.icon(
+              onPressed: _openArchives,
+              icon: const Icon(Icons.folder_special_rounded),
+              label: const Text('الاستمارات السابقة'),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: ElevatedButton.icon(
+              onPressed: _openAttendance,
+              icon: const Icon(Icons.fact_check_rounded),
+              label: const Text('الحضور'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: _gold,
+                foregroundColor: const Color(0xFF1A1000),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                textStyle: const TextStyle(fontWeight: FontWeight.w900),
+              ),
+            ),
+          ),
+        ]),
+        const SizedBox(height: 10),
+        Text(
+          _active
+              ? 'الاستمارة الجديدة تتفعل فقط بعد إنهاء الحالية، حتى لا تولد استمارتان ويتقاتلان داخل قاعدة البيانات.'
+              : 'الاستمارة منتهية. يمكنك إنشاء استمارة جديدة الآن أو فتح الأرشيف السابق.',
+          style: TextStyle(color: _sub, fontSize: 12, height: 1.55),
+        ),
+      ]),
+    );
+  }
+
+  Widget _adminList() {
+    if (!widget.isAdmin) return const SizedBox.shrink();
+    return Container(
+      margin: const EdgeInsets.only(top: 18),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(color: _card, borderRadius: BorderRadius.circular(24), border: Border.all(color: _gold.withOpacity(0.16))),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(
+          children: [
+            Expanded(
+              child: Text('المسجلون حالياً (${_registrations.length})', style: TextStyle(color: _text, fontWeight: FontWeight.w900, fontSize: 16)),
+            ),
+            Tooltip(
+              message: 'حفظ PDF للبيانات الحالية',
+              child: InkWell(
+                onTap: _savePdf,
+                borderRadius: BorderRadius.circular(14),
+                child: Container(
+                  width: 38,
+                  height: 38,
+                  decoration: BoxDecoration(
+                    color: _gold.withOpacity(0.12),
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(color: _gold.withOpacity(0.22)),
+                  ),
+                  child: Icon(Icons.print_rounded, color: _gold, size: 20),
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        if (_registrations.isEmpty)
+          Text('لا توجد تسجيلات بعد. الهدوء قبل عاصفة الاستمارات.', style: TextStyle(color: _sub))
+        else
+          ..._registrations.map((r) => Container(
+                margin: const EdgeInsets.only(bottom: 10),
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(color: widget.isDark ? const Color(0xFF111111) : const Color(0xFFFAFAFA), borderRadius: BorderRadius.circular(18)),
+                child: Row(children: [
+                  _avatar(r, 46),
+                  const SizedBox(width: 10),
+                  Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Text(r['full_name']?.toString() ?? '', style: TextStyle(color: _text, fontWeight: FontWeight.w900)),
+                    const SizedBox(height: 3),
+                    Text("${r['certificate'] ?? ''} • ${r['phone'] ?? ''}\n${r['email'] ?? ''}\nالحضور: ${r['attendance_count'] ?? 0}", style: TextStyle(color: _sub, fontSize: 12, height: 1.45)),
+                  ])),
+                ]),
+              )),
+      ]),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Directionality(
+      textDirection: TextDirection.rtl,
+      child: Scaffold(
+        backgroundColor: _bg,
+        appBar: AppBar(
+          backgroundColor: _bg,
+          elevation: 0,
+          title: Text('استمارة التسجيل', style: TextStyle(color: _text, fontWeight: FontWeight.w900)),
+          iconTheme: IconThemeData(color: _text),
+        ),
+        body: _loading
+            ? Center(child: CircularProgressIndicator(color: _gold))
+            : ListView(
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 100),
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(18),
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(28),
+                      gradient: LinearGradient(colors: widget.isDark ? [const Color(0xFF221700), const Color(0xFF111111)] : [const Color(0xFFFFF5DF), Colors.white]),
+                      border: Border.all(color: _gold.withOpacity(0.22)),
+                    ),
+                    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      Text('استمارة التسجيل في دورة تنمية مهندس الموقع', style: TextStyle(color: _text, fontWeight: FontWeight.w900, fontSize: 19, height: 1.45)),
+                      const SizedBox(height: 8),
+                      Text('املأ البيانات المطلوبة بدقة، وارفق صورة شخصية حديثة. النظام سيمنع التسجيل المتكرر لنفس الحساب، لأن الفوضى ليست ميزة تقنية. ✨', style: TextStyle(color: _sub, height: 1.7)),
+                    ]),
+                  ),
+                  const SizedBox(height: 16),
+                  _adminPanel(),
+                  _registrationForm(),
+                  _adminList(),
+                ],
+              ),
+      ),
+    );
+  }
+}
+
+
+class RegistrationArchivesPage extends StatefulWidget {
+  final bool isDark;
+  const RegistrationArchivesPage({super.key, required this.isDark});
+
+  @override
+  State<RegistrationArchivesPage> createState() => _RegistrationArchivesPageState();
+}
+
+class _RegistrationArchivesPageState extends State<RegistrationArchivesPage> {
+  static const _api = 'https://majidalbana.com/admin/registrations/registrations_api.php';
+
+  bool _loading = true;
+  String? _error;
+  List<Map<String, dynamic>> _archives = [];
+
+  Color get _gold => const Color(0xFFD4A017);
+  Color get _bg => widget.isDark ? const Color(0xFF101010) : const Color(0xFFF7F3EC);
+  Color get _card => widget.isDark ? const Color(0xFF181818) : Colors.white;
+  Color get _text => widget.isDark ? Colors.white : const Color(0xFF1A1000);
+  Color get _sub => widget.isDark ? Colors.white70 : Colors.black54;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadArchives();
+  }
+
+  Map<String, dynamic> _safeJson(String body) {
+    final clean = body.trim();
+    if (clean.isEmpty) return {'success': false, 'message': 'الخادم رجع رد فارغ.'};
+    try {
+      final decoded = jsonDecode(clean);
+      if (decoded is Map<String, dynamic>) return decoded;
+      if (decoded is Map) return Map<String, dynamic>.from(decoded);
+      return {'success': false, 'message': 'رد الخادم غير مفهوم.'};
+    } catch (_) {
+      final preview = clean.replaceAll(RegExp(r'<[^>]*>'), ' ').replaceAll(RegExp(r'\s+'), ' ').trim();
+      return {'success': false, 'message': preview.isEmpty ? 'رد الخادم غير صالح.' : preview};
+    }
+  }
+
+  Future<void> _loadArchives() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final res = await http.get(Uri.parse('$_api?action=archives')).timeout(const Duration(seconds: 18));
+      final data = _safeJson(res.body);
+      if (!mounted) return;
+      if (res.statusCode >= 200 && res.statusCode < 300 && data['success'] == true) {
+        setState(() {
+          _archives = data['archives'] is List
+              ? (data['archives'] as List).map((e) => Map<String, dynamic>.from(e as Map)).toList()
+              : [];
+          _loading = false;
+        });
+      } else {
+        setState(() {
+          _loading = false;
+          _error = data['message']?.toString() ?? 'فشل جلب الاستمارات السابقة.';
+        });
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _error = 'تعذر الاتصال بخادم الأرشيف: $e';
+      });
+    }
+  }
+
+  Future<void> _openArchive(Map<String, dynamic> archive) async {
+    final name = archive['name']?.toString() ?? '';
+    if (name.isEmpty) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => RegistrationArchiveDetailsPage(isDark: widget.isDark, archiveName: name),
+      ),
+    );
+  }
+
+  Widget _folderCard(Map<String, dynamic> a, int index) {
+    final count = a['registrations_count']?.toString() ?? '0';
+    final date = a['archived_at']?.toString() ?? '';
+    final name = a['name']?.toString() ?? 'استمارة محفوظة';
+    return TweenAnimationBuilder<double>(
+      duration: Duration(milliseconds: 260 + (index * 45).clamp(0, 360)),
+      tween: Tween(begin: 0, end: 1),
+      curve: Curves.easeOutCubic,
+      builder: (context, value, child) {
+        return Opacity(
+          opacity: value,
+          child: Transform.translate(offset: Offset(0, 18 * (1 - value)), child: child),
+        );
+      },
+      child: InkWell(
+        onTap: () => _openArchive(a),
+        borderRadius: BorderRadius.circular(26),
+        child: Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: _card,
+            borderRadius: BorderRadius.circular(26),
+            border: Border.all(color: _gold.withOpacity(0.18)),
+            boxShadow: [
+              BoxShadow(color: _gold.withOpacity(widget.isDark ? 0.07 : 0.12), blurRadius: 24, offset: const Offset(0, 14)),
+            ],
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    width: 58,
+                    height: 48,
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(colors: [_gold.withOpacity(0.95), const Color(0xFFFFE7A0)]),
+                      borderRadius: const BorderRadius.only(
+                        topLeft: Radius.circular(14),
+                        topRight: Radius.circular(18),
+                        bottomLeft: Radius.circular(18),
+                        bottomRight: Radius.circular(18),
+                      ),
+                    ),
+                    child: const Icon(Icons.folder_rounded, color: Color(0xFF1A1000), size: 32),
+                  ),
+                  const Spacer(),
+                  Icon(Icons.arrow_back_ios_new_rounded, color: _gold, size: 17),
+                ],
+              ),
+              const SizedBox(height: 14),
+              Text(name, maxLines: 2, overflow: TextOverflow.ellipsis, style: TextStyle(color: _text, fontWeight: FontWeight.w900, fontSize: 15, height: 1.35)),
+              const SizedBox(height: 8),
+              Text('عدد المسجلين: $count', style: TextStyle(color: _sub, fontSize: 12, fontWeight: FontWeight.w700)),
+              if (date.isNotEmpty) ...[
+                const SizedBox(height: 4),
+                Text(date, style: TextStyle(color: _sub, fontSize: 11)),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _emptyState() {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          Icon(Icons.folder_off_rounded, color: _gold, size: 58),
+          const SizedBox(height: 12),
+          Text('لا توجد استمارات سابقة', style: TextStyle(color: _text, fontWeight: FontWeight.w900, fontSize: 17)),
+          const SizedBox(height: 8),
+          Text('عند إنهاء الاستمارة الحالية سيظهر مجلدها هنا داخل التطبيق، بدون فتح متصفح ولا طقوس بدائية.', textAlign: TextAlign.center, style: TextStyle(color: _sub, height: 1.6)),
+        ]),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Directionality(
+      textDirection: TextDirection.rtl,
+      child: Scaffold(
+        backgroundColor: _bg,
+        appBar: AppBar(
+          backgroundColor: _bg,
+          elevation: 0,
+          title: Text('الاستمارات السابقة', style: TextStyle(color: _text, fontWeight: FontWeight.w900)),
+          iconTheme: IconThemeData(color: _text),
+          actions: [IconButton(onPressed: _loadArchives, icon: Icon(Icons.refresh_rounded, color: _gold))],
+        ),
+        body: _loading
+            ? Center(child: CircularProgressIndicator(color: _gold))
+            : _error != null
+                ? Center(
+                    child: Padding(
+                      padding: const EdgeInsets.all(20),
+                      child: Column(mainAxisSize: MainAxisSize.min, children: [
+                        Icon(Icons.error_outline_rounded, color: Colors.red.shade400, size: 50),
+                        const SizedBox(height: 12),
+                        Text(_error!, textAlign: TextAlign.center, style: TextStyle(color: _text, height: 1.6)),
+                        const SizedBox(height: 14),
+                        ElevatedButton.icon(onPressed: _loadArchives, icon: const Icon(Icons.refresh_rounded), label: const Text('إعادة المحاولة')),
+                      ]),
+                    ),
+                  )
+                : _archives.isEmpty
+                    ? _emptyState()
+                    : GridView.builder(
+                        padding: const EdgeInsets.fromLTRB(16, 12, 16, 100),
+                        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: 2,
+                          crossAxisSpacing: 12,
+                          mainAxisSpacing: 12,
+                          childAspectRatio: 0.86,
+                        ),
+                        itemCount: _archives.length,
+                        itemBuilder: (_, i) => _folderCard(_archives[i], i),
+                      ),
+      ),
+    );
+  }
+}
+
+class RegistrationArchiveDetailsPage extends StatefulWidget {
+  final bool isDark;
+  final String archiveName;
+
+  const RegistrationArchiveDetailsPage({super.key, required this.isDark, required this.archiveName});
+
+  @override
+  State<RegistrationArchiveDetailsPage> createState() => _RegistrationArchiveDetailsPageState();
+}
+
+class _RegistrationArchiveDetailsPageState extends State<RegistrationArchiveDetailsPage> {
+  static const _api = 'https://majidalbana.com/admin/registrations/registrations_api.php';
+
+  bool _loading = true;
+  String? _error;
+  List<Map<String, dynamic>> _registrations = [];
+  List<Map<String, dynamic>> _attendance = [];
+  String _archivedAt = '';
+
+  Color get _gold => const Color(0xFFD4A017);
+  Color get _bg => widget.isDark ? const Color(0xFF101010) : const Color(0xFFF7F3EC);
+  Color get _card => widget.isDark ? const Color(0xFF181818) : Colors.white;
+  Color get _text => widget.isDark ? Colors.white : const Color(0xFF1A1000);
+  Color get _sub => widget.isDark ? Colors.white70 : Colors.black54;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadDetails();
+  }
+
+  Map<String, dynamic> _safeJson(String body) {
+    final clean = body.trim();
+    if (clean.isEmpty) return {'success': false, 'message': 'الخادم رجع رد فارغ.'};
+    try {
+      final decoded = jsonDecode(clean);
+      if (decoded is Map<String, dynamic>) return decoded;
+      if (decoded is Map) return Map<String, dynamic>.from(decoded);
+      return {'success': false, 'message': 'رد الخادم غير مفهوم.'};
+    } catch (_) {
+      final preview = clean.replaceAll(RegExp(r'<[^>]*>'), ' ').replaceAll(RegExp(r'\s+'), ' ').trim();
+      return {'success': false, 'message': preview.isEmpty ? 'رد الخادم غير صالح.' : preview};
+    }
+  }
+
+  Future<void> _loadDetails() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final uri = Uri.parse('$_api?action=archive_detail&archive_name=${Uri.encodeComponent(widget.archiveName)}');
+      final res = await http.get(uri).timeout(const Duration(seconds: 18));
+      final data = _safeJson(res.body);
+      if (!mounted) return;
+      if (res.statusCode >= 200 && res.statusCode < 300 && data['success'] == true) {
+        setState(() {
+          _registrations = data['registrations'] is List
+              ? (data['registrations'] as List).map((e) => Map<String, dynamic>.from(e as Map)).toList()
+              : [];
+          _attendance = data['attendance'] is List
+              ? (data['attendance'] as List).map((e) => Map<String, dynamic>.from(e as Map)).toList()
+              : [];
+          _archivedAt = data['archived_at']?.toString() ?? '';
+          _loading = false;
+        });
+      } else {
+        setState(() {
+          _loading = false;
+          _error = data['message']?.toString() ?? 'فشل فتح الاستمارة السابقة.';
+        });
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _error = 'تعذر الاتصال بخادم الأرشيف: $e';
+      });
+    }
+  }
+
+  Widget _personCard(Map<String, dynamic> r) {
+    final name = r['full_name']?.toString() ?? '';
+    final cert = r['certificate']?.toString() ?? '';
+    final phone = r['phone']?.toString() ?? '';
+    final email = r['email']?.toString() ?? '';
+    final attendance = r['attendance_count']?.toString() ?? '0';
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.all(13),
+      decoration: BoxDecoration(color: _card, borderRadius: BorderRadius.circular(20), border: Border.all(color: _gold.withOpacity(0.14))),
+      child: Row(children: [
+        ClipOval(
+  child: Container(
+    width: 52,
+    height: 52,
+    color: _gold.withOpacity(0.13),
+    child: (() {
+      final url = r['photo_url']?.toString().trim() ?? '';
+      if (url.isEmpty) {
+        return Icon(Icons.person_rounded, color: _gold, size: 28);
+      }
+
+      return Image.network(
+        url,
+        fit: BoxFit.cover,
+        headers: const {
+          'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+        },
+        errorBuilder: (_, __, ___) {
+          return Icon(Icons.person_rounded, color: _gold, size: 28);
+        },
+      );
+    })(),
+  ),
+),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(name, style: TextStyle(color: _text, fontWeight: FontWeight.w900)),
+            const SizedBox(height: 4),
+            Text('$cert • $phone\n$email\nالحضور: $attendance', style: TextStyle(color: _sub, fontSize: 12, height: 1.45)),
+          ]),
+        ),
+      ]),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Directionality(
+      textDirection: TextDirection.rtl,
+      child: Scaffold(
+        backgroundColor: _bg,
+        appBar: AppBar(
+          backgroundColor: _bg,
+          elevation: 0,
+          title: Text(widget.archiveName, style: TextStyle(color: _text, fontWeight: FontWeight.w900, fontSize: 17)),
+          iconTheme: IconThemeData(color: _text),
+        ),
+        body: _loading
+            ? Center(child: CircularProgressIndicator(color: _gold))
+            : _error != null
+                ? Center(child: Padding(padding: const EdgeInsets.all(20), child: Text(_error!, textAlign: TextAlign.center, style: TextStyle(color: _text, height: 1.6))))
+                : ListView(
+                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 100),
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(24),
+                          gradient: LinearGradient(colors: widget.isDark ? [const Color(0xFF221700), const Color(0xFF121212)] : [const Color(0xFFFFF5DF), Colors.white]),
+                          border: Border.all(color: _gold.withOpacity(0.2)),
+                        ),
+                        child: Row(children: [
+                          Icon(Icons.folder_open_rounded, color: _gold, size: 38),
+                          const SizedBox(width: 12),
+                          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                            Text('أرشيف ${widget.archiveName}', style: TextStyle(color: _text, fontWeight: FontWeight.w900, fontSize: 16)),
+                            const SizedBox(height: 6),
+                            Text('عدد المسجلين: ${_registrations.length}${_archivedAt.isNotEmpty ? ' • $_archivedAt' : ''}\nسجلات الحضور: ${_attendance.length}', style: TextStyle(color: _sub, height: 1.55)),
+                          ])),
+                        ]),
+                      ),
+                      const SizedBox(height: 14),
+                      if (_registrations.isEmpty)
+                        Text('هذا الأرشيف فارغ، وهذا بحد ذاته إنجاز إداري غامض.', style: TextStyle(color: _sub))
+                      else
+                        ..._registrations.map(_personCard),
+                    ],
+                  ),
+      ),
+    );
+  }
+}
+
+
+class AttendancePage extends StatefulWidget {
+  final bool isDark;
+  final List<_ScheduleItem> schedule;
+
+  const AttendancePage({
+    super.key,
+    required this.isDark,
+    required this.schedule,
+  });
+
+  @override
+  State<AttendancePage> createState() => _AttendancePageState();
+}
+
+class _AttendancePageState extends State<AttendancePage> {
+  static const _api = 'https://majidalbana.com/admin/registrations/registrations_api.php';
+  final _searchCtrl = TextEditingController();
+  _ScheduleItem? _selectedLecture;
+  bool _loading = false;
+  bool _saving = false;
+  List<Map<String, dynamic>> _registrations = [];
+  final Set<int> _presentIds = <int>{};
+
+  Color get _gold => const Color(0xFFD4A017);
+  Color get _bg => widget.isDark ? const Color(0xFF101010) : const Color(0xFFF7F3EC);
+  Color get _card => widget.isDark ? const Color(0xFF181818) : Colors.white;
+  Color get _text => widget.isDark ? Colors.white : const Color(0xFF1A1000);
+  Color get _sub => widget.isDark ? Colors.white70 : Colors.black54;
+
+  @override
+  void dispose() {
+    _searchCtrl.dispose();
+    super.dispose();
+  }
+
+  void _toast(String msg) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+  }
+
+  Future<void> _loadAttendance(_ScheduleItem lecture) async {
+    setState(() {
+      _selectedLecture = lecture;
+      _loading = true;
+      _registrations = [];
+      _presentIds.clear();
+      _searchCtrl.clear();
+    });
+    try {
+      final uri = Uri.parse('$_api?action=attendance_get&schedule_id=${Uri.encodeComponent(lecture.id)}');
+      final res = await http.get(uri).timeout(const Duration(seconds: 15));
+      final data = jsonDecode(res.body) as Map<String, dynamic>;
+      if (!mounted) return;
+      if (res.statusCode >= 200 && res.statusCode < 300 && data['success'] == true) {
+        final regs = data['registrations'] is List
+            ? (data['registrations'] as List).map((e) => Map<String, dynamic>.from(e as Map)).toList()
+            : <Map<String, dynamic>>[];
+        setState(() {
+          _registrations = regs;
+          _presentIds
+            ..clear()
+            ..addAll(regs.where((r) => r['present'] == true || r['present'].toString() == '1').map((r) => int.tryParse(r['id'].toString()) ?? 0).where((id) => id > 0));
+          _loading = false;
+        });
+      } else {
+        setState(() => _loading = false);
+        _toast(data['message']?.toString() ?? 'فشل جلب الحضور');
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _loading = false);
+      _toast('فشل الاتصال بالخادم: $e');
+    }
+  }
+
+  Future<void> _saveAttendance() async {
+    if (_selectedLecture == null) return;
+    setState(() => _saving = true);
+    try {
+      final res = await http.post(
+        Uri.parse(_api),
+        body: {
+          'action': 'attendance_save',
+          'schedule_id': _selectedLecture!.id,
+          'present_ids': jsonEncode(_presentIds.toList()),
+        },
+      ).timeout(const Duration(seconds: 20));
+      final data = jsonDecode(res.body) as Map<String, dynamic>;
+      if (!mounted) return;
+      setState(() => _saving = false);
+      if (res.statusCode >= 200 && res.statusCode < 300 && data['success'] == true) {
+        _toast(data['message']?.toString() ?? 'تم حفظ الحضور');
+        await _loadAttendance(_selectedLecture!);
+      } else {
+        _toast(data['message']?.toString() ?? 'فشل حفظ الحضور');
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _saving = false);
+      _toast('فشل الاتصال بالخادم: $e');
+    }
+  }
+
+  Widget _avatar(Map<String, dynamic> r, double size) {
+    final url = r['photo_url']?.toString() ?? '';
+    return ClipOval(
+      child: Container(
+        width: size,
+        height: size,
+        color: _gold.withOpacity(0.13),
+        child: url.isEmpty
+            ? Icon(Icons.person_rounded, color: _gold, size: size * 0.45)
+            : Image.network(url, fit: BoxFit.cover, errorBuilder: (_, __, ___) => Icon(Icons.person_rounded, color: _gold)),
+      ),
+    );
+  }
+
+  Widget _lecturePicker() {
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 100),
+      children: [
+        Container(
+          padding: const EdgeInsets.all(18),
+          decoration: BoxDecoration(
+            color: _card,
+            borderRadius: BorderRadius.circular(24),
+            border: Border.all(color: _gold.withOpacity(0.18)),
+          ),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text('اختيار المحاضرة', style: TextStyle(color: _text, fontWeight: FontWeight.w900, fontSize: 18)),
+            const SizedBox(height: 8),
+            Text('اضغط على محاضرة من جدول المحاضرات، وبعدها تظهر قائمة المسجلين لتحديد الحضور. نظام بسيط، على غير عادة البشر مع النماذج. ✅', style: TextStyle(color: _sub, height: 1.7)),
+          ]),
+        ),
+        const SizedBox(height: 14),
+        if (widget.schedule.isEmpty)
+          Container(
+            padding: const EdgeInsets.all(18),
+            decoration: BoxDecoration(color: _card, borderRadius: BorderRadius.circular(22)),
+            child: Text('لا توجد محاضرات في الجدول حالياً.', style: TextStyle(color: _sub)),
+          )
+        else
+          ...widget.schedule.map((lecture) => Container(
+                margin: const EdgeInsets.only(bottom: 10),
+                decoration: BoxDecoration(
+                  color: _card,
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: _gold.withOpacity(0.16)),
+                ),
+                child: ListTile(
+                  onTap: () => _loadAttendance(lecture),
+                  leading: CircleAvatar(
+                    backgroundColor: _gold.withOpacity(0.16),
+                    child: Text(lecture.lectureNumber, style: TextStyle(color: _gold, fontWeight: FontWeight.w900)),
+                  ),
+                  title: Text('المحاضرة ${lecture.lectureNumber}', style: TextStyle(color: _text, fontWeight: FontWeight.w900)),
+                  subtitle: Text('${lecture.day} • ${lecture.time}\n${lecture.location}', style: TextStyle(color: _sub, height: 1.5)),
+                  trailing: Icon(Icons.arrow_back_ios_new_rounded, color: _gold, size: 18),
+                ),
+              )),
+      ],
+    );
+  }
+
+  Widget _attendanceList() {
+    final q = _searchCtrl.text.trim().toLowerCase();
+    final shown = q.isEmpty
+        ? _registrations
+        : _registrations.where((r) {
+            final hay = '${r['full_name'] ?? ''} ${r['phone'] ?? ''} ${r['email'] ?? ''} ${r['certificate'] ?? ''}'.toLowerCase();
+            return hay.contains(q);
+          }).toList();
+
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 100),
+      children: [
+        Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: _card,
+            borderRadius: BorderRadius.circular(24),
+            border: Border.all(color: _gold.withOpacity(0.18)),
+          ),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Row(children: [
+              CircleAvatar(
+                backgroundColor: _gold.withOpacity(0.16),
+                child: Text(_selectedLecture!.lectureNumber, style: TextStyle(color: _gold, fontWeight: FontWeight.w900)),
+              ),
+              const SizedBox(width: 10),
+              Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text('حضور المحاضرة ${_selectedLecture!.lectureNumber}', style: TextStyle(color: _text, fontWeight: FontWeight.w900, fontSize: 16)),
+                const SizedBox(height: 3),
+                Text('${_selectedLecture!.day} • ${_selectedLecture!.time}', style: TextStyle(color: _sub)),
+              ])),
+              TextButton.icon(onPressed: () => setState(() => _selectedLecture = null), icon: const Icon(Icons.swap_horiz_rounded), label: const Text('تغيير')),
+            ]),
+            const SizedBox(height: 14),
+            TextField(
+              controller: _searchCtrl,
+              onChanged: (_) => setState(() {}),
+              style: TextStyle(color: _text),
+              decoration: InputDecoration(
+                prefixIcon: Icon(Icons.search_rounded, color: _gold),
+                hintText: 'بحث بالاسم أو الهاتف أو البريد',
+                hintStyle: TextStyle(color: _sub),
+                filled: true,
+                fillColor: widget.isDark ? const Color(0xFF111111) : const Color(0xFFFAFAFA),
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(18), borderSide: BorderSide(color: _gold.withOpacity(0.18))),
+                enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(18), borderSide: BorderSide(color: _gold.withOpacity(0.18))),
+                focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(18), borderSide: BorderSide(color: _gold, width: 1.4)),
+              ),
+            ),
+            const SizedBox(height: 10),
+            Text('الحاضرون المحددون: ${_presentIds.length} من ${_registrations.length}', style: TextStyle(color: _sub, fontWeight: FontWeight.w700)),
+          ]),
+        ),
+        const SizedBox(height: 14),
+        if (_loading)
+          Center(child: Padding(padding: const EdgeInsets.all(26), child: CircularProgressIndicator(color: _gold)))
+        else if (shown.isEmpty)
+          Container(
+            padding: const EdgeInsets.all(18),
+            decoration: BoxDecoration(color: _card, borderRadius: BorderRadius.circular(22)),
+            child: Text('لا توجد نتائج. البحث فعل ما عليه، والباقي على البيانات.', style: TextStyle(color: _sub)),
+          )
+        else
+          ...shown.map((r) {
+            final id = int.tryParse(r['id'].toString()) ?? 0;
+            final present = _presentIds.contains(id);
+            return Container(
+              margin: const EdgeInsets.only(bottom: 10),
+              decoration: BoxDecoration(
+                color: present ? _gold.withOpacity(widget.isDark ? 0.16 : 0.12) : _card,
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: present ? _gold.withOpacity(0.55) : _gold.withOpacity(0.14)),
+              ),
+              child: CheckboxListTile(
+                value: present,
+                activeColor: _gold,
+                checkColor: const Color(0xFF1A1000),
+                onChanged: (v) {
+                  setState(() {
+                    if (v == true) {
+                      _presentIds.add(id);
+                    } else {
+                      _presentIds.remove(id);
+                    }
+                  });
+                },
+                secondary: _avatar(r, 46),
+                title: Text(r['full_name']?.toString() ?? '', style: TextStyle(color: _text, fontWeight: FontWeight.w900)),
+                subtitle: Text('${r['phone'] ?? ''} • ${r['certificate'] ?? ''}\nمجموع الحضور: ${r['attendance_count'] ?? 0}', style: TextStyle(color: _sub, height: 1.45)),
+              ),
+            );
+          }),
+      ],
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Directionality(
+      textDirection: TextDirection.rtl,
+      child: Scaffold(
+        backgroundColor: _bg,
+        appBar: AppBar(
+          backgroundColor: _bg,
+          elevation: 0,
+          title: Text('الحضور', style: TextStyle(color: _text, fontWeight: FontWeight.w900)),
+          iconTheme: IconThemeData(color: _text),
+          actions: [
+            if (_selectedLecture != null)
+              Padding(
+                padding: const EdgeInsetsDirectional.only(end: 8),
+                child: TextButton.icon(
+                  onPressed: _saving ? null : _saveAttendance,
+                  icon: _saving
+                      ? SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: _gold))
+                      : Icon(Icons.save_rounded, color: _gold),
+                  label: Text(_saving ? 'حفظ...' : 'حفظ', style: TextStyle(color: _gold, fontWeight: FontWeight.w900)),
+                ),
+              ),
+          ],
+        ),
+        body: _selectedLecture == null ? _lecturePicker() : _attendanceList(),
+      ),
+    );
+  }
+}
+
+
 class _AdminAddBox extends StatefulWidget {
   final bool isDark;
   final Color cardBg, textPrimary, textSub;
@@ -1976,6 +3428,427 @@ class _EditBottomSheetState extends State<_EditBottomSheet> {
               ],
             ),
           ),
+        ),
+      ),
+    );
+  }
+}
+
+
+class _PreviousCoursesGalleryCard extends StatefulWidget {
+  final bool isDark;
+  final Color textPrimary;
+  final Color textSub;
+  final Color cardBg;
+
+  const _PreviousCoursesGalleryCard({
+    required this.isDark,
+    required this.textPrimary,
+    required this.textSub,
+    required this.cardBg,
+  });
+
+  @override
+  State<_PreviousCoursesGalleryCard> createState() =>
+      _PreviousCoursesGalleryCardState();
+}
+
+class _PreviousCoursesGalleryCardState
+    extends State<_PreviousCoursesGalleryCard>
+    with SingleTickerProviderStateMixin {
+  static const gold = Color(0xFFD4A017);
+  static const List<String> _courseImages = [
+    'https://majidalbana.com/img/imagesfromcourses/1.jpg',
+    'https://majidalbana.com/img/imagesfromcourses/2.jpg',
+    'https://majidalbana.com/img/imagesfromcourses/3.jpg',
+    'https://majidalbana.com/img/imagesfromcourses/4.jpg',
+    'https://majidalbana.com/img/imagesfromcourses/5.jpg',
+    'https://majidalbana.com/img/imagesfromcourses/6.jpg',
+    'https://majidalbana.com/img/imagesfromcourses/7.jpg',
+    'https://majidalbana.com/img/imagesfromcourses/8.jpg',
+    'https://majidalbana.com/img/imagesfromcourses/9.jpg',
+    'https://majidalbana.com/img/imagesfromcourses/10.jpg',
+    'https://majidalbana.com/img/imagesfromcourses/11.jpg',
+  ];
+
+  late final AnimationController _controller;
+  int _index = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 4300),
+    )
+      ..addStatusListener((status) {
+        if (status == AnimationStatus.completed) {
+          if (!mounted) return;
+          setState(() => _index = (_index + 1) % _courseImages.length);
+          _controller.forward(from: 0);
+        }
+      })
+      ..forward();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    for (final url in _courseImages) {
+      precacheImage(NetworkImage(url), context);
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  Widget _buildAnimatedImage(String url, double progress) {
+    final eased = Curves.easeInOutCubic.transform(progress);
+    final mode = _index % 7;
+
+    double scale = 1.04;
+    double dx = 0;
+    double dy = 0;
+    double angle = 0;
+
+    switch (mode) {
+      case 0:
+        scale = 1.08 - (eased * 0.035);
+        dx = -16 + (eased * 32);
+        break;
+      case 1:
+        scale = 1.04 + (eased * 0.045);
+        dy = 14 - (eased * 28);
+        break;
+      case 2:
+        scale = 1.09 - (eased * 0.05);
+        dx = 12 - (eased * 24);
+        dy = -8 + (eased * 16);
+        break;
+      case 3:
+        scale = 1.05 + (math.sin(eased * math.pi) * 0.035);
+        angle = (-0.010 + (eased * 0.020));
+        break;
+      case 4:
+        scale = 1.07;
+        dx = math.sin(eased * math.pi * 2) * 12;
+        dy = math.cos(eased * math.pi * 2) * 7;
+        break;
+      case 5:
+        scale = 1.10 - (eased * 0.04);
+        dx = -10 + (eased * 20);
+        dy = 10 - (eased * 20);
+        angle = 0.008 - (eased * 0.016);
+        break;
+      default:
+        scale = 1.045 + (eased * 0.035);
+        dx = 18 - (eased * 36);
+        break;
+    }
+
+    return Transform.translate(
+      offset: Offset(dx, dy),
+      child: Transform.rotate(
+        angle: angle,
+        child: Transform.scale(
+          scale: scale,
+          child: Image.network(
+            url,
+            fit: BoxFit.cover,
+            filterQuality: FilterQuality.high,
+            loadingBuilder: (context, child, loadingProgress) {
+              if (loadingProgress == null) return child;
+              return Container(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topRight,
+                    end: Alignment.bottomLeft,
+                    colors: widget.isDark
+                        ? const [Color(0xFF161616), Color(0xFF080808)]
+                        : const [Color(0xFFFFF8E8), Color(0xFFFFEDC2)],
+                  ),
+                ),
+                alignment: Alignment.center,
+                child: const SizedBox(
+                  width: 24,
+                  height: 24,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2.2,
+                    color: gold,
+                  ),
+                ),
+              );
+            },
+            errorBuilder: (_, __, ___) => Container(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topRight,
+                  end: Alignment.bottomLeft,
+                  colors: widget.isDark
+                      ? const [Color(0xFF1B1B1B), Color(0xFF090909)]
+                      : const [Color(0xFFFFF5DD), Color(0xFFFFE3A3)],
+                ),
+              ),
+              alignment: Alignment.center,
+              child: Icon(
+                Icons.broken_image_rounded,
+                color: widget.textSub.withOpacity(0.75),
+                size: 36,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCinemaOverlay(double progress) {
+    final mode = _index % 7;
+    final glowShift = -1.2 + (progress * 2.4);
+    final pulse = Curves.easeInOut.transform(math.sin(progress * math.pi));
+
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        DecoratedBox(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [
+                Colors.black.withOpacity(0.05),
+                Colors.transparent,
+                Colors.black.withOpacity(widget.isDark ? 0.32 : 0.22),
+              ],
+            ),
+          ),
+        ),
+        if (mode == 1 || mode == 4 || mode == 6)
+          Transform.translate(
+            offset: Offset(glowShift * 260, 0),
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [
+                    Colors.transparent,
+                    Colors.white.withOpacity(0.10),
+                    const Color(0xFFFFD86B).withOpacity(0.12),
+                    Colors.transparent,
+                  ],
+                  stops: const [0.0, 0.43, 0.50, 1.0],
+                ),
+              ),
+            ),
+          ),
+        if (mode == 2 || mode == 5)
+          DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: RadialGradient(
+                center: Alignment(
+                  -0.8 + (progress * 1.6),
+                  -0.6 + (math.sin(progress * math.pi) * 0.45),
+                ),
+                radius: 0.9,
+                colors: [
+                  Colors.white.withOpacity(0.16 * pulse),
+                  const Color(0xFFFFD86B).withOpacity(0.06 * pulse),
+                  Colors.transparent,
+                ],
+              ),
+            ),
+          ),
+        Positioned(
+          left: 12,
+          right: 12,
+          bottom: 12,
+          child: Row(
+            children: List.generate(_courseImages.length, (i) {
+              final active = i == _index;
+              return Expanded(
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 450),
+                  height: active ? 4 : 3,
+                  margin: const EdgeInsets.symmetric(horizontal: 2),
+                  decoration: BoxDecoration(
+                    color: active
+                        ? gold.withOpacity(0.95)
+                        : Colors.white.withOpacity(0.28),
+                    borderRadius: BorderRadius.circular(20),
+                    boxShadow: active
+                        ? [
+                            BoxShadow(
+                              color: gold.withOpacity(0.55),
+                              blurRadius: 8,
+                            ),
+                          ]
+                        : null,
+                  ),
+                ),
+              );
+            }),
+          ),
+        ),
+      ],
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: widget.cardBg,
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: gold.withOpacity(0.16)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(widget.isDark ? 0.24 : 0.06),
+            blurRadius: 14,
+            offset: const Offset(0, 5),
+          ),
+          BoxShadow(
+            color: gold.withOpacity(0.08),
+            blurRadius: 18,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  width: 4,
+                  height: 20,
+                  decoration: BoxDecoration(
+                    color: gold,
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    'صور من الدورات السابقة',
+                    style: TextStyle(
+                      color: widget.textPrimary,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                  decoration: BoxDecoration(
+                    color: gold.withOpacity(widget.isDark ? 0.18 : 0.14),
+                    borderRadius: BorderRadius.circular(100),
+                    border: Border.all(color: gold.withOpacity(0.28)),
+                  ),
+                  child: AnimatedBuilder(
+                    animation: _controller,
+                    builder: (context, _) => Text(
+                      '${_index + 1}/${_courseImages.length}',
+                      style: TextStyle(
+                        color: widget.isDark ? const Color(0xFFFFE3A1) : gold,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 14),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(22),
+              child: Container(
+                decoration: BoxDecoration(
+                  color: widget.isDark
+                      ? const Color(0xFF111111)
+                      : const Color(0xFFFFFBF4),
+                ),
+                child: AspectRatio(
+                  aspectRatio: 16 / 9,
+                  child: AnimatedBuilder(
+                    animation: _controller,
+                    builder: (context, _) {
+                      final progress = _controller.value;
+                      return Stack(
+                        fit: StackFit.expand,
+                        children: [
+                          AnimatedSwitcher(
+                            duration: const Duration(milliseconds: 850),
+                            switchInCurve: Curves.easeOutCubic,
+                            switchOutCurve: Curves.easeInCubic,
+                            transitionBuilder: (child, animation) {
+                              final slide = Tween<Offset>(
+                                begin: Offset(_index.isEven ? 0.18 : -0.18, 0),
+                                end: Offset.zero,
+                              ).animate(animation);
+                              final scale = Tween<double>(
+                                begin: 1.04,
+                                end: 1.0,
+                              ).animate(animation);
+                              return FadeTransition(
+                                opacity: animation,
+                                child: SlideTransition(
+                                  position: slide,
+                                  child: ScaleTransition(
+                                    scale: scale,
+                                    child: child,
+                                  ),
+                                ),
+                              );
+                            },
+                            child: KeyedSubtree(
+                              key: ValueKey(_courseImages[_index]),
+                              child: _buildAnimatedImage(
+                                _courseImages[_index],
+                                progress,
+                              ),
+                            ),
+                          ),
+                          IgnorePointer(child: _buildCinemaOverlay(progress)),
+                          Positioned(
+                            top: 12,
+                            right: 12,
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 10,
+                                vertical: 5,
+                              ),
+                              decoration: BoxDecoration(
+                                color: Colors.black.withOpacity(0.38),
+                                borderRadius: BorderRadius.circular(100),
+                                border: Border.all(
+                                  color: Colors.white.withOpacity(0.16),
+                                ),
+                              ),
+                              child: const Text(
+                                'لقطات واقعية',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      );
+                    },
+                  ),
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );

@@ -48,6 +48,58 @@
           ]
         }
       }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:14634099103:android:da7f7231b5eb260e3d1daa",
+        "android_client_info": {
+          "package_name": "com.majidalbana.app"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "14634099103-e1o71rr11qkape3gslka0d7d62f6jr4t.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.majidalbana.app",
+            "certificate_hash": "bc0f5cadd3ad0f572ba785720d42657218784cec"
+          }
+        },
+        {
+          "client_id": "14634099103-rk6shjiajuav230ba2rv3vnvmimcc549.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.majidalbana.app",
+            "certificate_hash": "adeb2dfc7d1d009a09f3fbe794f4ae8f9ceb4dd7"
+          }
+        },
+        {
+          "client_id": "14634099103-e276mc30gdd5hggf40ealn082muo53mj.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDMV2wujC4KKKTrVIiX45pO4EI25RlOdHY"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "14634099103-e276mc30gdd5hggf40ealn082muo53mj.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "14634099103-n5r847gqsgga7hdghhbvblpqg2tnjkc1.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.example.majidalbana"
+              }
+            }
+          ]
+        }
+      }
     }
   ],
   "configuration_version": "1"

@@ -52,13 +52,13 @@ class DefaultFirebaseOptions {
     storageBucket: 'majidalbana-c2da3.firebasestorage.app',
   );
 
-  static const FirebaseOptions android = FirebaseOptions(
-    apiKey: 'AIzaSyDMV2wujC4KKKTrVIiX45pO4EI25RlOdHY',
-    appId: '1:14634099103:android:884c0d2554674fe63d1daa',
-    messagingSenderId: '14634099103',
-    projectId: 'majidalbana-c2da3',
-    storageBucket: 'majidalbana-c2da3.firebasestorage.app',
-  );
+static const FirebaseOptions android = FirebaseOptions(
+  apiKey: 'AIzaSyDMV2wujC4KKKTrVIiX45pO4EI25RlOdHY',
+  appId: '1:14634099103:android:da7f7231b5eb260e3d1daa',
+  messagingSenderId: '14634099103',
+  projectId: 'majidalbana-c2da3',
+  storageBucket: 'majidalbana-c2da3.firebasestorage.app',
+);
   static const FirebaseOptions ios = FirebaseOptions(
     apiKey: 'AIzaSyACkgCBefJvqkkZh56fyw78PyQItqeF6fw',
     appId: '1:14634099103:ios:67e4f078bed0395f3d1daa',
@@ -67,7 +67,7 @@ class DefaultFirebaseOptions {
     storageBucket: 'majidalbana-c2da3.firebasestorage.app',
     androidClientId: '14634099103-jopb3156ul3kgfhihahc56lg1rsvt5lq.apps.googleusercontent.com',
     iosClientId: '14634099103-n5r847gqsgga7hdghhbvblpqg2tnjkc1.apps.googleusercontent.com',
-    iosBundleId: 'com.example.majidalbana',
+    iosBundleId: 'com.majidalbana.app',
   );
   static const FirebaseOptions macos = FirebaseOptions(
     apiKey: 'AIzaSyACkgCBefJvqkkZh56fyw78PyQItqeF6fw',
@@ -77,6 +77,6 @@ class DefaultFirebaseOptions {
     storageBucket: 'majidalbana-c2da3.firebasestorage.app',
     androidClientId: '14634099103-jopb3156ul3kgfhihahc56lg1rsvt5lq.apps.googleusercontent.com',
     iosClientId: '14634099103-n5r847gqsgga7hdghhbvblpqg2tnjkc1.apps.googleusercontent.com',
-    iosBundleId: 'com.example.majidalbana',
+    iosBundleId: 'com.majidalbana.app',
   );
 }
