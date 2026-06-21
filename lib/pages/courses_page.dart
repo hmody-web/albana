@@ -7,9 +7,244 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:image_picker/image_picker.dart';
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'dart:math' as math;
+import 'dart:typed_data';
+import 'package:pdf/pdf.dart';
+import 'package:pdf/widgets.dart' as pw;
+import 'package:printing/printing.dart';
 import '../widgets/shared_widgets.dart';
 
+String _registrationPdfValue(Map<String, dynamic> row, List<String> keys) {
+  for (final key in keys) {
+    final value = row[key];
+    if (value == null) continue;
+    final text = value.toString().trim();
+    if (text.isNotEmpty && text.toLowerCase() != 'null') return text;
+  }
+  return '-';
+}
+
+String _registrationPdfFileName(String title) {
+  final clean = title
+      .replaceAll(RegExp(r'[\\/:*?"<>|]+'), '_')
+      .replaceAll(RegExp(r'\s+'), '_')
+      .trim();
+  return '${clean.isEmpty ? 'registrations' : clean}.pdf';
+}
+
+Future<Uint8List> _buildRegistrationsPdfBytes({
+  required List<Map<String, dynamic>> registrations,
+  required String documentTitle,
+  String archiveLabel = '',
+}) async {
+  final doc = pw.Document(version: PdfVersion.pdf_1_5, compress: true);
+
+  pw.Font baseFont;
+  pw.Font boldFont;
+  try {
+    baseFont = await PdfGoogleFonts.cairoRegular();
+    boldFont = await PdfGoogleFonts.cairoBold();
+  } catch (_) {
+    baseFont = pw.Font.helvetica();
+    boldFont = pw.Font.helveticaBold();
+  }
+
+  pw.MemoryImage? logo;
+  try {
+    final logoData = await rootBundle.load('assets/images/logo.png');
+    logo = pw.MemoryImage(logoData.buffer.asUint8List());
+  } catch (_) {
+    logo = null;
+  }
+
+  pw.Widget text(
+    String value, {
+    double size = 10,
+    bool bold = false,
+    PdfColor? color,
+    pw.TextAlign align = pw.TextAlign.center,
+    double lineSpacing = 1.25,
+  }) {
+    return pw.Text(
+      value,
+      textDirection: pw.TextDirection.rtl,
+      textAlign: align,
+      style: pw.TextStyle(
+        font: bold ? boldFont : baseFont,
+        fontSize: size,
+        fontWeight: bold ? pw.FontWeight.bold : pw.FontWeight.normal,
+        color: color,
+        height: lineSpacing,
+      ),
+    );
+  }
+
+  pw.Widget cell(String value, {bool header = false}) {
+    return pw.Container(
+      alignment: pw.Alignment.center,
+      padding: const pw.EdgeInsets.symmetric(horizontal: 6, vertical: 7),
+      child: text(
+        value.isEmpty ? '-' : value,
+        size: header ? 10.5 : 9,
+        bold: header,
+        color: header ? PdfColors.white : PdfColor.fromHex('#211500'),
+      ),
+    );
+  }
+
+  final rows = registrations.asMap().entries.map((entry) {
+    final index = entry.key + 1;
+    final r = entry.value;
+    return <String>[
+      index.toString(),
+      _registrationPdfValue(r, const ['full_name', 'name']),
+      _registrationPdfValue(r, const ['email', 'account_email']),
+      _registrationPdfValue(r, const ['certificate', 'specialization', 'major']),
+      _registrationPdfValue(r, const ['graduation_year', 'grad_year']),
+    ];
+  }).toList();
+
+  doc.addPage(
+    pw.MultiPage(
+      pageFormat: PdfPageFormat.a4,
+      margin: const pw.EdgeInsets.fromLTRB(28, 24, 28, 30),
+      theme: pw.ThemeData.withFont(base: baseFont, bold: boldFont),
+      header: (context) => pw.Directionality(
+        textDirection: pw.TextDirection.rtl,
+        child: pw.Container(
+          alignment: pw.Alignment.center,
+          margin: const pw.EdgeInsets.only(bottom: 16),
+          child: pw.Column(
+            mainAxisAlignment: pw.MainAxisAlignment.center,
+            crossAxisAlignment: pw.CrossAxisAlignment.center,
+            children: [
+              if (logo != null)
+                pw.Image(
+                  logo!,
+                  width: 58,
+                  height: 58,
+                  fit: pw.BoxFit.contain,
+                ),
+              if (logo != null) pw.SizedBox(height: 7),
+              text('د. ماجد البنا', size: 18, bold: true, color: PdfColor.fromHex('#1A1000')),
+              pw.SizedBox(height: 4),
+              text('قائمة المسجلين بدورة تنمية مهندس الموقع', size: 12.5, bold: true, color: PdfColor.fromHex('#5F4108')),
+              pw.SizedBox(height: 4),
+              text(
+                archiveLabel.trim().isEmpty
+                    ? '$documentTitle • عدد المسجلين: ${registrations.length}'
+                    : '$documentTitle • $archiveLabel • عدد المسجلين: ${registrations.length}',
+                size: 9.5,
+                color: PdfColor.fromHex('#5B5146'),
+              ),
+              pw.SizedBox(height: 8),
+              pw.Container(
+                width: 150,
+                height: 1,
+                color: PdfColor.fromHex('#D4A017'),
+              ),
+            ],
+          ),
+        ),
+      ),
+      footer: (context) => pw.Directionality(
+        textDirection: pw.TextDirection.rtl,
+        child: pw.Container(
+          alignment: pw.Alignment.center,
+          padding: const pw.EdgeInsets.only(top: 8),
+          child: text('صفحة ${context.pageNumber} من ${context.pagesCount}', size: 8.5, color: PdfColor.fromHex('#7A705F')),
+        ),
+      ),
+      build: (context) => [
+        pw.Directionality(
+          textDirection: pw.TextDirection.rtl,
+          child: pw.Table(
+            border: pw.TableBorder.all(color: PdfColor.fromHex('#D9C7A3'), width: 0.6),
+            columnWidths: const {
+              0: pw.FlexColumnWidth(1.25),
+              1: pw.FlexColumnWidth(2.4),
+              2: pw.FlexColumnWidth(2.6),
+              3: pw.FlexColumnWidth(3.0),
+              4: pw.FlexColumnWidth(0.85),
+            },
+            children: [
+              pw.TableRow(
+                decoration: pw.BoxDecoration(color: PdfColor.fromHex('#D4A017')),
+                children: [
+                  cell('سنة التخرج', header: true),
+                  cell('الاختصاص', header: true),
+                  cell('البريد الإلكتروني', header: true),
+                  cell('الاسم', header: true),
+                  cell('ت', header: true),
+                ],
+              ),
+              ...rows.asMap().entries.map((entry) {
+                final index = entry.key;
+                final row = entry.value;
+                return pw.TableRow(
+                  decoration: pw.BoxDecoration(color: index.isEven ? PdfColors.white : PdfColor.fromHex('#FFFCF5')),
+                  children: [
+                    cell(row[4]),
+                    cell(row[3]),
+                    cell(row[2]),
+                    cell(row[1]),
+                    cell(row[0]),
+                  ],
+                );
+              }),
+            ],
+          ),
+        ),
+      ],
+    ),
+  );
+
+  return doc.save();
+}
+
+Future<void> _openRegistrationsPdfInsideApp(
+  BuildContext context, {
+  required List<Map<String, dynamic>> registrations,
+  required String documentTitle,
+  String archiveLabel = '',
+}) async {
+  if (registrations.isEmpty) {
+    ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+      const SnackBar(content: Text('لا توجد بيانات لإنشاء ملف PDF.')),
+    );
+    return;
+  }
+
+  try {
+    final bytes = await _buildRegistrationsPdfBytes(
+      registrations: registrations,
+      documentTitle: documentTitle,
+      archiveLabel: archiveLabel,
+    );
+    await Printing.layoutPdf(
+      name: _registrationPdfFileName(documentTitle),
+      format: PdfPageFormat.a4,
+      onLayout: (_) async => bytes,
+    );
+  } catch (_) {
+    ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+      const SnackBar(content: Text('تعذر إنشاء ملف PDF داخل التطبيق.')),
+    );
+  }
+}
+class CoursesPageDeepLinkBus {
+  static final ValueNotifier<String?> requestedScheduleId =
+      ValueNotifier<String?>(null);
+
+  static void openSchedule(String scheduleId) {
+    final id = scheduleId.trim();
+    if (id.isEmpty) return;
+
+    requestedScheduleId.value = null;
+    requestedScheduleId.value = id;
+  }
+}
 class CoursesPage extends StatefulWidget {
   final bool isDark;
   const CoursesPage({super.key, required this.isDark});
@@ -49,6 +284,64 @@ class _CoursesPageState extends State<CoursesPage>
   Timer? _pollTimer;
   String _lastScheduleHash = '';
 
+  final ScrollController _coursesScrollController = ScrollController();
+  final Map<String, GlobalKey> _scheduleRowKeys = <String, GlobalKey>{};
+  String? _highlightScheduleId;
+  Timer? _clearHighlightTimer;
+
+  void _syncScheduleRowKeys() {
+    final ids = _schedule.map((e) => e.id).where((id) => id.isNotEmpty).toSet();
+    _scheduleRowKeys.removeWhere((id, _) => !ids.contains(id));
+    for (final id in ids) {
+      _scheduleRowKeys.putIfAbsent(id, () => GlobalKey());
+    }
+  }
+
+  void _handleScheduleDeepLink() {
+    final id = CoursesPageDeepLinkBus.requestedScheduleId.value?.trim();
+    if (id == null || id.isEmpty) return;
+    _openScheduleFromNotification(id);
+  }
+
+  Future<void> _openScheduleFromNotification(String scheduleId) async {
+    _clearHighlightTimer?.cancel();
+
+    if (mounted) {
+      setState(() {
+        _highlightScheduleId = scheduleId;
+        _syncScheduleRowKeys();
+      });
+    }
+
+    _tabController.animateTo(0);
+
+    if (_schedule.indexWhere((e) => e.id == scheduleId) == -1) {
+      await _silentPollSchedule();
+      if (!mounted) return;
+      setState(_syncScheduleRowKeys);
+    }
+
+    Future<void>.delayed(const Duration(milliseconds: 450), () {
+      if (!mounted) return;
+
+      final rowContext = _scheduleRowKeys[scheduleId]?.currentContext;
+      if (rowContext != null) {
+        Scrollable.ensureVisible(
+          rowContext,
+          duration: const Duration(milliseconds: 850),
+          curve: Curves.easeOutCubic,
+          alignment: 0.42,
+        );
+      }
+
+      _clearHighlightTimer?.cancel();
+      _clearHighlightTimer = Timer(const Duration(seconds: 5), () {
+        if (!mounted) return;
+        setState(() => _highlightScheduleId = null);
+      });
+    });
+  }
+
   bool _isSupervisor(User? user) {
     final email = user?.email?.trim().toLowerCase();
     return email == 'hmode.qq@gmail.com' || email == 'hmode.qu@gmail.com';
@@ -58,8 +351,10 @@ class _CoursesPageState extends State<CoursesPage>
   void initState() {
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
+    CoursesPageDeepLinkBus.requestedScheduleId.addListener(_handleScheduleDeepLink);
     _fetchVideos();
     _fetchSchedule();
+    _handleScheduleDeepLink();
     // بدء المراقبة الخفية كل 8 ثواني
     _pollTimer = Timer.periodic(const Duration(seconds: 8), (_) {
       _silentPollSchedule();
@@ -68,7 +363,10 @@ class _CoursesPageState extends State<CoursesPage>
 
   @override
   void dispose() {
+    CoursesPageDeepLinkBus.requestedScheduleId.removeListener(_handleScheduleDeepLink);
+    _clearHighlightTimer?.cancel();
     _pollTimer?.cancel();
+    _coursesScrollController.dispose();
     _tabController.dispose();
     super.dispose();
   }
@@ -138,9 +436,13 @@ if (mounted) {
       if (!mounted) return;
       setState(() {
         _schedule = cached;
+        _syncScheduleRowKeys();
         _loadingSchedule = false;
         _lastScheduleHash = _computeHash(cached);
       });
+      if (_highlightScheduleId != null) {
+        _openScheduleFromNotification(_highlightScheduleId!);
+      }
       // ── 2. جلب التحديثات من الخادم في الخلفية ──
       _silentPollSchedule();
       return;
@@ -282,8 +584,12 @@ final urlMatch =
         if (!mounted) return;
         setState(() {
           _schedule = items;
+          _syncScheduleRowKeys();
           _lastScheduleHash = hash;
         });
+        if (_highlightScheduleId != null) {
+          _openScheduleFromNotification(_highlightScheduleId!);
+        }
       }
     } catch (_) {
       // فشل صامت — لا نُظهر خطأ للمستخدم
@@ -295,6 +601,7 @@ final urlMatch =
     final tempItem = item.copyWith(id: 'temp_${DateTime.now().millisecondsSinceEpoch}');
     setState(() {
       _schedule.insert(0, tempItem);
+      _syncScheduleRowKeys();
     });
 
     try {
@@ -314,6 +621,7 @@ final urlMatch =
         await _saveScheduleToCache(items);
         setState(() {
           _schedule = items;
+          _syncScheduleRowKeys();
           _lastScheduleHash = _computeHash(items);
         });
       }
@@ -330,6 +638,7 @@ final urlMatch =
     final backup = List<_ScheduleItem>.from(_schedule);
     setState(() {
       _schedule.removeWhere((e) => e.id == id);
+      _syncScheduleRowKeys();
     });
 
     try {
@@ -343,7 +652,10 @@ final urlMatch =
       }
     } catch (_) {
       if (!mounted) return;
-      setState(() => _schedule = backup);
+      setState(() {
+        _schedule = backup;
+        _syncScheduleRowKeys();
+      });
     }
   }
 
@@ -355,16 +667,28 @@ final urlMatch =
     final cardBg = isDark ? const Color(0xFF181818) : Colors.white;
     final bg = isDark ? const Color(0xFF111111) : const Color(0xFFF7F3EC);
 
+    _syncScheduleRowKeys();
+
     return StreamBuilder<User?>(
       stream: FirebaseAuth.instance.authStateChanges(),
       builder: (context, snapshot) {
         final user = snapshot.data;
         final isAdmin = _isSupervisor(user);
 
-        return CustomScrollView(
-          keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-          physics: const BouncingScrollPhysics(),
-          slivers: [
+        return NotificationListener<ScrollUpdateNotification>(
+  onNotification: (notification) {
+    if (notification.dragDetails != null) {
+      final focus = FocusManager.instance.primaryFocus;
+      if (focus != null && focus.hasFocus) {
+        focus.unfocus();
+      }
+    }
+    return false;
+  },
+  child: CustomScrollView(
+    keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+    physics: const BouncingScrollPhysics(),
+    slivers: [
             PremiumAppBar(title: 'الدورات والمحاضرات', isDark: isDark),
             SliverPersistentHeader(
               pinned: true,
@@ -385,6 +709,9 @@ final urlMatch =
                     cardBg: cardBg,
                     user: user,
                     schedule: _schedule,
+                    scrollController: _coursesScrollController,
+                    highlightedScheduleId: _highlightScheduleId,
+                    rowKeys: _scheduleRowKeys,
                     loadingSchedule: _loadingSchedule,
                     scheduleError: _scheduleError,
                     onRetrySchedule: _fetchSchedule,
@@ -458,6 +785,7 @@ final urlMatch =
               ),
             ),
           ],
+          ),
         );
       },
     );
@@ -643,6 +971,9 @@ class _CoursesTab extends StatelessWidget {
   final Color textPrimary, textSub, cardBg;
   final User? user;
   final List<_ScheduleItem> schedule;
+  final ScrollController scrollController;
+  final String? highlightedScheduleId;
+  final Map<String, GlobalKey> rowKeys;
   final bool loadingSchedule;
   final String? scheduleError;
   final VoidCallback onRetrySchedule;
@@ -659,6 +990,9 @@ class _CoursesTab extends StatelessWidget {
     required this.cardBg,
     required this.user,
     required this.schedule,
+    required this.scrollController,
+    required this.highlightedScheduleId,
+    required this.rowKeys,
     required this.loadingSchedule,
     required this.scheduleError,
     required this.onRetrySchedule,
@@ -674,6 +1008,8 @@ class _CoursesTab extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ListView(
+      controller: scrollController,
+      keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
       padding: const EdgeInsets.fromLTRB(16, 20, 16, 100),
       children: [
         // ── Course Card ──────────────────────────────────────────────────────
@@ -864,6 +1200,8 @@ class _CoursesTab extends StatelessWidget {
           onDelete: onDeleteSchedule,
           onEdit: onEditSchedule,
           onReorder: onReorderSchedule,
+          highlightScheduleId: highlightedScheduleId,
+          rowKeys: rowKeys,
         ),
 
         const SizedBox(height: 20),
@@ -976,25 +1314,34 @@ Future<void> _openRegistration() async {
                 ? 'استمارة التسجيل في دورة تنمية مهندس الموقع'
                 : 'التسجيل في الاستمارة مغلق حالياً';
 
+    final successGreen = _registered && !widget.isAdmin;
+    final accent = successGreen ? Colors.green.shade600 : gold;
+
     return InkWell(
       onTap: canOpen ? _openRegistration : null,
-      borderRadius: BorderRadius.circular(26),
-      child: Container(
+      borderRadius: BorderRadius.circular(22),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 350),
+        curve: Curves.easeOutCubic,
         padding: const EdgeInsets.all(18),
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(26),
           gradient: LinearGradient(
             begin: Alignment.topRight,
             end: Alignment.bottomLeft,
-            colors: widget.isDark
-                ? [const Color(0xFF211600), const Color(0xFF101010)]
-                : [const Color(0xFFFFFBF2), const Color(0xFFFFE9B8)],
+            colors: successGreen
+                ? (widget.isDark
+                    ? [const Color(0xFF052E16), const Color(0xFF101010)]
+                    : [const Color(0xFFE9FFF0), const Color(0xFFFFFFFF)])
+                : (widget.isDark
+                    ? [const Color(0xFF211600), const Color(0xFF101010)]
+                    : [const Color(0xFFFFFBF2), const Color(0xFFFFE9B8)]),
           ),
-          border: Border.all(color: gold.withOpacity(0.35)),
+          border: Border.all(color: accent.withOpacity(successGreen ? 0.55 : 0.35), width: successGreen ? 1.3 : 1),
           boxShadow: [
             BoxShadow(
-              color: gold.withOpacity(widget.isDark ? 0.10 : 0.18),
-              blurRadius: 24,
+              color: accent.withOpacity(widget.isDark ? 0.12 : 0.20),
+              blurRadius: successGreen ? 30 : 24,
               offset: const Offset(0, 12),
             ),
           ],
@@ -1002,17 +1349,17 @@ Future<void> _openRegistration() async {
         child: Row(
           children: [
             Container(
-              width: 54,
-              height: 54,
+              width: 56,
+              height: 56,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                color: gold.withOpacity(0.16),
-                border: Border.all(color: gold.withOpacity(0.35)),
+                color: accent.withOpacity(0.15),
+                border: Border.all(color: accent.withOpacity(0.42)),
               ),
               child: Icon(
-                _registered ? Icons.verified_rounded : Icons.assignment_rounded,
-                color: gold,
-                size: 28,
+                successGreen ? Icons.check_circle_rounded : (_registered ? Icons.verified_rounded : Icons.assignment_rounded),
+                color: accent,
+                size: 29,
               ),
             ),
             const SizedBox(width: 14),
@@ -1023,7 +1370,7 @@ Future<void> _openRegistration() async {
                   Text(
                     title,
                     style: TextStyle(
-                      color: widget.textPrimary,
+                      color: successGreen ? Colors.green.shade700 : widget.textPrimary,
                       fontSize: 15.5,
                       fontWeight: FontWeight.w900,
                       height: 1.45,
@@ -1033,9 +1380,9 @@ Future<void> _openRegistration() async {
                   Text(
                     _loading
                         ? 'جاري التحقق من حالة التسجيل...'
-                        : (_message ?? 'اضغط لفتح صفحة التسجيل وإدخال البيانات المطلوبة.'),
+                        : (successGreen ? 'تم استلام بياناتك بنجاح.' : (_message ?? 'اضغط لفتح صفحة التسجيل وإدخال البيانات المطلوبة.')),
                     style: TextStyle(
-                      color: widget.textSub,
+                      color: successGreen ? Colors.green.shade700.withOpacity(widget.isDark ? 0.85 : 0.78) : widget.textSub,
                       fontSize: 12,
                       height: 1.6,
                     ),
@@ -1044,16 +1391,15 @@ Future<void> _openRegistration() async {
               ),
             ),
             Icon(
-              canOpen ? Icons.arrow_back_ios_new_rounded : Icons.lock_rounded,
-              color: gold,
+              canOpen ? Icons.arrow_back_ios_new_rounded : (successGreen ? Icons.done_all_rounded : Icons.lock_rounded),
+              color: accent,
               size: 20,
             ),
           ],
         ),
       ),
     );
-  }
-}
+  }}
 
 class RegistrationFormPage extends StatefulWidget {
   final bool isDark;
@@ -1084,12 +1430,15 @@ class _RegistrationFormPageState extends State<RegistrationFormPage> {
   final _governorateCtrl = TextEditingController();
   final _gradYearCtrl = TextEditingController();
   final _archiveNameCtrl = TextEditingController();
+  final _registrationSearchCtrl = TextEditingController();
 
   bool _loading = true;
   bool _sending = false;
   bool _active = true;
+  bool _registrationFieldsCollapsed = false;
   Map<String, dynamic>? _myRegistration;
   List<Map<String, dynamic>> _registrations = [];
+  Timer? _registrationRefreshTimer;
   XFile? _photo;
 
   Color get _gold => const Color(0xFFD4A017);
@@ -1103,7 +1452,12 @@ class _RegistrationFormPageState extends State<RegistrationFormPage> {
   void initState() {
     super.initState();
     _emailCtrl.text = widget.user?.email ?? '';
+    _loadRegistrationFoldState();
+    _loadCachedRegistrationData();
     _load();
+    if (widget.isAdmin) {
+      _registrationRefreshTimer = Timer.periodic(const Duration(seconds: 30), (_) => _load(silent: true));
+    }
   }
 
   @override
@@ -1115,10 +1469,63 @@ class _RegistrationFormPageState extends State<RegistrationFormPage> {
     _governorateCtrl.dispose();
     _gradYearCtrl.dispose();
     _archiveNameCtrl.dispose();
+    _registrationSearchCtrl.dispose();
+    _registrationRefreshTimer?.cancel();
     super.dispose();
   }
 
-  Future<void> _load() async {
+  Future<void> _loadRegistrationFoldState() async {
+    if (!widget.isAdmin) return;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final saved = prefs.getBool('registration_fields_collapsed_v1');
+      if (!mounted || saved == null) return;
+      setState(() => _registrationFieldsCollapsed = saved);
+    } catch (_) {}
+  }
+
+  Future<void> _setRegistrationFieldsCollapsed(bool value) async {
+    setState(() => _registrationFieldsCollapsed = value);
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool('registration_fields_collapsed_v1', value);
+    } catch (_) {}
+  }
+
+  String get _registrationCacheKey => 'registration_form_cache_v3_${widget.isAdmin ? 'admin' : _accountEmail}';
+
+  Future<void> _loadCachedRegistrationData() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(_registrationCacheKey);
+      if (raw == null || raw.isEmpty) return;
+      final data = jsonDecode(raw);
+      if (data is! Map) return;
+      if (!mounted) return;
+      setState(() {
+        _active = data['active'] == true || data['active'].toString() == '1';
+        _myRegistration = data['registration'] is Map ? Map<String, dynamic>.from(data['registration'] as Map) : null;
+        _registrations = data['registrations'] is List
+            ? (data['registrations'] as List).whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList()
+            : <Map<String, dynamic>>[];
+        _loading = false;
+      });
+    } catch (_) {}
+  }
+
+  Future<void> _saveRegistrationCache() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_registrationCacheKey, jsonEncode({
+        'cached_at': DateTime.now().toIso8601String(),
+        'active': _active,
+        'registration': _myRegistration,
+        'registrations': _registrations,
+      }));
+    } catch (_) {}
+  }
+
+  Future<void> _load({bool silent = false}) async {
     try {
       final uri = Uri.parse('$_api?action=status&account_email=${Uri.encodeComponent(_accountEmail)}&with_list=${widget.isAdmin ? 1 : 0}');
       final res = await http.get(uri).timeout(const Duration(seconds: 12));
@@ -1132,10 +1539,13 @@ class _RegistrationFormPageState extends State<RegistrationFormPage> {
             : [];
         _loading = false;
       });
+      await _saveRegistrationCache();
     } catch (_) {
       if (!mounted) return;
       setState(() => _loading = false);
-      _toast('تعذر جلب بيانات التسجيل');
+      if (!silent && _registrations.isEmpty && _myRegistration == null) {
+        _toast('تعذر تحديث بيانات التسجيل. سيتم عرض آخر بيانات محفوظة عند توفرها.');
+      }
     }
   }
 
@@ -1153,10 +1563,25 @@ class _RegistrationFormPageState extends State<RegistrationFormPage> {
     if (picked != null && mounted) setState(() => _photo = picked);
   }
 
+  void _keepFieldAboveKeyboard(BuildContext fieldContext) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      Future.delayed(const Duration(milliseconds: 180), () {
+        if (!mounted) return;
+        Scrollable.ensureVisible(
+          fieldContext,
+          duration: const Duration(milliseconds: 320),
+          curve: Curves.easeOutCubic,
+          alignment: 0.68,
+          alignmentPolicy: ScrollPositionAlignmentPolicy.explicit,
+        );
+      });
+    });
+  }
+
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
     if (_photo == null) {
-      _toast('اختار صورة شخصية أولاً، لأن الاستمارات تحب التعقيد مثل بقية البشرية.');
+      _toast('يرجى اختيار صورة شخصية قبل إرسال الاستمارة.');
       return;
     }
     setState(() => _sending = true);
@@ -1182,6 +1607,7 @@ class _RegistrationFormPageState extends State<RegistrationFormPage> {
           _myRegistration = Map<String, dynamic>.from(data['registration'] as Map);
           _sending = false;
         });
+        await _saveRegistrationCache();
         _showSuccessDialog(_myRegistration!);
       } else {
         setState(() => _sending = false);
@@ -1195,10 +1621,12 @@ class _RegistrationFormPageState extends State<RegistrationFormPage> {
   }
 
   Future<void> _savePdf() async {
-    final uri = Uri.parse(_pdfUrl);
-    if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
-      _toast('تعذر فتح ملف PDF');
-    }
+    await _openRegistrationsPdfInsideApp(
+      context,
+      registrations: _registrations,
+      documentTitle: 'قائمة المسجلين الحالية',
+      archiveLabel: 'الاستمارة الحالية',
+    );
   }
 
   Future<void> _finishForm() async {
@@ -1255,7 +1683,7 @@ class _RegistrationFormPageState extends State<RegistrationFormPage> {
   Map<String, dynamic> _safeJson(String body) {
     final clean = body.trim();
     if (clean.isEmpty) {
-      return {'success': false, 'message': 'الخادم رجّع رد فارغ. هذا ليس اتصالاً فاشلاً، هذا خادم عامل نفسه نائم.'};
+      return {'success': false, 'message': 'لم يتم استلام رد صالح من الخادم.'};
     }
     try {
       final decoded = jsonDecode(clean);
@@ -1296,7 +1724,7 @@ class _RegistrationFormPageState extends State<RegistrationFormPage> {
     } on TimeoutException {
       if (!mounted) return;
       setState(() => _loading = false);
-      _toast('الخادم تأخر بالرد. تم رفع مهلة الإنهاء، وإذا تكررت المشكلة افحص صلاحيات archives.');
+      _toast('تأخر الخادم في معالجة الطلب. يرجى التحقق من صلاحيات مجلد الأرشيف عند تكرار المشكلة.');
     } catch (e) {
       if (!mounted) return;
       setState(() => _loading = false);
@@ -1366,7 +1794,7 @@ class _RegistrationFormPageState extends State<RegistrationFormPage> {
           labelStyle: TextStyle(color: _sub),
           filled: true,
           fillColor: widget.isDark ? const Color(0xFF111111) : const Color(0xFFFAFAFA),
-          border: OutlineInputBorder(borderRadius: BorderRadius.circular(18), borderSide: BorderSide(color: _gold.withOpacity(0.18))),
+          border: OutlineInputBorder(borderRadius: BorderRadius.circular(15), borderSide: BorderSide(color: _gold.withOpacity(0.18))),
           enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(18), borderSide: BorderSide(color: _gold.withOpacity(0.18))),
           focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(18), borderSide: BorderSide(color: _gold, width: 1.4)),
         ),
@@ -1374,59 +1802,179 @@ class _RegistrationFormPageState extends State<RegistrationFormPage> {
     );
   }
 
+  Widget _pickedPhotoPreview() {
+    if (_photo == null) {
+      return Row(
+        children: [
+          Container(
+            width: 54,
+            height: 54,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: _gold.withOpacity(0.12),
+              border: Border.all(color: _gold.withOpacity(0.28)),
+            ),
+            child: Icon(Icons.add_a_photo_rounded, color: _gold, size: 24),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              'إرفاق صورة شخصية حديثة',
+              style: TextStyle(color: _text, fontWeight: FontWeight.w800),
+            ),
+          ),
+        ],
+      );
+    }
+
+    return Row(
+      children: [
+        ClipOval(
+          child: Image.file(
+            File(_photo!.path),
+            width: 68,
+            height: 68,
+            fit: BoxFit.cover,
+          ),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('تم اختيار الصورة', style: TextStyle(color: _text, fontWeight: FontWeight.w900)),
+              const SizedBox(height: 4),
+              Text('انقر مرة اخرى على الصورة لتغييرها ', style: TextStyle(color: _sub, fontSize: 12, height: 1.45)),
+            ],
+          ),
+        ),
+        Icon(Icons.check_circle_rounded, color: Colors.green.shade600),
+      ],
+    );
+  }
+
   Widget _registrationForm() {
     if (!_active && !widget.isAdmin) {
-      return _stateBox(Icons.lock_rounded, 'انتهت الاستمارة', 'التسجيل مغلق حالياً، لأن أحدهم ضغط زر النهاية وهذا هو النظام الآن.');
+      return _stateBox(Icons.lock_rounded, 'انتهت الاستمارة', 'التسجيل مغلق حالياً.');
     }
     if (_myRegistration != null && !widget.isAdmin) {
       return _registeredBox(_myRegistration!);
     }
     return Container(
       padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(color: _card, borderRadius: BorderRadius.circular(24), border: Border.all(color: _gold.withOpacity(0.16))),
+      decoration: BoxDecoration(
+        color: _card,
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: _gold.withOpacity(0.16)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(widget.isDark ? 0.18 : 0.06),
+            blurRadius: 24,
+            offset: const Offset(0, 12),
+          ),
+        ],
+      ),
       child: Form(
         key: _formKey,
         child: Column(
           children: [
-            _field(_emailCtrl, 'البريد الإلكتروني EMAIL', Icons.email_rounded, keyboard: TextInputType.emailAddress),
-            _field(_phoneCtrl, 'رقم الهاتف PHONE', Icons.phone_rounded, keyboard: TextInputType.phone),
-            _field(_nameCtrl, 'الاسم الثلاثي', Icons.badge_rounded),
-            _field(_certificateCtrl, 'الشهادة والاختصاص', Icons.school_rounded),
-            _field(_governorateCtrl, 'المحافظة', Icons.location_city_rounded),
-            _field(_gradYearCtrl, 'سنة التخرج', Icons.date_range_rounded, keyboard: TextInputType.number),
-            InkWell(
-              onTap: _pickPhoto,
-              borderRadius: BorderRadius.circular(18),
-              child: Container(
-                padding: const EdgeInsets.all(14),
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(18),
-                  border: Border.all(color: _gold.withOpacity(0.28)),
-                  color: _gold.withOpacity(0.08),
-                ),
-                child: Row(
-                  children: [
-                    Icon(Icons.cloud_upload_rounded, color: _gold),
-                    const SizedBox(width: 10),
-                    Expanded(child: Text(_photo == null ? 'إرفاق صورة شخصية حديثة' : 'تم اختيار الصورة: ${_photo!.name}', style: TextStyle(color: _text, fontWeight: FontWeight.w700))),
-                  ],
+            if (widget.isAdmin) ...[
+              InkWell(
+                onTap: () => _setRegistrationFieldsCollapsed(!_registrationFieldsCollapsed),
+                borderRadius: BorderRadius.circular(18),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: _gold.withOpacity(0.10),
+                    borderRadius: BorderRadius.circular(18),
+                    border: Border.all(color: _gold.withOpacity(0.22)),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(_registrationFieldsCollapsed ? Icons.keyboard_arrow_down_rounded : Icons.keyboard_arrow_up_rounded, color: _gold),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          _registrationFieldsCollapsed ? 'فتح حقول التسجيل' : 'طي حقول التسجيل',
+                          style: TextStyle(color: _text, fontWeight: FontWeight.w900),
+                        ),
+                      ),
+                      Text(
+                        _registrationFieldsCollapsed ? 'مطوية' : 'مفتوحة',
+                        style: TextStyle(color: _sub, fontSize: 12, fontWeight: FontWeight.w800),
+                      ),
+                    ],
+                  ),
                 ),
               ),
-            ),
-            const SizedBox(height: 18),
-            SizedBox(
-              width: double.infinity,
-              height: 52,
-              child: ElevatedButton.icon(
-                onPressed: _sending ? null : _submit,
-                icon: _sending ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2)) : const Icon(Icons.send_rounded),
-                label: Text(_sending ? 'جاري الإرسال...' : 'إرسال الاستمارة'),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: _gold,
-                  foregroundColor: const Color(0xFF1A1000),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
-                  textStyle: const TextStyle(fontWeight: FontWeight.w900),
+              const SizedBox(height: 14),
+            ],
+            AnimatedCrossFade(
+              duration: const Duration(milliseconds: 240),
+              crossFadeState: widget.isAdmin && _registrationFieldsCollapsed ? CrossFadeState.showFirst : CrossFadeState.showSecond,
+              firstChild: Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+                decoration: BoxDecoration(
+                  color: widget.isDark ? const Color(0xFF111111) : const Color(0xFFFAFAFA),
+                  borderRadius: BorderRadius.circular(18),
+                  border: Border.all(color: _gold.withOpacity(0.10)),
                 ),
+                child: Text('حقول التسجيل مطوية ومحفوظة.', textAlign: TextAlign.center, style: TextStyle(color: _sub, fontWeight: FontWeight.w700)),
+              ),
+              secondChild: Column(
+                children: [
+                  _field(_nameCtrl, 'الاسم الثلاثي', Icons.badge_rounded),
+                  _field(_certificateCtrl, 'الشهادة والاختصاص', Icons.school_rounded),
+                  _field(_gradYearCtrl, 'سنة التخرج', Icons.date_range_rounded, keyboard: TextInputType.number),
+                  _field(_phoneCtrl, 'رقم الهاتف PHONE', Icons.phone_rounded, keyboard: TextInputType.phone),
+                  _field(_governorateCtrl, 'المحافظة', Icons.location_city_rounded),
+                  _field(_emailCtrl, 'البريد الإلكتروني EMAIL', Icons.email_rounded, keyboard: TextInputType.emailAddress),
+                  InkWell(
+                    onTap: _pickPhoto,
+                    borderRadius: BorderRadius.circular(22),
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 280),
+                      curve: Curves.easeOutCubic,
+                      padding: const EdgeInsets.all(14),
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(22),
+                        border: Border.all(color: (_photo == null ? _gold : Colors.green).withOpacity(0.35)),
+                        gradient: LinearGradient(
+                          begin: Alignment.topRight,
+                          end: Alignment.bottomLeft,
+                          colors: _photo == null
+                              ? [_gold.withOpacity(0.10), _gold.withOpacity(0.04)]
+                              : [Colors.green.withOpacity(0.13), Colors.green.withOpacity(0.05)],
+                        ),
+                      ),
+                      child: _pickedPhotoPreview(),
+                    ),
+                  ),
+                  const SizedBox(height: 18),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 56,
+                    child: ElevatedButton.icon(
+                      onPressed: _sending ? null : _submit,
+                      icon: _sending
+                          ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                          : const Icon(Icons.send_rounded),
+                      label: Text(_sending ? 'جاري الإرسال...' : 'إرسال الاستمارة'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: _gold,
+                        foregroundColor: const Color(0xFF1A1000),
+                        elevation: 0,
+                        shadowColor: _gold.withOpacity(0.35),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                        textStyle: Theme.of(context).textTheme.labelLarge?.copyWith(
+                              fontWeight: FontWeight.w900,
+                              fontSize: 15,
+                            ),
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
           ],
@@ -1464,14 +2012,65 @@ class _RegistrationFormPageState extends State<RegistrationFormPage> {
     );
   }
 
+  Widget _adminActionTile({
+    required IconData icon,
+    required String title,
+    required String subtitle,
+    required VoidCallback? onTap,
+    required Color color,
+    bool filled = false,
+  }) {
+    final enabled = onTap != null;
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(16),
+      child: AnimatedOpacity(
+        duration: const Duration(milliseconds: 220),
+        opacity: enabled ? 1 : 0.48,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 8),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(16),
+            color: filled ? color.withOpacity(0.18) : (widget.isDark ? const Color(0xFF111111) : const Color(0xFFFAFAFA)),
+            border: Border.all(color: color.withOpacity(enabled ? 0.34 : 0.14)),
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 32,
+                height: 32,
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(12),
+                  color: color.withOpacity(0.14),
+                ),
+                child: Icon(icon, color: color, size: 18),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(title, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: _text, fontWeight: FontWeight.w900, fontSize: 12)),
+                    const SizedBox(height: 2),
+                    Text(subtitle, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: _sub, fontSize: 10.5, fontWeight: FontWeight.w600)),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _adminPanel() {
     if (!widget.isAdmin) return const SizedBox.shrink();
     return Container(
-      margin: const EdgeInsets.only(bottom: 16),
-      padding: const EdgeInsets.all(16),
+      margin: const EdgeInsets.only(bottom: 14),
+      padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
         color: _card,
-        borderRadius: BorderRadius.circular(24),
+        borderRadius: BorderRadius.circular(26),
         border: Border.all(color: _gold.withOpacity(0.22)),
         boxShadow: [
           BoxShadow(
@@ -1483,79 +2082,172 @@ class _RegistrationFormPageState extends State<RegistrationFormPage> {
       ),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Row(children: [
-          Icon(Icons.admin_panel_settings_rounded, color: _gold),
-          const SizedBox(width: 8),
-          Expanded(child: Text('لوحة تحكم الاستمارة', style: TextStyle(color: _text, fontWeight: FontWeight.w900, fontSize: 16))),
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-            decoration: BoxDecoration(color: _active ? Colors.green.withOpacity(0.14) : Colors.red.withOpacity(0.14), borderRadius: BorderRadius.circular(99)),
-            child: Text(_active ? 'مفتوحة' : 'منتهية', style: TextStyle(color: _active ? Colors.green.shade600 : Colors.red.shade500, fontWeight: FontWeight.w900, fontSize: 11)),
-          ),
-        ]),
-        const SizedBox(height: 14),
-        Row(children: [
-          Expanded(
-            child: OutlinedButton.icon(
-              onPressed: _active ? null : _newForm,
-              icon: const Icon(Icons.add_circle_rounded),
-              label: const Text('استمارة جديدة'),
+            width: 34,
+            height: 34,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(13),
+              color: _gold.withOpacity(0.13),
+              border: Border.all(color: _gold.withOpacity(0.20)),
             ),
+            child: Icon(Icons.admin_panel_settings_rounded, color: _gold, size: 19),
           ),
           const SizedBox(width: 10),
-          Expanded(
-            child: ElevatedButton.icon(
-              onPressed: _active ? _finishForm : null,
-              icon: const Icon(Icons.stop_circle_rounded),
-              label: const Text('إنهاء الاستمارة'),
+          Expanded(child: Text('لوحة تحكم الاستمارة', style: TextStyle(color: _text, fontWeight: FontWeight.w900, fontSize: 14))),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+            decoration: BoxDecoration(
+              color: _active ? Colors.green.withOpacity(0.14) : Colors.red.withOpacity(0.14),
+              borderRadius: BorderRadius.circular(99),
+              border: Border.all(color: (_active ? Colors.green : Colors.red).withOpacity(0.20)),
             ),
+            child: Text(_active ? 'مفتوحة' : 'منتهية', style: TextStyle(color: _active ? Colors.green.shade600 : Colors.red.shade500, fontWeight: FontWeight.w900, fontSize: 10)),
           ),
         ]),
         const SizedBox(height: 10),
-        Row(children: [
-          Expanded(
-            child: OutlinedButton.icon(
-              onPressed: _openArchives,
-              icon: const Icon(Icons.folder_special_rounded),
-              label: const Text('الاستمارات السابقة'),
+        GridView.count(
+          crossAxisCount: 2,
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          childAspectRatio: 3.25,
+          mainAxisSpacing: 8,
+          crossAxisSpacing: 8,
+          children: [
+            _adminActionTile(
+              icon: Icons.add_circle_rounded,
+              title: 'استمارة جديدة',
+              subtitle: _active ? 'بعد الإنهاء فقط' : 'ابدأ دورة جديدة',
+              onTap: _active ? null : _newForm,
+              color: Colors.green.shade600,
             ),
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: ElevatedButton.icon(
-              onPressed: _openAttendance,
-              icon: const Icon(Icons.fact_check_rounded),
-              label: const Text('الحضور'),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: _gold,
-                foregroundColor: const Color(0xFF1A1000),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                textStyle: const TextStyle(fontWeight: FontWeight.w900),
-              ),
+            _adminActionTile(
+              icon: Icons.stop_circle_rounded,
+              title: 'إنهاء الاستمارة',
+              subtitle: _active ? 'حفظ كأرشيف' : 'منتهية حالياً',
+              onTap: _active ? _finishForm : null,
+              color: Colors.red.shade500,
+              filled: true,
             ),
-          ),
-        ]),
+            _adminActionTile(
+              icon: Icons.folder_special_rounded,
+              title: 'الاستمارات السابقة',
+              subtitle: 'أرشيف المجلدات',
+              onTap: _openArchives,
+              color: _gold,
+            ),
+            _adminActionTile(
+              icon: Icons.fact_check_rounded,
+              title: 'الحضور',
+              subtitle: 'تحديد المحاضرات',
+              onTap: _openAttendance,
+              color: _gold,
+              filled: true,
+            ),
+          ],
+        ),
         const SizedBox(height: 10),
-        Text(
-          _active
-              ? 'الاستمارة الجديدة تتفعل فقط بعد إنهاء الحالية، حتى لا تولد استمارتان ويتقاتلان داخل قاعدة البيانات.'
-              : 'الاستمارة منتهية. يمكنك إنشاء استمارة جديدة الآن أو فتح الأرشيف السابق.',
-          style: TextStyle(color: _sub, fontSize: 12, height: 1.55),
+        Container(
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(
+            color: _gold.withOpacity(0.08),
+            borderRadius: BorderRadius.circular(18),
+          ),
+          child: Text(
+            _active
+                ? 'الاستمارة الجديدة تتفعل فقط بعد إنهاء الحالية.'
+                : 'الاستمارة منتهية. يمكنك إنشاء استمارة جديدة الآن أو فتح الأرشيف السابق.',
+            style: TextStyle(color: _sub, fontSize: 11, height: 1.45, fontWeight: FontWeight.w600),
+          ),
         ),
       ]),
     );
   }
 
+  String _valueOf(Map<String, dynamic> r, String key) {
+    final v = r[key]?.toString().trim() ?? '';
+    return v.isEmpty ? 'غير مضاف' : v;
+  }
+
+  void _showRegistrationDetails(Map<String, dynamic> r) {
+    final rows = <MapEntry<String, String>>[
+      MapEntry('الاسم الثلاثي', _valueOf(r, 'full_name')),
+      MapEntry('الشهادة والاختصاص', _valueOf(r, 'certificate')),
+      MapEntry('سنة التخرج', _valueOf(r, 'graduation_year')),
+      MapEntry('المحافظة', _valueOf(r, 'governorate')),
+      MapEntry('رقم الهاتف', _valueOf(r, 'phone')),
+      MapEntry('البريد الإلكتروني', _valueOf(r, 'email')),
+      MapEntry('عدد الحضور', _valueOf(r, 'attendance_count')),
+    ];
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => Directionality(
+        textDirection: TextDirection.rtl,
+        child: Container(
+          margin: const EdgeInsets.all(12),
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 22),
+          decoration: BoxDecoration(
+            color: _card,
+            borderRadius: BorderRadius.circular(30),
+            border: Border.all(color: _gold.withOpacity(0.22)),
+          ),
+          child: SafeArea(
+            top: false,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(width: 44, height: 4, decoration: BoxDecoration(color: _sub.withOpacity(0.35), borderRadius: BorderRadius.circular(99))),
+                const SizedBox(height: 16),
+                _avatar(r, 82),
+                const SizedBox(height: 10),
+                Text(_valueOf(r, 'full_name'), textAlign: TextAlign.center, style: TextStyle(color: _text, fontWeight: FontWeight.w900, fontSize: 17)),
+                const SizedBox(height: 14),
+                ...rows.map((e) => Container(
+                      margin: const EdgeInsets.only(bottom: 9),
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+                      decoration: BoxDecoration(
+                        color: widget.isDark ? const Color(0xFF111111) : const Color(0xFFFAFAFA),
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(color: _gold.withOpacity(0.08)),
+                      ),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          SizedBox(width: 112, child: Text(e.key, style: TextStyle(color: _sub, fontWeight: FontWeight.w800, fontSize: 12))),
+                          Expanded(child: Text(e.value, style: TextStyle(color: _text, fontWeight: FontWeight.w900, height: 1.45))),
+                        ],
+                      ),
+                    )),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _adminList() {
     if (!widget.isAdmin) return const SizedBox.shrink();
+    final query = _registrationSearchCtrl.text.trim().toLowerCase();
+    final shown = query.isEmpty
+        ? _registrations
+        : _registrations.where((r) => (r['full_name']?.toString().toLowerCase() ?? '').contains(query)).toList();
+
     return Container(
       margin: const EdgeInsets.only(top: 18),
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(color: _card, borderRadius: BorderRadius.circular(24), border: Border.all(color: _gold.withOpacity(0.16))),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: _card,
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: _gold.withOpacity(0.16)),
+      ),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Row(
           children: [
             Expanded(
-              child: Text('المسجلون حالياً (${_registrations.length})', style: TextStyle(color: _text, fontWeight: FontWeight.w900, fontSize: 16)),
+              child: Text('المسجلون حالياً (${shown.length}/${_registrations.length})', style: TextStyle(color: _text, fontWeight: FontWeight.w900, fontSize: 16)),
             ),
             Tooltip(
               message: 'حفظ PDF للبيانات الحالية',
@@ -1563,38 +2255,183 @@ class _RegistrationFormPageState extends State<RegistrationFormPage> {
                 onTap: _savePdf,
                 borderRadius: BorderRadius.circular(14),
                 child: Container(
-                  width: 38,
-                  height: 38,
+                  width: 36,
+                  height: 36,
                   decoration: BoxDecoration(
                     color: _gold.withOpacity(0.12),
                     borderRadius: BorderRadius.circular(14),
                     border: Border.all(color: _gold.withOpacity(0.22)),
                   ),
-                  child: Icon(Icons.print_rounded, color: _gold, size: 20),
+                  child: Icon(Icons.print_rounded, color: _gold, size: 19),
                 ),
               ),
             ),
           ],
         ),
         const SizedBox(height: 12),
+        TextField(
+          controller: _registrationSearchCtrl,
+          onChanged: (_) => setState(() {}),
+          style: TextStyle(color: _text, fontWeight: FontWeight.w700),
+          decoration: InputDecoration(
+            prefixIcon: Icon(Icons.search_rounded, color: _gold),
+            suffixIcon: query.isEmpty
+                ? null
+                : IconButton(
+                    onPressed: () {
+                      _registrationSearchCtrl.clear();
+                      setState(() {});
+                    },
+                    icon: Icon(Icons.close_rounded, color: _sub),
+                  ),
+            hintText: 'أبحث عن اسم ..',
+            hintStyle: TextStyle(color: _sub, fontWeight: FontWeight.w600),
+            filled: true,
+            fillColor: widget.isDark ? const Color(0xFF111111) : const Color(0xFFFAFAFA),
+            contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(18), borderSide: BorderSide(color: _gold.withOpacity(0.16))),
+            enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(18), borderSide: BorderSide(color: _gold.withOpacity(0.16))),
+            focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(18), borderSide: BorderSide(color: _gold, width: 1.3)),
+          ),
+        ),
+        const SizedBox(height: 12),
         if (_registrations.isEmpty)
-          Text('لا توجد تسجيلات بعد. الهدوء قبل عاصفة الاستمارات.', style: TextStyle(color: _sub))
+          Text('لا توجد تسجيلات حالياً.', style: TextStyle(color: _sub))
+        else if (shown.isEmpty)
+          Text('لا توجد نتائج لهذا الاسم. حتى البحث تعب من البشر.', style: TextStyle(color: _sub))
         else
-          ..._registrations.map((r) => Container(
-                margin: const EdgeInsets.only(bottom: 10),
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(color: widget.isDark ? const Color(0xFF111111) : const Color(0xFFFAFAFA), borderRadius: BorderRadius.circular(18)),
+          ...shown.map((r) => Container(
+                margin: const EdgeInsets.only(bottom: 8),
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
+                decoration: BoxDecoration(
+                  color: widget.isDark ? const Color(0xFF111111) : const Color(0xFFFAFAFA),
+                  borderRadius: BorderRadius.circular(18),
+                  border: Border.all(color: _gold.withOpacity(0.08)),
+                ),
                 child: Row(children: [
-                  _avatar(r, 46),
-                  const SizedBox(width: 10),
-                  Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                    Text(r['full_name']?.toString() ?? '', style: TextStyle(color: _text, fontWeight: FontWeight.w900)),
-                    const SizedBox(height: 3),
-                    Text("${r['certificate'] ?? ''} • ${r['phone'] ?? ''}\n${r['email'] ?? ''}\nالحضور: ${r['attendance_count'] ?? 0}", style: TextStyle(color: _sub, fontSize: 12, height: 1.45)),
-                  ])),
+                  _avatar(r, 44),
+                  const SizedBox(width: 9),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(r['full_name']?.toString() ?? '', maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: _text, fontWeight: FontWeight.w900, fontSize: 13.5)),
+                        const SizedBox(height: 3),
+                        Row(
+                          children: [
+                            Icon(Icons.how_to_reg_rounded, color: Colors.green.shade600, size: 15),
+                            const SizedBox(width: 5),
+                            Text('عدد الحضور: ${r['attendance_count'] ?? 0}', style: TextStyle(color: _sub, fontSize: 11.5, fontWeight: FontWeight.w800)),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  Tooltip(
+                    message: 'تفاصيل المسجل',
+                    child: InkWell(
+                      onTap: () => _showRegistrationDetails(r),
+                      borderRadius: BorderRadius.circular(13),
+                      child: Container(
+                        width: 34,
+                        height: 34,
+                        decoration: BoxDecoration(
+                          color: _gold.withOpacity(0.12),
+                          borderRadius: BorderRadius.circular(13),
+                          border: Border.all(color: _gold.withOpacity(0.20)),
+                        ),
+                        child: Icon(Icons.info_outline_rounded, color: _gold, size: 18),
+                      ),
+                    ),
+                  ),
                 ]),
               )),
       ]),
+    );
+  }
+
+  Widget _formHeroHeader() {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(30),
+        gradient: LinearGradient(
+          begin: Alignment.topRight,
+          end: Alignment.bottomLeft,
+          colors: widget.isDark
+              ? [const Color(0xFF221700), const Color(0xFF111111)]
+              : [const Color(0xFFFFF5DF), Colors.white],
+        ),
+        border: Border.all(color: _gold.withOpacity(0.22)),
+        boxShadow: [
+          BoxShadow(
+            color: _gold.withOpacity(widget.isDark ? 0.08 : 0.12),
+            blurRadius: 28,
+            offset: const Offset(0, 14),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          ClipRRect(
+            borderRadius: BorderRadius.circular(24),
+            child: AspectRatio(
+              aspectRatio: 16 / 9,
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  Image.asset(
+                    'assets/images/courseforma.png',
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, __, ___) => Container(
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topRight,
+                          end: Alignment.bottomLeft,
+                          colors: [_gold.withOpacity(0.24), _gold.withOpacity(0.06)],
+                        ),
+                      ),
+                      child: Icon(Icons.engineering_rounded, color: _gold, size: 54),
+                    ),
+                  ),
+                  DecoratedBox(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [Colors.transparent, Colors.black.withOpacity(0.72)],
+                      ),
+                    ),
+                  ),
+                  Positioned(
+                    left: 16,
+                    right: 16,
+                    bottom: 16,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                   
+                        const SizedBox(height: 9),
+                        const Text(
+                          'استمارة التسجيل في دورة تنمية مهندس الموقع',
+                          style: TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 20, height: 1.35),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 14),
+          Text(
+            'املأ البيانات المطلوبة بدقة، وارفق صورة شخصية حديثة.',
+            style: TextStyle(color: _sub, height: 1.7, fontWeight: FontWeight.w600),
+          ),
+        ],
+      ),
     );
   }
 
@@ -1613,21 +2450,10 @@ class _RegistrationFormPageState extends State<RegistrationFormPage> {
         body: _loading
             ? Center(child: CircularProgressIndicator(color: _gold))
             : ListView(
+                keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
                 padding: const EdgeInsets.fromLTRB(16, 12, 16, 100),
                 children: [
-                  Container(
-                    padding: const EdgeInsets.all(18),
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(28),
-                      gradient: LinearGradient(colors: widget.isDark ? [const Color(0xFF221700), const Color(0xFF111111)] : [const Color(0xFFFFF5DF), Colors.white]),
-                      border: Border.all(color: _gold.withOpacity(0.22)),
-                    ),
-                    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                      Text('استمارة التسجيل في دورة تنمية مهندس الموقع', style: TextStyle(color: _text, fontWeight: FontWeight.w900, fontSize: 19, height: 1.45)),
-                      const SizedBox(height: 8),
-                      Text('املأ البيانات المطلوبة بدقة، وارفق صورة شخصية حديثة. النظام سيمنع التسجيل المتكرر لنفس الحساب، لأن الفوضى ليست ميزة تقنية. ✨', style: TextStyle(color: _sub, height: 1.7)),
-                    ]),
-                  ),
+                  _formHeroHeader(),
                   const SizedBox(height: 16),
                   _adminPanel(),
                   _registrationForm(),
@@ -1664,6 +2490,7 @@ class _RegistrationArchivesPageState extends State<RegistrationArchivesPage> {
   @override
   void initState() {
     super.initState();
+    _loadArchivesCache();
     _loadArchives();
   }
 
@@ -1679,6 +2506,31 @@ class _RegistrationArchivesPageState extends State<RegistrationArchivesPage> {
       final preview = clean.replaceAll(RegExp(r'<[^>]*>'), ' ').replaceAll(RegExp(r'\s+'), ' ').trim();
       return {'success': false, 'message': preview.isEmpty ? 'رد الخادم غير صالح.' : preview};
     }
+  }
+
+  static const String _archivesCacheKey = 'registration_archives_cache_v2';
+
+  Future<void> _loadArchivesCache() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(_archivesCacheKey);
+      if (raw == null || raw.isEmpty) return;
+      final data = jsonDecode(raw);
+      if (data is! List) return;
+      if (!mounted) return;
+      setState(() {
+        _archives = data.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList();
+        _loading = false;
+        _error = null;
+      });
+    } catch (_) {}
+  }
+
+  Future<void> _saveArchivesCache() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_archivesCacheKey, jsonEncode(_archives));
+    } catch (_) {}
   }
 
   Future<void> _loadArchives() async {
@@ -1697,6 +2549,7 @@ class _RegistrationArchivesPageState extends State<RegistrationArchivesPage> {
               : [];
           _loading = false;
         });
+        await _saveArchivesCache();
       } else {
         setState(() {
           _loading = false;
@@ -1722,6 +2575,145 @@ class _RegistrationArchivesPageState extends State<RegistrationArchivesPage> {
     );
   }
 
+  Future<Map<String, dynamic>> _postArchiveAction(Map<String, String> body) async {
+    final res = await http.post(Uri.parse(_api), body: body).timeout(const Duration(seconds: 25));
+    final data = _safeJson(res.body);
+    if (res.statusCode < 200 || res.statusCode >= 300 || data['success'] != true) {
+      throw Exception(data['message']?.toString() ?? 'فشل تنفيذ العملية.');
+    }
+    return data;
+  }
+
+Future<void> _renameArchive(Map<String, dynamic> archive) async {
+  final oldName = archive['name']?.toString() ?? '';
+  if (oldName.isEmpty) return;
+
+  final newName = await showDialog<String>(
+    context: context,
+    builder: (dialogContext) {
+      final ctrl = TextEditingController(text: oldName);
+
+      return AlertDialog(
+        backgroundColor: _card,
+        title: Text(
+          'تعديل اسم الأرشيف',
+          style: TextStyle(color: _text, fontWeight: FontWeight.w900),
+        ),
+        content: TextField(
+          controller: ctrl,
+          autofocus: true,
+          style: TextStyle(color: _text),
+          decoration: InputDecoration(
+            labelText: 'اسم الأرشيف',
+            labelStyle: TextStyle(color: _sub),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.pop(dialogContext);
+            },
+            child: const Text('إلغاء'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              final value = ctrl.text.trim();
+              Navigator.pop(dialogContext, value);
+            },
+            child: const Text('حفظ'),
+          ),
+        ],
+      );
+    },
+  );
+
+  if (newName == null || newName.isEmpty || newName == oldName) return;
+
+  try {
+    await _postArchiveAction({
+      'action': 'archive_rename',
+      'archive_name': oldName,
+      'new_name': newName,
+    });
+
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('تم تعديل اسم الأرشيف بنجاح.')),
+    );
+
+    await _loadArchives();
+  } catch (e) {
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('تعذر تعديل اسم الأرشيف: $e')),
+    );
+  }
+}
+
+  Future<void> _deleteArchive(Map<String, dynamic> archive) async {
+    final name = archive['name']?.toString() ?? '';
+    if (name.isEmpty) return;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        backgroundColor: _card,
+        title: Text('حذف الأرشيف', style: TextStyle(color: _text, fontWeight: FontWeight.w900)),
+        content: Text('سيتم حذف الأرشيف وبياناته المحفوظة نهائياً.\n$name', style: TextStyle(color: _sub, height: 1.7)),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('إلغاء')),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red.shade700),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('حذف نهائي'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    try {
+      await _postArchiveAction({'action': 'archive_delete', 'archive_name': name});
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تم حذف الأرشيف بنجاح.')));
+      await _loadArchives();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('تعذر حذف الأرشيف: $e')));
+    }
+  }
+
+  Future<void> _showArchiveOptions(Map<String, dynamic> archive) async {
+    final name = archive['name']?.toString() ?? 'أرشيف';
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: _card,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(26))),
+      builder: (_) => SafeArea(
+        child: Directionality(
+          textDirection: TextDirection.rtl,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 18),
+            child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(name, maxLines: 2, overflow: TextOverflow.ellipsis, style: TextStyle(color: _text, fontWeight: FontWeight.w900, fontSize: 17)),
+              const SizedBox(height: 12),
+              ListTile(
+                leading: Icon(Icons.drive_file_rename_outline_rounded, color: _gold),
+                title: Text('تعديل اسم الأرشيف', style: TextStyle(color: _text, fontWeight: FontWeight.w800)),
+                onTap: () { Navigator.pop(context); _renameArchive(archive); },
+              ),
+              ListTile(
+                leading: Icon(Icons.delete_forever_rounded, color: Colors.red.shade400),
+                title: Text('حذف الأرشيف وبياناته', style: TextStyle(color: Colors.red.shade400, fontWeight: FontWeight.w900)),
+                onTap: () { Navigator.pop(context); _deleteArchive(archive); },
+              ),
+            ]),
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _folderCard(Map<String, dynamic> a, int index) {
     final count = a['registrations_count']?.toString() ?? '0';
     final date = a['archived_at']?.toString() ?? '';
@@ -1738,6 +2730,7 @@ class _RegistrationArchivesPageState extends State<RegistrationArchivesPage> {
       },
       child: InkWell(
         onTap: () => _openArchive(a),
+        onLongPress: () => _showArchiveOptions(a),
         borderRadius: BorderRadius.circular(26),
         child: Container(
           padding: const EdgeInsets.all(16),
@@ -1796,7 +2789,7 @@ class _RegistrationArchivesPageState extends State<RegistrationArchivesPage> {
           const SizedBox(height: 12),
           Text('لا توجد استمارات سابقة', style: TextStyle(color: _text, fontWeight: FontWeight.w900, fontSize: 17)),
           const SizedBox(height: 8),
-          Text('عند إنهاء الاستمارة الحالية سيظهر مجلدها هنا داخل التطبيق، بدون فتح متصفح ولا طقوس بدائية.', textAlign: TextAlign.center, style: TextStyle(color: _sub, height: 1.6)),
+          Text('عند إنهاء الاستمارة الحالية سيظهر أرشيفها هنا داخل التطبيق.', textAlign: TextAlign.center, style: TextStyle(color: _sub, height: 1.6)),
         ]),
       ),
     );
@@ -1876,6 +2869,7 @@ class _RegistrationArchiveDetailsPageState extends State<RegistrationArchiveDeta
   @override
   void initState() {
     super.initState();
+    _loadDetailsCache();
     _loadDetails();
   }
 
@@ -1891,6 +2885,40 @@ class _RegistrationArchiveDetailsPageState extends State<RegistrationArchiveDeta
       final preview = clean.replaceAll(RegExp(r'<[^>]*>'), ' ').replaceAll(RegExp(r'\s+'), ' ').trim();
       return {'success': false, 'message': preview.isEmpty ? 'رد الخادم غير صالح.' : preview};
     }
+  }
+
+  String get _detailCacheKey => 'registration_archive_detail_cache_v2_${widget.archiveName}';
+
+  Future<void> _loadDetailsCache() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(_detailCacheKey);
+      if (raw == null || raw.isEmpty) return;
+      final data = jsonDecode(raw);
+      if (data is! Map) return;
+      if (!mounted) return;
+      setState(() {
+        _registrations = data['registrations'] is List
+            ? (data['registrations'] as List).whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList()
+            : <Map<String, dynamic>>[];
+        _attendance = data['attendance'] is List
+            ? (data['attendance'] as List).whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList()
+            : <Map<String, dynamic>>[];
+        _archivedAt = data['archived_at']?.toString() ?? '';
+        _loading = false;
+      });
+    } catch (_) {}
+  }
+
+  Future<void> _saveDetailsCache() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_detailCacheKey, jsonEncode({
+        'archived_at': _archivedAt,
+        'registrations': _registrations,
+        'attendance': _attendance,
+      }));
+    } catch (_) {}
   }
 
   Future<void> _loadDetails() async {
@@ -1914,6 +2942,7 @@ class _RegistrationArchiveDetailsPageState extends State<RegistrationArchiveDeta
           _archivedAt = data['archived_at']?.toString() ?? '';
           _loading = false;
         });
+        await _saveDetailsCache();
       } else {
         setState(() {
           _loading = false;
@@ -1927,6 +2956,15 @@ class _RegistrationArchiveDetailsPageState extends State<RegistrationArchiveDeta
         _error = 'تعذر الاتصال بخادم الأرشيف: $e';
       });
     }
+  }
+
+  Future<void> _saveArchivePdf() async {
+    await _openRegistrationsPdfInsideApp(
+      context,
+      registrations: _registrations,
+      documentTitle: 'قائمة المسجلين - ${widget.archiveName}',
+      archiveLabel: _archivedAt.isEmpty ? widget.archiveName : '${widget.archiveName} • $_archivedAt',
+    );
   }
 
   Widget _personCard(Map<String, dynamic> r) {
@@ -1987,12 +3025,22 @@ class _RegistrationArchiveDetailsPageState extends State<RegistrationArchiveDeta
           elevation: 0,
           title: Text(widget.archiveName, style: TextStyle(color: _text, fontWeight: FontWeight.w900, fontSize: 17)),
           iconTheme: IconThemeData(color: _text),
+          actions: [
+            Tooltip(
+              message: 'طباعة / حفظ PDF',
+              child: IconButton(
+                onPressed: _saveArchivePdf,
+                icon: Icon(Icons.print_rounded, color: _gold),
+              ),
+            ),
+          ],
         ),
         body: _loading
             ? Center(child: CircularProgressIndicator(color: _gold))
             : _error != null
                 ? Center(child: Padding(padding: const EdgeInsets.all(20), child: Text(_error!, textAlign: TextAlign.center, style: TextStyle(color: _text, height: 1.6))))
                 : ListView(
+                    keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
                     padding: const EdgeInsets.fromLTRB(16, 12, 16, 100),
                     children: [
                       Container(
@@ -2010,11 +3058,29 @@ class _RegistrationArchiveDetailsPageState extends State<RegistrationArchiveDeta
                             const SizedBox(height: 6),
                             Text('عدد المسجلين: ${_registrations.length}${_archivedAt.isNotEmpty ? ' • $_archivedAt' : ''}\nسجلات الحضور: ${_attendance.length}', style: TextStyle(color: _sub, height: 1.55)),
                           ])),
+                          const SizedBox(width: 8),
+                          Tooltip(
+                            message: 'طباعة / حفظ PDF',
+                            child: InkWell(
+                              onTap: _saveArchivePdf,
+                              borderRadius: BorderRadius.circular(16),
+                              child: Container(
+                                width: 42,
+                                height: 42,
+                                decoration: BoxDecoration(
+                                  color: _gold.withOpacity(0.13),
+                                  borderRadius: BorderRadius.circular(16),
+                                  border: Border.all(color: _gold.withOpacity(0.24)),
+                                ),
+                                child: Icon(Icons.print_rounded, color: _gold, size: 21),
+                              ),
+                            ),
+                          ),
                         ]),
                       ),
                       const SizedBox(height: 14),
                       if (_registrations.isEmpty)
-                        Text('هذا الأرشيف فارغ، وهذا بحد ذاته إنجاز إداري غامض.', style: TextStyle(color: _sub))
+                        Text('هذا الأرشيف فارغ.', style: TextStyle(color: _sub))
                       else
                         ..._registrations.map(_personCard),
                     ],
@@ -2047,6 +3113,7 @@ class _AttendancePageState extends State<AttendancePage> {
   bool _saving = false;
   List<Map<String, dynamic>> _registrations = [];
   final Set<int> _presentIds = <int>{};
+  Timer? _attendanceSyncTimer;
 
   Color get _gold => const Color(0xFFD4A017);
   Color get _bg => widget.isDark ? const Color(0xFF101010) : const Color(0xFFF7F3EC);
@@ -2055,14 +3122,134 @@ class _AttendancePageState extends State<AttendancePage> {
   Color get _sub => widget.isDark ? Colors.white70 : Colors.black54;
 
   @override
+  void initState() {
+    super.initState();
+    _flushPendingAttendance(silent: true);
+    _attendanceSyncTimer = Timer.periodic(const Duration(seconds: 30), (_) => _flushPendingAttendance(silent: true));
+  }
+
+  @override
   void dispose() {
     _searchCtrl.dispose();
+    _attendanceSyncTimer?.cancel();
     super.dispose();
   }
 
   void _toast(String msg) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+  }
+
+  String _attendanceCacheKey(String scheduleId) => 'attendance_cache_v3_$scheduleId';
+  static const String _attendancePendingKey = 'attendance_pending_queue_v3';
+
+  Future<Map<String, dynamic>?> _pendingAttendanceFor(String scheduleId) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(_attendancePendingKey);
+      if (raw == null || raw.isEmpty) return null;
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) return null;
+      final item = decoded[scheduleId];
+      return item is Map ? Map<String, dynamic>.from(item) : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> _saveAttendanceCache(_ScheduleItem lecture) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_attendanceCacheKey(lecture.id), jsonEncode({
+        'cached_at': DateTime.now().toIso8601String(),
+        'schedule_id': lecture.id,
+        'registrations': _registrations,
+        'present_ids': _presentIds.toList(),
+      }));
+    } catch (_) {}
+  }
+
+  Future<bool> _loadAttendanceCache(_ScheduleItem lecture) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(_attendanceCacheKey(lecture.id));
+      if (raw == null || raw.isEmpty) return false;
+      final data = jsonDecode(raw);
+      if (data is! Map) return false;
+      final regs = data['registrations'] is List
+          ? (data['registrations'] as List).whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList()
+          : <Map<String, dynamic>>[];
+      final ids = data['present_ids'] is List
+          ? (data['present_ids'] as List).map((e) => int.tryParse(e.toString()) ?? 0).where((id) => id > 0).toSet()
+          : <int>{};
+      final pending = await _pendingAttendanceFor(lecture.id);
+      final pendingIds = pending != null && pending['present_ids'] is List
+          ? (pending['present_ids'] as List).map((e) => int.tryParse(e.toString()) ?? 0).where((id) => id > 0).toSet()
+          : null;
+      if (!mounted) return false;
+      setState(() {
+        _registrations = regs;
+        _presentIds
+          ..clear()
+          ..addAll(pendingIds ?? ids);
+        _loading = false;
+      });
+      return regs.isNotEmpty;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<void> _queueAttendanceSave(_ScheduleItem lecture) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(_attendancePendingKey);
+      final queue = raw == null || raw.isEmpty ? <String, dynamic>{} : Map<String, dynamic>.from(jsonDecode(raw) as Map);
+      queue[lecture.id] = {
+        'schedule_id': lecture.id,
+        'present_ids': _presentIds.toList(),
+        'queued_at': DateTime.now().toIso8601String(),
+      };
+      await prefs.setString(_attendancePendingKey, jsonEncode(queue));
+    } catch (_) {}
+  }
+
+  Future<bool> _sendAttendanceToServer(String scheduleId, Set<int> presentIds) async {
+    final res = await http.post(
+      Uri.parse(_api),
+      body: {
+        'action': 'attendance_save',
+        'schedule_id': scheduleId,
+        'present_ids': jsonEncode(presentIds.toList()),
+      },
+    ).timeout(const Duration(seconds: 20));
+    final data = jsonDecode(res.body) as Map<String, dynamic>;
+    return res.statusCode >= 200 && res.statusCode < 300 && data['success'] == true;
+  }
+
+  Future<void> _flushPendingAttendance({bool silent = false}) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(_attendancePendingKey);
+      if (raw == null || raw.isEmpty) return;
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map || decoded.isEmpty) return;
+      final queue = Map<String, dynamic>.from(decoded);
+      final done = <String>[];
+      for (final entry in queue.entries) {
+        final item = entry.value;
+        if (item is! Map) continue;
+        final ids = item['present_ids'] is List
+            ? (item['present_ids'] as List).map((e) => int.tryParse(e.toString()) ?? 0).where((id) => id > 0).toSet()
+            : <int>{};
+        final ok = await _sendAttendanceToServer(entry.key, ids);
+        if (ok) done.add(entry.key);
+      }
+      if (done.isEmpty) return;
+      for (final key in done) queue.remove(key);
+      await prefs.setString(_attendancePendingKey, jsonEncode(queue));
+      if (!silent && mounted) _toast('تمت مزامنة الحضور المحفوظ محلياً.');
+    } catch (_) {}
   }
 
   Future<void> _loadAttendance(_ScheduleItem lecture) async {
@@ -2073,6 +3260,8 @@ class _AttendancePageState extends State<AttendancePage> {
       _presentIds.clear();
       _searchCtrl.clear();
     });
+    await _loadAttendanceCache(lecture);
+    await _flushPendingAttendance(silent: true);
     try {
       final uri = Uri.parse('$_api?action=attendance_get&schedule_id=${Uri.encodeComponent(lecture.id)}');
       final res = await http.get(uri).timeout(const Duration(seconds: 15));
@@ -2082,49 +3271,53 @@ class _AttendancePageState extends State<AttendancePage> {
         final regs = data['registrations'] is List
             ? (data['registrations'] as List).map((e) => Map<String, dynamic>.from(e as Map)).toList()
             : <Map<String, dynamic>>[];
+        final pending = await _pendingAttendanceFor(lecture.id);
+        final pendingIds = pending != null && pending['present_ids'] is List
+            ? (pending['present_ids'] as List).map((e) => int.tryParse(e.toString()) ?? 0).where((id) => id > 0).toSet()
+            : null;
         setState(() {
           _registrations = regs;
           _presentIds
             ..clear()
-            ..addAll(regs.where((r) => r['present'] == true || r['present'].toString() == '1').map((r) => int.tryParse(r['id'].toString()) ?? 0).where((id) => id > 0));
+            ..addAll(pendingIds ?? regs.where((r) => r['present'] == true || r['present'].toString() == '1').map((r) => int.tryParse(r['id'].toString()) ?? 0).where((id) => id > 0));
           _loading = false;
         });
+        await _saveAttendanceCache(lecture);
       } else {
         setState(() => _loading = false);
-        _toast(data['message']?.toString() ?? 'فشل جلب الحضور');
+        if (_registrations.isEmpty) _toast(data['message']?.toString() ?? 'تعذر جلب بيانات الحضور.');
       }
     } catch (e) {
       if (!mounted) return;
       setState(() => _loading = false);
-      _toast('فشل الاتصال بالخادم: $e');
+      if (_registrations.isEmpty) {
+        _toast('تعذر الاتصال بالخادم. سيتم استخدام آخر نسخة محفوظة عند توفرها.');
+      }
     }
   }
 
   Future<void> _saveAttendance() async {
     if (_selectedLecture == null) return;
+    final lecture = _selectedLecture!;
     setState(() => _saving = true);
+    await _saveAttendanceCache(lecture);
     try {
-      final res = await http.post(
-        Uri.parse(_api),
-        body: {
-          'action': 'attendance_save',
-          'schedule_id': _selectedLecture!.id,
-          'present_ids': jsonEncode(_presentIds.toList()),
-        },
-      ).timeout(const Duration(seconds: 20));
-      final data = jsonDecode(res.body) as Map<String, dynamic>;
+      final ok = await _sendAttendanceToServer(lecture.id, _presentIds);
       if (!mounted) return;
       setState(() => _saving = false);
-      if (res.statusCode >= 200 && res.statusCode < 300 && data['success'] == true) {
-        _toast(data['message']?.toString() ?? 'تم حفظ الحضور');
-        await _loadAttendance(_selectedLecture!);
+      if (ok) {
+        _toast('تم حفظ الحضور بنجاح.');
+        await _flushPendingAttendance(silent: true);
+        await _loadAttendance(lecture);
       } else {
-        _toast(data['message']?.toString() ?? 'فشل حفظ الحضور');
+        await _queueAttendanceSave(lecture);
+        _toast('تم حفظ الحضور محلياً، وستتم المزامنة عند توفر الاتصال.');
       }
-    } catch (e) {
+    } catch (_) {
+      await _queueAttendanceSave(lecture);
       if (!mounted) return;
       setState(() => _saving = false);
-      _toast('فشل الاتصال بالخادم: $e');
+      _toast('تم حفظ الحضور محلياً، وستتم المزامنة عند توفر الاتصال.');
     }
   }
 
@@ -2142,8 +3335,74 @@ class _AttendancePageState extends State<AttendancePage> {
     );
   }
 
+  void _showAttendanceRegistrationDetails(Map<String, dynamic> r) {
+    final rows = <MapEntry<String, String>>[
+      MapEntry('الاسم الثلاثي', _attendanceValueOf(r, 'full_name')),
+      MapEntry('الشهادة والاختصاص', _attendanceValueOf(r, 'certificate')),
+      MapEntry('سنة التخرج', _attendanceValueOf(r, 'graduation_year')),
+      MapEntry('المحافظة', _attendanceValueOf(r, 'governorate')),
+      MapEntry('رقم الهاتف', _attendanceValueOf(r, 'phone')),
+      MapEntry('البريد الإلكتروني', _attendanceValueOf(r, 'email')),
+      MapEntry('عدد الحضور', _attendanceValueOf(r, 'attendance_count')),
+    ];
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => Directionality(
+        textDirection: TextDirection.rtl,
+        child: Container(
+          margin: const EdgeInsets.all(12),
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 22),
+          decoration: BoxDecoration(
+            color: _card,
+            borderRadius: BorderRadius.circular(30),
+            border: Border.all(color: _gold.withOpacity(0.22)),
+          ),
+          child: SafeArea(
+            top: false,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(width: 44, height: 4, decoration: BoxDecoration(color: _sub.withOpacity(0.35), borderRadius: BorderRadius.circular(99))),
+                const SizedBox(height: 16),
+                _avatar(r, 82),
+                const SizedBox(height: 10),
+                Text(_attendanceValueOf(r, 'full_name'), textAlign: TextAlign.center, style: TextStyle(color: _text, fontWeight: FontWeight.w900, fontSize: 17)),
+                const SizedBox(height: 14),
+                ...rows.map((e) => Container(
+                      margin: const EdgeInsets.only(bottom: 9),
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+                      decoration: BoxDecoration(
+                        color: widget.isDark ? const Color(0xFF111111) : const Color(0xFFFAFAFA),
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(color: _gold.withOpacity(0.08)),
+                      ),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          SizedBox(width: 112, child: Text(e.key, style: TextStyle(color: _sub, fontWeight: FontWeight.w800, fontSize: 12))),
+                          Expanded(child: Text(e.value, style: TextStyle(color: _text, fontWeight: FontWeight.w900, height: 1.45))),
+                        ],
+                      ),
+                    )),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  String _attendanceValueOf(Map<String, dynamic> r, String key) {
+    final v = r[key]?.toString().trim() ?? '';
+    return v.isEmpty ? 'غير مضاف' : v;
+  }
+
   Widget _lecturePicker() {
     return ListView(
+      keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 100),
       children: [
         Container(
@@ -2156,7 +3415,7 @@ class _AttendancePageState extends State<AttendancePage> {
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Text('اختيار المحاضرة', style: TextStyle(color: _text, fontWeight: FontWeight.w900, fontSize: 18)),
             const SizedBox(height: 8),
-            Text('اضغط على محاضرة من جدول المحاضرات، وبعدها تظهر قائمة المسجلين لتحديد الحضور. نظام بسيط، على غير عادة البشر مع النماذج. ✅', style: TextStyle(color: _sub, height: 1.7)),
+            Text('يرجى اختيار المحاضرة من الجدول لعرض قائمة المسجلين وتثبيت الحضور.', style: TextStyle(color: _sub, height: 1.7)),
           ]),
         ),
         const SizedBox(height: 14),
@@ -2194,11 +3453,12 @@ class _AttendancePageState extends State<AttendancePage> {
     final shown = q.isEmpty
         ? _registrations
         : _registrations.where((r) {
-            final hay = '${r['full_name'] ?? ''} ${r['phone'] ?? ''} ${r['email'] ?? ''} ${r['certificate'] ?? ''}'.toLowerCase();
-            return hay.contains(q);
+            final name = (r['full_name'] ?? '').toString().toLowerCase();
+            return name.contains(q);
           }).toList();
 
     return ListView(
+      keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 100),
       children: [
         Container(
@@ -2229,7 +3489,7 @@ class _AttendancePageState extends State<AttendancePage> {
               style: TextStyle(color: _text),
               decoration: InputDecoration(
                 prefixIcon: Icon(Icons.search_rounded, color: _gold),
-                hintText: 'بحث بالاسم أو الهاتف أو البريد',
+                hintText: 'بحث بالاسم فقط',
                 hintStyle: TextStyle(color: _sub),
                 filled: true,
                 fillColor: widget.isDark ? const Color(0xFF111111) : const Color(0xFFFAFAFA),
@@ -2249,35 +3509,61 @@ class _AttendancePageState extends State<AttendancePage> {
           Container(
             padding: const EdgeInsets.all(18),
             decoration: BoxDecoration(color: _card, borderRadius: BorderRadius.circular(22)),
-            child: Text('لا توجد نتائج. البحث فعل ما عليه، والباقي على البيانات.', style: TextStyle(color: _sub)),
+            child: Text('لا توجد نتائج.', style: TextStyle(color: _sub)),
           )
         else
           ...shown.map((r) {
             final id = int.tryParse(r['id'].toString()) ?? 0;
             final present = _presentIds.contains(id);
-            return Container(
-              margin: const EdgeInsets.only(bottom: 10),
-              decoration: BoxDecoration(
-                color: present ? _gold.withOpacity(widget.isDark ? 0.16 : 0.12) : _card,
-                borderRadius: BorderRadius.circular(20),
-                border: Border.all(color: present ? _gold.withOpacity(0.55) : _gold.withOpacity(0.14)),
-              ),
-              child: CheckboxListTile(
-                value: present,
-                activeColor: _gold,
-                checkColor: const Color(0xFF1A1000),
-                onChanged: (v) {
-                  setState(() {
-                    if (v == true) {
-                      _presentIds.add(id);
-                    } else {
-                      _presentIds.remove(id);
-                    }
-                  });
-                },
-                secondary: _avatar(r, 46),
-                title: Text(r['full_name']?.toString() ?? '', style: TextStyle(color: _text, fontWeight: FontWeight.w900)),
-                subtitle: Text('${r['phone'] ?? ''} • ${r['certificate'] ?? ''}\nمجموع الحضور: ${r['attendance_count'] ?? 0}', style: TextStyle(color: _sub, height: 1.45)),
+            return InkWell(
+              onTap: () {
+                setState(() {
+                  if (present) {
+                    _presentIds.remove(id);
+                  } else {
+                    _presentIds.add(id);
+                  }
+                });
+                if (_selectedLecture != null) _saveAttendanceCache(_selectedLecture!);
+              },
+              onLongPress: () => _showAttendanceRegistrationDetails(r),
+              borderRadius: BorderRadius.circular(18),
+              child: Container(
+                margin: const EdgeInsets.only(bottom: 8),
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                decoration: BoxDecoration(
+                  color: present ? _gold.withOpacity(widget.isDark ? 0.16 : 0.12) : _card,
+                  borderRadius: BorderRadius.circular(18),
+                  border: Border.all(color: present ? _gold.withOpacity(0.55) : _gold.withOpacity(0.14)),
+                ),
+                child: Row(
+                  children: [
+                    _avatar(r, 42),
+                    const SizedBox(width: 9),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(r['full_name']?.toString() ?? '', maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: _text, fontWeight: FontWeight.w900, fontSize: 13.5)),
+                          const SizedBox(height: 3),
+                          Text('عدد الحضور: ${r['attendance_count'] ?? 0}', style: TextStyle(color: _sub, fontSize: 11.5, fontWeight: FontWeight.w800)),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    AnimatedContainer(
+                      duration: const Duration(milliseconds: 180),
+                      width: 30,
+                      height: 30,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: present ? _gold : Colors.transparent,
+                        border: Border.all(color: present ? _gold : _gold.withOpacity(0.38), width: 1.6),
+                      ),
+                      child: present ? const Icon(Icons.check_rounded, color: Color(0xFF1A1000), size: 19) : null,
+                    ),
+                  ],
+                ),
               ),
             );
           }),
@@ -2296,6 +3582,16 @@ class _AttendancePageState extends State<AttendancePage> {
           elevation: 0,
           title: Text('الحضور', style: TextStyle(color: _text, fontWeight: FontWeight.w900)),
           iconTheme: IconThemeData(color: _text),
+          leading: IconButton(
+            icon: const Icon(Icons.arrow_back_rounded),
+            onPressed: () {
+              if (_selectedLecture != null) {
+                setState(() => _selectedLecture = null);
+              } else {
+                Navigator.of(context).maybePop();
+              }
+            },
+          ),
           actions: [
             if (_selectedLecture != null)
               Padding(
@@ -2350,6 +3646,12 @@ class _AdminAddBoxState extends State<_AdminAddBox>
   final _locCtrl = TextEditingController();
   final _urlCtrl = TextEditingController();
 
+  final _numFocus = FocusNode();
+  final _dayFocus = FocusNode();
+  final _timeFocus = FocusNode();
+  final _locFocus = FocusNode();
+  final _urlFocus = FocusNode();
+
   @override
   void initState() {
     super.initState();
@@ -2366,6 +3668,11 @@ class _AdminAddBoxState extends State<_AdminAddBox>
     _timeCtrl.dispose();
     _locCtrl.dispose();
     _urlCtrl.dispose();
+    _numFocus.dispose();
+    _dayFocus.dispose();
+    _timeFocus.dispose();
+    _locFocus.dispose();
+    _urlFocus.dispose();
     super.dispose();
   }
 
@@ -2376,6 +3683,21 @@ class _AdminAddBoxState extends State<_AdminAddBox>
     } else {
       _animCtrl.reverse();
     }
+  }
+
+  void _keepFieldAboveKeyboard(BuildContext fieldContext) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      Future.delayed(const Duration(milliseconds: 180), () {
+        if (!mounted) return;
+        Scrollable.ensureVisible(
+          fieldContext,
+          duration: const Duration(milliseconds: 320),
+          curve: Curves.easeOutCubic,
+          alignment: 0.60,
+          alignmentPolicy: ScrollPositionAlignmentPolicy.explicit,
+        );
+      });
+    });
   }
 
   Future<void> _submit() async {
@@ -2434,11 +3756,12 @@ class _AdminAddBoxState extends State<_AdminAddBox>
   @override
   Widget build(BuildContext context) {
     final isDark = widget.isDark;
+
     return AnimatedContainer(
-      duration: const Duration(milliseconds: 300),
-      curve: Curves.easeInOut,
-      decoration: BoxDecoration(
-        color: isDark ? const Color(0xFF1A1500) : const Color(0xFFFFFBF0),
+        duration: const Duration(milliseconds: 300),
+        curve: Curves.easeInOut,
+        decoration: BoxDecoration(
+          color: isDark ? const Color(0xFF1A1500) : const Color(0xFFFFFBF0),
         borderRadius: BorderRadius.circular(20),
         border: Border.all(
           color: gold.withOpacity(_expanded ? 0.5 : 0.25),
@@ -2534,6 +3857,8 @@ class _AdminAddBoxState extends State<_AdminAddBox>
                       Expanded(
                         child: _AdminField(
                           controller: _numCtrl,
+                          focusNode: _numFocus,
+                          onFocused: _keepFieldAboveKeyboard,
                           label: 'رقم المحاضرة',
                           icon: Icons.tag_rounded,
                           isDark: isDark,
@@ -2547,6 +3872,8 @@ class _AdminAddBoxState extends State<_AdminAddBox>
                       Expanded(
                         child: _AdminField(
                           controller: _dayCtrl,
+                          focusNode: _dayFocus,
+                          onFocused: _keepFieldAboveKeyboard,
                           label: 'اليوم / التاريخ',
                           icon: Icons.calendar_today_rounded,
                           isDark: isDark,
@@ -2560,6 +3887,8 @@ class _AdminAddBoxState extends State<_AdminAddBox>
                       Expanded(
                         child: _AdminField(
                           controller: _timeCtrl,
+                          focusNode: _timeFocus,
+                          onFocused: _keepFieldAboveKeyboard,
                           label: 'الوقت',
                           icon: Icons.access_time_rounded,
                           isDark: isDark,
@@ -2569,6 +3898,8 @@ class _AdminAddBoxState extends State<_AdminAddBox>
                       Expanded(
                         child: _AdminField(
                           controller: _locCtrl,
+                          focusNode: _locFocus,
+                          onFocused: _keepFieldAboveKeyboard,
                           label: 'الموقع',
                           icon: Icons.location_on_rounded,
                           isDark: isDark,
@@ -2583,6 +3914,8 @@ class _AdminAddBoxState extends State<_AdminAddBox>
                       Expanded(
                         child: _AdminField(
                           controller: _urlCtrl,
+                          focusNode: _urlFocus,
+                          onFocused: _keepFieldAboveKeyboard,
                           label: 'رابط الموقع (اختياري)',
                           icon: Icons.link_rounded,
                           isDark: isDark,
@@ -2686,8 +4019,10 @@ class _AdminAddBoxState extends State<_AdminAddBox>
 // ─────────────────────────────────────────────────────────────────────────────
 // Admin Text Field
 // ─────────────────────────────────────────────────────────────────────────────
-class _AdminField extends StatelessWidget {
+class _AdminField extends StatefulWidget {
   final TextEditingController controller;
+  final FocusNode? focusNode;
+  final ValueChanged<BuildContext>? onFocused;
   final String label;
   final IconData icon;
   final bool isDark;
@@ -2696,6 +4031,8 @@ class _AdminField extends StatelessWidget {
 
   const _AdminField({
     required this.controller,
+    this.focusNode,
+    this.onFocused,
     required this.label,
     required this.icon,
     required this.isDark,
@@ -2703,26 +4040,75 @@ class _AdminField extends StatelessWidget {
     this.inputFormatters,
   });
 
+  @override
+  State<_AdminField> createState() => _AdminFieldState();
+}
+
+class _AdminFieldState extends State<_AdminField> {
   static const gold = Color(0xFFD4A017);
+  FocusNode? _ownedFocusNode;
+
+  FocusNode get _effectiveFocusNode => widget.focusNode ?? _ownedFocusNode!;
+
+  @override
+  void initState() {
+    super.initState();
+    _ownedFocusNode = widget.focusNode == null ? FocusNode() : null;
+    _effectiveFocusNode.addListener(_handleFocusChange);
+  }
+
+  @override
+  void didUpdateWidget(covariant _AdminField oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final oldEffectiveFocusNode = oldWidget.focusNode ?? _ownedFocusNode;
+    if (oldWidget.focusNode != widget.focusNode) {
+      oldEffectiveFocusNode?.removeListener(_handleFocusChange);
+      if (widget.focusNode == null) {
+        _ownedFocusNode ??= FocusNode();
+      } else {
+        _ownedFocusNode?.dispose();
+        _ownedFocusNode = null;
+      }
+      _effectiveFocusNode.addListener(_handleFocusChange);
+    }
+  }
+
+  @override
+  void dispose() {
+    _effectiveFocusNode.removeListener(_handleFocusChange);
+    _ownedFocusNode?.dispose();
+    super.dispose();
+  }
+
+  void _handleFocusChange() {
+    if (_effectiveFocusNode.hasFocus) {
+      widget.onFocused?.call(context);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
+    final isDark = widget.isDark;
+
     return TextField(
-      controller: controller,
-      keyboardType: keyboardType,
-      inputFormatters: inputFormatters,
+      focusNode: _effectiveFocusNode,
+      controller: widget.controller,
+      keyboardType: widget.keyboardType,
+      inputFormatters: widget.inputFormatters,
       textAlign: TextAlign.right,
+      onTap: () => widget.onFocused?.call(context),
+      scrollPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 18),
       style: TextStyle(
         color: isDark ? Colors.white : const Color(0xFF1A1000),
         fontSize: 13,
       ),
       decoration: InputDecoration(
-        labelText: label,
+        labelText: widget.label,
         labelStyle: TextStyle(
           color: gold.withOpacity(0.7),
           fontSize: 12,
         ),
-        prefixIcon: Icon(icon, color: gold, size: 18),
+        prefixIcon: Icon(widget.icon, color: gold, size: 18),
         filled: true,
         fillColor:
             isDark ? Colors.white.withOpacity(0.06) : gold.withOpacity(0.06),
@@ -2755,25 +4141,29 @@ class _ScheduleTable extends StatelessWidget {
   final VoidCallback onRetry;
   final bool isDark;
   final Color textPrimary, textSub, cardBg;
-  final bool isAdmin;
-  final Future<void> Function(String) onDelete;
-  final Future<void> Function(_ScheduleItem, _ScheduleItem) onEdit;
-  final Future<void> Function(int, int) onReorder;
+final bool isAdmin;
+final Future<void> Function(String) onDelete;
+final Future<void> Function(_ScheduleItem, _ScheduleItem) onEdit;
+final Future<void> Function(int, int) onReorder;
+final String? highlightScheduleId;
+final Map<String, GlobalKey> rowKeys;
 
-  const _ScheduleTable({
-    required this.schedule,
-    required this.loading,
-    required this.error,
-    required this.onRetry,
-    required this.isDark,
-    required this.textPrimary,
-    required this.textSub,
-    required this.cardBg,
-    required this.isAdmin,
-    required this.onDelete,
-    required this.onEdit,
-    required this.onReorder,
-  });
+const _ScheduleTable({
+  required this.schedule,
+  required this.loading,
+  required this.error,
+  required this.onRetry,
+  required this.isDark,
+  required this.textPrimary,
+  required this.textSub,
+  required this.cardBg,
+  required this.isAdmin,
+  required this.onDelete,
+  required this.onEdit,
+  required this.onReorder,
+  this.highlightScheduleId,
+  this.rowKeys = const {},
+});
 
   static const gold = Color(0xFFD4A017);
 
@@ -2902,6 +4292,7 @@ class _ScheduleTable extends StatelessWidget {
           // Data Rows — reorderable for admin, normal for users
           if (isAdmin)
             ReorderableListView.builder(
+              keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
               shrinkWrap: true,
               physics: const NeverScrollableScrollPhysics(),
               itemCount: schedule.length,
@@ -2928,131 +4319,153 @@ class _ScheduleTable extends StatelessWidget {
   }
 
   Widget _buildRow(BuildContext context, int i, _ScheduleItem row, bool isEven) {
-    return Container(
-      key: ValueKey(row.id),
-      color: isEven
-          ? (isDark
-              ? Colors.white.withOpacity(0.03)
-              : const Color(0xFFFFF9EE))
-          : Colors.transparent,
-      padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 12),
-      child: Row(
+    final isHighlighted =
+        highlightScheduleId != null && row.id == highlightScheduleId;
+    final baseColor = isEven
+        ? (isDark ? Colors.white.withOpacity(0.03) : const Color(0xFFFFF9EE))
+        : Colors.transparent;
+
+    return AnimatedContainer(
+      key: rowKeys[row.id] ?? ValueKey(row.id),
+      duration: const Duration(milliseconds: 350),
+      curve: Curves.easeOutCubic,
+      color: baseColor,
+      child: Stack(
+        clipBehavior: Clip.none,
         children: [
-          // Drag handle for admin
-          if (isAdmin)
-            Padding(
-              padding: const EdgeInsets.only(left: 4),
-              child: Icon(Icons.drag_handle_rounded,
-                  color: gold.withOpacity(0.45), size: 18),
+          if (isHighlighted)
+            Positioned.fill(
+              child: _MovingLectureHighlight(isDark: isDark),
             ),
-          // Lecture Number
-          Expanded(
-            flex: 1,
-            child: Center(
-              child: Container(
-                width: 30,
-                height: 30,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: gold.withOpacity(0.15),
-                  border: Border.all(color: gold.withOpacity(0.22)),
-                ),
-                alignment: Alignment.center,
-                child: Text(
-                  row.lectureNumber,
-                  style: const TextStyle(
-                      color: gold,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w800),
-                ),
-              ),
-            ),
-          ),
-          _DataCell(text: row.day, flex: 2, color: textPrimary),
-          _DataCell(text: row.time, flex: 2, color: textSub),
-          // Location cell
-          Expanded(
-            flex: 3,
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 12),
             child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              mainAxisSize: MainAxisSize.max,
               children: [
-                if (row.urlLocation.isNotEmpty)
-                  Flexible(
-                    child: Text(
-                      row.location,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                          color: textPrimary,
-                          fontSize: 11.5,
-                          fontWeight: FontWeight.w600),
-                    ),
-                  )
-                else
-                  Expanded(
-                    child: Text(
-                      row.location,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                          color: textPrimary,
-                          fontSize: 11.5,
-                          fontWeight: FontWeight.w600),
+                if (isAdmin)
+                  Padding(
+                    padding: const EdgeInsets.only(left: 4),
+                    child: Icon(
+                      Icons.drag_handle_rounded,
+                      color: gold.withOpacity(0.45),
+                      size: 18,
                     ),
                   ),
-                if (row.urlLocation.isNotEmpty) ...[
-                  const SizedBox(width: 5),
-                  GestureDetector(
-                    onTap: () => _openLocation(context, row),
+                Expanded(
+                  flex: 1,
+                  child: Center(
                     child: Container(
-                      padding: const EdgeInsets.all(5),
+                      width: 30,
+                      height: 30,
                       decoration: BoxDecoration(
-                        gradient: const LinearGradient(
-                          colors: [Color(0xFFFFD86B), Color(0xFFD4A017)],
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
-                        ),
                         shape: BoxShape.circle,
-                        boxShadow: [
-                          BoxShadow(
-                            color: gold.withOpacity(0.35),
-                            blurRadius: 6,
-                            offset: const Offset(0, 2),
+                        color: gold.withOpacity(0.15),
+                        border: Border.all(color: gold.withOpacity(0.22)),
+                      ),
+                      alignment: Alignment.center,
+                      child: Text(
+                        row.lectureNumber,
+                        style: const TextStyle(
+                          color: gold,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+                _DataCell(text: row.day, flex: 2, color: textPrimary),
+                _DataCell(text: row.time, flex: 2, color: textSub),
+                Expanded(
+                  flex: 3,
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    mainAxisSize: MainAxisSize.max,
+                    children: [
+                      if (row.urlLocation.isNotEmpty)
+                        Flexible(
+                          child: Text(
+                            row.location,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              color: textPrimary,
+                              fontSize: 11.5,
+                              fontWeight: FontWeight.w600,
+                            ),
                           ),
-                        ],
+                        )
+                      else
+                        Expanded(
+                          child: Text(
+                            row.location,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              color: textPrimary,
+                              fontSize: 11.5,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      if (row.urlLocation.isNotEmpty) ...[
+                        const SizedBox(width: 5),
+                        GestureDetector(
+                          onTap: () => _openLocation(context, row),
+                          child: Container(
+                            padding: const EdgeInsets.all(5),
+                            decoration: BoxDecoration(
+                              gradient: const LinearGradient(
+                                colors: [Color(0xFFFFD86B), Color(0xFFD4A017)],
+                                begin: Alignment.topLeft,
+                                end: Alignment.bottomRight,
+                              ),
+                              shape: BoxShape.circle,
+                              boxShadow: [
+                                BoxShadow(
+                                  color: gold.withOpacity(0.35),
+                                  blurRadius: 6,
+                                  offset: const Offset(0, 2),
+                                ),
+                              ],
+                            ),
+                            child: const Icon(
+                              Icons.location_on_rounded,
+                              color: Colors.black,
+                              size: 13,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+                if (isAdmin)
+                  GestureDetector(
+                    onTap: () => _showEditDialog(context, row, i),
+                    child: Container(
+                      width: 28,
+                      height: 28,
+                      margin: const EdgeInsets.only(right: 2),
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: gold.withOpacity(0.12),
+                        border: Border.all(
+                          color: gold.withOpacity(0.3),
+                          width: 1,
+                        ),
                       ),
                       child: const Icon(
-                        Icons.location_on_rounded,
-                        color: Colors.black,
+                        Icons.edit_rounded,
+                        color: gold,
                         size: 13,
                       ),
                     ),
                   ),
-                ],
               ],
             ),
           ),
-          // Admin Edit Button
-          if (isAdmin)
-            GestureDetector(
-              onTap: () => _showEditDialog(context, row, i),
-              child: Container(
-                width: 28,
-                height: 28,
-                margin: const EdgeInsets.only(right: 2),
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: gold.withOpacity(0.12),
-                  border: Border.all(
-                      color: gold.withOpacity(0.3), width: 1),
-                ),
-                child: const Icon(Icons.edit_rounded,
-                    color: gold, size: 13),
-              ),
-            ),
         ],
       ),
     );
@@ -3074,9 +4487,176 @@ class _ScheduleTable extends StatelessWidget {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Edit Bottom Sheet
-// ─────────────────────────────────────────────────────────────────────────────
+class _MovingLectureHighlight extends StatefulWidget {
+  final bool isDark;
+
+  const _MovingLectureHighlight({required this.isDark});
+
+  @override
+  State<_MovingLectureHighlight> createState() => _MovingLectureHighlightState();
+}
+
+class _MovingLectureHighlightState extends State<_MovingLectureHighlight>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 2600),
+    )..repeat();
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return IgnorePointer(
+      child: RepaintBoundary(
+        child: AnimatedBuilder(
+          animation: _controller,
+          builder: (context, _) {
+            return CustomPaint(
+              painter: _LectureRowShinePainter(
+                progress: _controller.value,
+                isDark: widget.isDark,
+              ),
+              size: Size.infinite,
+            );
+          },
+        ),
+      ),
+    );
+  }
+}
+
+class _LectureRowShinePainter extends CustomPainter {
+  final double progress;
+  final bool isDark;
+
+  const _LectureRowShinePainter({
+    required this.progress,
+    required this.isDark,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (size.width <= 0 || size.height <= 0) return;
+
+    final rect = Offset.zero & size;
+
+    final basePaint = Paint()
+      ..shader = LinearGradient(
+        begin: Alignment.centerRight,
+        end: Alignment.centerLeft,
+        colors: [
+          const Color(0xFF0D47A1).withOpacity(isDark ? 0.10 : 0.055),
+          const Color(0xFF2196F3).withOpacity(isDark ? 0.22 : 0.13),
+          const Color(0xFF64B5F6).withOpacity(isDark ? 0.18 : 0.10),
+          const Color(0xFF2196F3).withOpacity(isDark ? 0.22 : 0.13),
+          const Color(0xFF0D47A1).withOpacity(isDark ? 0.10 : 0.055),
+        ],
+        stops: const [0.0, 0.22, 0.50, 0.78, 1.0],
+      ).createShader(rect);
+
+    canvas.drawRect(rect, basePaint);
+
+    final glowPaint = Paint()
+      ..shader = RadialGradient(
+        colors: [
+          const Color(0xFF81D4FA).withOpacity(isDark ? 0.26 : 0.17),
+          const Color(0xFF29B6F6).withOpacity(isDark ? 0.12 : 0.08),
+          Colors.transparent,
+        ],
+        stops: const [0.0, 0.45, 1.0],
+      ).createShader(Rect.fromLTWH(
+        -size.width * 0.08,
+        -size.height * 1.2,
+        size.width * 1.16,
+        size.height * 3.4,
+      ));
+
+    canvas.drawRect(rect, glowPaint);
+
+    final sweepWidth = math.max(140.0, size.width * 0.34);
+    final travel = size.width + sweepWidth * 2;
+    final centerX = -sweepWidth + (progress * travel);
+
+    void drawBeam(double x, double opacityScale) {
+      final beamRect = Rect.fromLTWH(
+        x - sweepWidth / 2,
+        -size.height * 0.65,
+        sweepWidth,
+        size.height * 2.3,
+      );
+
+      final beamPaint = Paint()
+        ..shader = LinearGradient(
+          begin: Alignment.centerLeft,
+          end: Alignment.centerRight,
+          colors: [
+            Colors.transparent,
+            const Color(0xFF03A9F4).withOpacity(0.00),
+            const Color(0xFF40C4FF).withOpacity((isDark ? 0.20 : 0.14) * opacityScale),
+            const Color(0xFFB3E5FC).withOpacity((isDark ? 0.78 : 0.58) * opacityScale),
+            Colors.white.withOpacity((isDark ? 0.72 : 0.50) * opacityScale),
+            const Color(0xFFB3E5FC).withOpacity((isDark ? 0.70 : 0.50) * opacityScale),
+            const Color(0xFF40C4FF).withOpacity((isDark ? 0.18 : 0.12) * opacityScale),
+            const Color(0xFF03A9F4).withOpacity(0.00),
+            Colors.transparent,
+          ],
+          stops: const [0.0, 0.18, 0.33, 0.45, 0.50, 0.55, 0.67, 0.82, 1.0],
+        ).createShader(beamRect);
+
+      canvas.save();
+      canvas.clipRect(rect);
+      canvas.translate(x, size.height / 2);
+      canvas.rotate(-0.16);
+      canvas.translate(-x, -size.height / 2);
+      canvas.drawRect(beamRect, beamPaint);
+      canvas.restore();
+    }
+
+    drawBeam(centerX, 1.0);
+
+    final previousX = centerX - travel;
+    if (previousX + sweepWidth > 0) {
+      drawBeam(previousX, 1.0);
+    }
+
+    final nextX = centerX + travel;
+    if (nextX - sweepWidth < size.width) {
+      drawBeam(nextX, 1.0);
+    }
+
+    final borderPaint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.2
+      ..shader = LinearGradient(
+        begin: Alignment.centerRight,
+        end: Alignment.centerLeft,
+        colors: [
+          const Color(0xFF03A9F4).withOpacity(0.05),
+          const Color(0xFF4FC3F7).withOpacity(isDark ? 0.45 : 0.28),
+          const Color(0xFF03A9F4).withOpacity(0.05),
+        ],
+      ).createShader(rect);
+
+    canvas.drawRect(rect.deflate(0.6), borderPaint);
+  }
+
+  @override
+  bool shouldRepaint(covariant _LectureRowShinePainter oldDelegate) {
+    return oldDelegate.progress != progress || oldDelegate.isDark != isDark;
+  }
+}
+
 class _EditBottomSheet extends StatefulWidget {
   final bool isDark;
   final _ScheduleItem item;
@@ -3190,6 +4770,7 @@ class _EditBottomSheetState extends State<_EditBottomSheet> {
             bottom: MediaQuery.of(context).viewInsets.bottom + 20,
           ),
           child: SingleChildScrollView(
+            keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
@@ -3509,57 +5090,60 @@ class _PreviousCoursesGalleryCardState
     final eased = Curves.easeInOutCubic.transform(progress);
     final mode = _index % 7;
 
-    double scale = 1.04;
+    double scale = 1.18;
     double dx = 0;
     double dy = 0;
     double angle = 0;
 
     switch (mode) {
       case 0:
-        scale = 1.08 - (eased * 0.035);
+        scale = 1.22 - (eased * 0.035);
         dx = -16 + (eased * 32);
         break;
       case 1:
-        scale = 1.04 + (eased * 0.045);
+        scale = 1.19 + (eased * 0.045);
         dy = 14 - (eased * 28);
         break;
       case 2:
-        scale = 1.09 - (eased * 0.05);
+        scale = 1.23 - (eased * 0.05);
         dx = 12 - (eased * 24);
         dy = -8 + (eased * 16);
         break;
       case 3:
-        scale = 1.05 + (math.sin(eased * math.pi) * 0.035);
+        scale = 1.20 + (math.sin(eased * math.pi) * 0.035);
         angle = (-0.010 + (eased * 0.020));
         break;
       case 4:
-        scale = 1.07;
+        scale = 1.21;
         dx = math.sin(eased * math.pi * 2) * 12;
         dy = math.cos(eased * math.pi * 2) * 7;
         break;
       case 5:
-        scale = 1.10 - (eased * 0.04);
+        scale = 1.24 - (eased * 0.04);
         dx = -10 + (eased * 20);
         dy = 10 - (eased * 20);
         angle = 0.008 - (eased * 0.016);
         break;
       default:
-        scale = 1.045 + (eased * 0.035);
+        scale = 1.19 + (eased * 0.035);
         dx = 18 - (eased * 36);
         break;
     }
 
-    return Transform.translate(
-      offset: Offset(dx, dy),
-      child: Transform.rotate(
-        angle: angle,
-        child: Transform.scale(
-          scale: scale,
-          child: Image.network(
-            url,
-            fit: BoxFit.cover,
-            filterQuality: FilterQuality.high,
-            loadingBuilder: (context, child, loadingProgress) {
+    return ClipRect(
+      child: Transform.translate(
+        offset: Offset(dx, dy),
+        child: Transform.rotate(
+          angle: angle,
+          child: Transform.scale(
+            scale: scale,
+            child: SizedBox.expand(
+              child: Image.network(
+                url,
+                fit: BoxFit.cover,
+                alignment: Alignment.center,
+                filterQuality: FilterQuality.high,
+                loadingBuilder: (context, child, loadingProgress) {
               if (loadingProgress == null) return child;
               return Container(
                 decoration: BoxDecoration(
@@ -3582,21 +5166,23 @@ class _PreviousCoursesGalleryCardState
                 ),
               );
             },
-            errorBuilder: (_, __, ___) => Container(
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topRight,
-                  end: Alignment.bottomLeft,
-                  colors: widget.isDark
-                      ? const [Color(0xFF1B1B1B), Color(0xFF090909)]
-                      : const [Color(0xFFFFF5DD), Color(0xFFFFE3A3)],
+                errorBuilder: (_, __, ___) => Container(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topRight,
+                      end: Alignment.bottomLeft,
+                      colors: widget.isDark
+                          ? const [Color(0xFF1B1B1B), Color(0xFF090909)]
+                          : const [Color(0xFFFFF5DD), Color(0xFFFFE3A3)],
+                    ),
+                  ),
+                  alignment: Alignment.center,
+                  child: Icon(
+                    Icons.broken_image_rounded,
+                    color: widget.textSub.withOpacity(0.75),
+                    size: 36,
+                  ),
                 ),
-              ),
-              alignment: Alignment.center,
-              child: Icon(
-                Icons.broken_image_rounded,
-                color: widget.textSub.withOpacity(0.75),
-                size: 36,
               ),
             ),
           ),
@@ -4240,6 +5826,7 @@ class _LecturesTab extends StatelessWidget {
     }
 
     return ListView(
+      keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
       padding: const EdgeInsets.fromLTRB(16, 20, 16, 100),
       children: [
         Container(

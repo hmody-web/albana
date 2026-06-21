@@ -20,7 +20,6 @@ import 'package:app_links/app_links.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'firebase_notification_service.dart';
-
 SystemUiOverlayStyle appSystemBarsStyle(bool isDark) {
   return SystemUiOverlayStyle(
     statusBarColor: Colors.transparent,
@@ -197,6 +196,7 @@ StreamSubscription<Uri>? _deepLinkSub;
 StreamSubscription<Map<String, dynamic>>? _notificationClickSub;
 int? _pendingPostId;
 int? _pendingFileId;
+String? _pendingScheduleId;
 
   @override
   void initState() {
@@ -249,6 +249,27 @@ void _initNotificationClicks() {
 }
 
 void _openFromNotificationData(Map<String, dynamic> data) {
+  final screen = '${data['screen'] ?? ''}'.toLowerCase().trim();
+  final type = '${data['type'] ?? ''}'.toLowerCase().trim();
+
+  final rawScheduleId = data['schedule_id'] ??
+      data['scheduleId'] ??
+      data['lecture_id'] ??
+      data['lectureId'];
+  final scheduleId = '$rawScheduleId'.trim();
+
+  if ((screen == 'courses' || type == 'new_schedule_lecture') &&
+      scheduleId.isNotEmpty &&
+      scheduleId.toLowerCase() != 'null') {
+    _openSharedSchedule(scheduleId);
+    return;
+  }
+
+  if (screen == 'courses') {
+    _openCoursesPageFromNotification();
+    return;
+  }
+
   final rawFileId = data['file_id'] ?? data['fileId'] ?? data['pdf_id'] ?? data['pdfId'];
   final fileId = int.tryParse('$rawFileId');
 
@@ -256,8 +277,6 @@ void _openFromNotificationData(Map<String, dynamic> data) {
     _openSharedFile(fileId);
     return;
   }
-
-  final screen = '${data['screen'] ?? ''}'.toLowerCase().trim();
 
   if (screen == 'files' || screen == 'pdf' || screen == 'pdf_files') {
     _openFilesPageFromNotification();
@@ -317,6 +336,27 @@ void _openFilesPageFromNotification() {
     );
   }
 }
+void _openCoursesPageFromNotification() {
+  if (!mounted) return;
+
+  if (_currentIndex == 3) {
+    return;
+  }
+
+  _expandNavBar();
+  setState(() {
+    _currentIndex = 3;
+  });
+
+  if (_pageController.hasClients) {
+    _pageController.animateToPage(
+      3,
+      duration: const Duration(milliseconds: 280),
+      curve: Curves.easeOutCubic,
+    );
+  }
+}
+
 
   void _handleDeepLink(Uri uri) {
     int? postId;
@@ -410,6 +450,38 @@ void _openFilesPageFromNotification() {
         if (!mounted || id == null) return;
         _pendingFileId = null;
         FilesPageDeepLinkBus.openFile(id);
+      });
+    });
+  }
+
+  void _openSharedSchedule(String scheduleId) {
+    final cleanedId = scheduleId.trim();
+    if (cleanedId.isEmpty) return;
+
+    _pendingScheduleId = cleanedId;
+
+    if (!mounted) return;
+
+    if (_currentIndex != 3) {
+      _expandNavBar();
+      setState(() {
+        _currentIndex = 3;
+      });
+      if (_pageController.hasClients) {
+        _pageController.animateToPage(
+          3,
+          duration: const Duration(milliseconds: 280),
+          curve: Curves.easeOutCubic,
+        );
+      }
+    }
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      Future.delayed(const Duration(milliseconds: 420), () {
+        final id = _pendingScheduleId;
+        if (!mounted || id == null || id.trim().isEmpty) return;
+        _pendingScheduleId = null;
+        CoursesPageDeepLinkBus.openSchedule(id);
       });
     });
   }
