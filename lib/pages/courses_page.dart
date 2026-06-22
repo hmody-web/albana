@@ -259,8 +259,8 @@ class _CoursesPageState extends State<CoursesPage>
 
   late TabController _tabController;
 
-  static const _apiKey = 'AIzaSyDwiUw3uEO5xqafhsfMZ0KVFYUhQ9hvmh8';
-  static const _channelId = 'UCkIanvr92e8SPMgZo5y5P7g';
+  static const _youtubeVideosUrl =
+      'https://majidalbana.com/admin/youtube_channel_videos.php';
   static const _scheduleUrl =
       'https://majidalbana.com/admin/table/load_schedule.php';
   static const _addScheduleUrl =
@@ -371,61 +371,83 @@ class _CoursesPageState extends State<CoursesPage>
     super.dispose();
   }
 
-  Future<void> _fetchVideos() async {
-    setState(() {
-      _loadingVideos = true;
-      _videoError = null;
-    });
+  String _decodeYoutubeText(String value) {
+    return value
+        .replaceAll('&amp;', '&')
+        .replaceAll('&quot;', '"')
+        .replaceAll('&#39;', "'")
+        .replaceAll('&lt;', '<')
+        .replaceAll('&gt;', '>')
+        .trim();
+  }
+
+  String _formatYoutubeDate(dynamic value) {
+    final raw = value?.toString().trim() ?? '';
+    if (raw.isEmpty) return '';
 
     try {
-      final searchUri = Uri.https('www.googleapis.com', '/youtube/v3/search', {
-        'part': 'snippet',
-        'channelId': _channelId,
-        'order': 'date',
-        'maxResults': '20',
-        'type': 'video',
-        'key': _apiKey,
-      });
+      final parsed = DateTime.parse(raw).toLocal();
+      final month = parsed.month.toString().padLeft(2, '0');
+      final day = parsed.day.toString().padLeft(2, '0');
+      return '${parsed.year}-$month-$day';
+    } catch (_) {
+      return raw.length >= 10 ? raw.substring(0, 10) : raw;
+    }
+  }
 
-      final response = await http.get(searchUri);
+  Future<void> _fetchVideos() async {
+    if (mounted) {
+      setState(() {
+        _loadingVideos = true;
+        _videoError = null;
+      });
+    }
+
+    try {
+      final response = await http.get(Uri.parse(_youtubeVideosUrl));
+
       if (response.statusCode != 200) {
-        throw Exception('فشل الاتصال: HTTP ${response.statusCode}');
+        throw Exception('فشل الاتصال بالخادم: HTTP ${response.statusCode}');
       }
 
       final data = jsonDecode(response.body) as Map<String, dynamic>;
-      final items = data['items'] as List<dynamic>;
+
+      if (data['success'] != true) {
+        throw Exception(data['message']?.toString() ?? 'تعذّر تحميل فيديوهات القناة');
+      }
+
+      final items = (data['videos'] as List<dynamic>? ?? const []);
 
       final videos = items.map<Map<String, String>>((item) {
-        final snippet = item['snippet'] as Map<String, dynamic>;
-        final videoId =
-            (item['id'] as Map<String, dynamic>)['videoId'] as String;
-        final title = snippet['title'] as String;
-        final publishedAt =
-            (snippet['publishedAt'] as String).substring(0, 10);
-        final thumbs = snippet['thumbnails'] as Map<String, dynamic>;
-        final thumb =
-            ((thumbs['medium'] ?? thumbs['default']) as Map<String, dynamic>)[
-                'url'] as String;
+        final map = item as Map<String, dynamic>;
+        final videoId = map['videoId']?.toString() ?? map['id']?.toString() ?? '';
+        final title = _decodeYoutubeText(map['title']?.toString() ?? 'بدون عنوان');
+        final thumbnail = map['thumbnail']?.toString() ?? map['thumb']?.toString() ?? '';
+        final publishedAt = _formatYoutubeDate(map['publishedAt']);
 
         return {
           'id': videoId,
           'title': title,
-          'thumb': thumb,
+          'thumb': thumbnail,
           'date': publishedAt,
+          'url': map['url']?.toString() ?? 'https://www.youtube.com/watch?v=$videoId',
         };
+      }).where((video) {
+        return (video['id'] ?? '').isNotEmpty &&
+            (video['title'] ?? '').isNotEmpty;
       }).toList();
 
+      if (!mounted) return;
       setState(() {
         _videos = videos;
         _loadingVideos = false;
       });
     } catch (e) {
-if (mounted) {
-  setState(() {
-    _videoError = e.toString();
-    _loadingVideos = false;
-  });
-}
+      if (!mounted) return;
+      setState(() {
+        _videoError = e.toString();
+        _loadingVideos = false;
+      });
     }
   }
 
@@ -1007,10 +1029,20 @@ class _CoursesTab extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final keyboardBottom = MediaQuery.of(context).viewInsets.bottom;
+
     return ListView(
       controller: scrollController,
       keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-      padding: const EdgeInsets.fromLTRB(16, 20, 16, 100),
+      // FIX_KEYBOARD_REAL_20260622:
+      // نخلي مدى التمرير يكبر بقوة وقت ظهور الكيبورد، لأن الحقول داخل
+      // TabBarView + ListView ولازم مساحة إضافية حقيقية حتى آخر حقل يصعد كاملًا.
+      padding: EdgeInsets.fromLTRB(
+        16,
+        20,
+        16,
+        keyboardBottom > 0 ? 260 + keyboardBottom + 180 : 100,
+      ),
       children: [
         // ── Course Card ──────────────────────────────────────────────────────
         ClipRRect(
@@ -1176,12 +1208,23 @@ class _CoursesTab extends StatelessWidget {
 
         // ── Admin Add Box ────────────────────────────────────────────────────
         if (isAdmin)
-          _AdminAddBox(
-            isDark: isDark,
-            cardBg: cardBg,
-            textPrimary: textPrimary,
-            textSub: textSub,
-            onAdd: onAddSchedule,
+          AnimatedPadding(
+            // FIX_KEYBOARD_REAL_20260622:
+            // هاي المساحة مو شكلية، هاي تعطي ListView مجال تمرير فعلي أسفل كرت الإضافة
+            // حتى الحقل المضغوط يصعد فوق الكيبورد بالكامل، لا يطلع منه طرف فقط.
+            duration: const Duration(milliseconds: 180),
+            curve: Curves.easeOutCubic,
+            padding: EdgeInsets.only(
+              bottom: keyboardBottom > 0 ? keyboardBottom + 180 : 0,
+            ),
+            child: _AdminAddBox(
+              isDark: isDark,
+              cardBg: cardBg,
+              textPrimary: textPrimary,
+              textSub: textSub,
+              scrollController: scrollController,
+              onAdd: onAddSchedule,
+            ),
           ),
 
         if (isAdmin) const SizedBox(height: 14),
@@ -1206,6 +1249,15 @@ class _CoursesTab extends StatelessWidget {
 
         const SizedBox(height: 20),
 
+        _CourseGroupsJoinCard(
+          isDark: isDark,
+          textPrimary: textPrimary,
+          textSub: textSub,
+          cardBg: cardBg,
+        ),
+
+        const SizedBox(height: 20),
+
         _PreviousCoursesGalleryCard(
           isDark: isDark,
           textPrimary: textPrimary,
@@ -1222,6 +1274,301 @@ class _CoursesTab extends StatelessWidget {
           cardBg: cardBg,
         ),
       ],
+    );
+  }
+}
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Course Groups Join Card
+// ─────────────────────────────────────────────────────────────────────────────
+class _CourseGroupsJoinCard extends StatelessWidget {
+  final bool isDark;
+  final Color textPrimary, textSub, cardBg;
+
+  const _CourseGroupsJoinCard({
+    required this.isDark,
+    required this.textPrimary,
+    required this.textSub,
+    required this.cardBg,
+  });
+
+  static final Uri _whatsappUri = Uri.parse('https://chat.whatsapp.com/EmOnskyfTqqIhy39ivofLJ');
+  static final Uri _telegramUri = Uri.parse('https://t.me/+535-EVyYs-05NDAy');
+
+  Future<void> _openGroup(BuildContext context, Uri uri) async {
+    HapticFeedback.selectionClick();
+    try {
+      final opened = await launchUrl(uri, mode: LaunchMode.externalApplication);
+      if (!opened && context.mounted) {
+        ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+          const SnackBar(content: Text('تعذر فتح رابط المجموعة حالياً.')),
+        );
+      }
+    } catch (_) {
+      if (context.mounted) {
+        ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+          const SnackBar(content: Text('تعذر فتح رابط المجموعة حالياً.')),
+        );
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final gold = const Color(0xFFD4A017);
+    final glowColor = isDark ? gold.withOpacity(0.20) : gold.withOpacity(0.15);
+
+    return Container(
+      width: double.infinity,
+      clipBehavior: Clip.antiAlias,
+      decoration: BoxDecoration(
+        color: cardBg,
+        borderRadius: BorderRadius.circular(28),
+        border: Border.all(color: gold.withOpacity(isDark ? 0.20 : 0.28)),
+        boxShadow: [
+          BoxShadow(
+            color: glowColor,
+            blurRadius: 28,
+            offset: const Offset(0, 14),
+          ),
+        ],
+      ),
+      child: Stack(
+        children: [
+          Positioned.fill(
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topRight,
+                  end: Alignment.bottomLeft,
+                  colors: isDark
+                      ? const [Color(0xFF171717), Color(0xFF0D0D0D)]
+                      : const [Color(0xFFFFFCF4), Color(0xFFFFF2CF)],
+                ),
+              ),
+            ),
+          ),
+          Positioned(
+            top: -58,
+            left: -54,
+            child: Container(
+              width: 150,
+              height: 150,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: gold.withOpacity(0.14),
+              ),
+            ),
+          ),
+          Positioned(
+            bottom: -70,
+            right: -56,
+            child: Container(
+              width: 170,
+              height: 170,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: const Color(0xFF25D366).withOpacity(isDark ? 0.14 : 0.18),
+              ),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(22),
+                  child: AspectRatio(
+                    aspectRatio: 16 / 9,
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        Image.asset(
+                          'assets/images/telewhatsapp.jpg',
+                          fit: BoxFit.cover,
+                          errorBuilder: (_, __, ___) => Container(
+                            decoration: BoxDecoration(
+                              gradient: LinearGradient(
+                                begin: Alignment.topRight,
+                                end: Alignment.bottomLeft,
+                                colors: [
+                                  const Color(0xFF229ED9).withOpacity(0.85),
+                                  const Color(0xFF25D366).withOpacity(0.85),
+                                ],
+                              ),
+                            ),
+                            child: const Icon(
+                              Icons.groups_2_rounded,
+                              color: Colors.white,
+                              size: 54,
+                            ),
+                          ),
+                        ),
+                        DecoratedBox(
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(
+                              begin: Alignment.topCenter,
+                              end: Alignment.bottomCenter,
+                              colors: [
+                                Colors.black.withOpacity(0.05),
+                                Colors.black.withOpacity(0.68),
+                              ],
+                            ),
+                          ),
+                        ),
+             
+                        const Positioned(
+                          right: 16,
+                          left: 16,
+                          bottom: 16,
+                          child: Text(
+                            'انضم إلى مجموعة الدورة التدريبية',
+                            textAlign: TextAlign.right,
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 20,
+                              fontWeight: FontWeight.w900,
+                              height: 1.25,
+                              shadows: [Shadow(color: Colors.black54, blurRadius: 10)],
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Text(
+                  'تابع إعلانات الدورة، ملفاتها، الملاحظات المهمة، وتواصل مع باقي المشتركين من خلال مجموعات واتساب وتليجرام..',
+                  textAlign: TextAlign.right,
+                  style: TextStyle(
+                    color: textSub,
+                    fontSize: 12.8,
+                    height: 1.75,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Row(
+                  children: [
+                    Expanded(
+                      child: _GroupJoinButton(
+                        title: ' واتساب',
+                        subtitle: 'انضم الآن',
+                        icon: Icons.chat_rounded,
+                        color: const Color(0xFF25D366),
+                        titleColor: textPrimary,
+                        onTap: () => _openGroup(context, _whatsappUri),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: _GroupJoinButton(
+                        title: ' تليجرام',
+                        subtitle: 'أنضم الآن ',
+                        icon: Icons.send_rounded,
+                        color: const Color(0xFF229ED9),
+                        titleColor: textPrimary,
+                        onTap: () => _openGroup(context, _telegramUri),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _GroupJoinButton extends StatelessWidget {
+  final String title;
+  final String subtitle;
+  final IconData icon;
+  final Color color;
+  final Color titleColor;
+  final VoidCallback onTap;
+
+  const _GroupJoinButton({
+    required this.title,
+    required this.subtitle,
+    required this.icon,
+    required this.color,
+    required this.titleColor,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(18),
+        child: Ink(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 13),
+          decoration: BoxDecoration(
+            color: color.withOpacity(0.13),
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(color: color.withOpacity(0.34)),
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Container(
+                width: 36,
+                height: 36,
+                decoration: BoxDecoration(
+                  color: color,
+                  borderRadius: BorderRadius.circular(13),
+                  boxShadow: [
+                    BoxShadow(
+                      color: color.withOpacity(0.30),
+                      blurRadius: 14,
+                      offset: const Offset(0, 7),
+                    ),
+                  ],
+                ),
+                child: Icon(icon, color: Colors.white, size: 19),
+              ),
+              const SizedBox(width: 10),
+              Flexible(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: titleColor,
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      subtitle,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: color,
+                        fontSize: 10.5,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }
@@ -3616,6 +3963,7 @@ class _AttendancePageState extends State<AttendancePage> {
 class _AdminAddBox extends StatefulWidget {
   final bool isDark;
   final Color cardBg, textPrimary, textSub;
+  final ScrollController scrollController;
   final Future<void> Function(_ScheduleItem) onAdd;
 
   const _AdminAddBox({
@@ -3623,6 +3971,7 @@ class _AdminAddBox extends StatefulWidget {
     required this.cardBg,
     required this.textPrimary,
     required this.textSub,
+    required this.scrollController,
     required this.onAdd,
   });
 
@@ -3631,11 +3980,14 @@ class _AdminAddBox extends StatefulWidget {
 }
 
 class _AdminAddBoxState extends State<_AdminAddBox>
-    with SingleTickerProviderStateMixin {
+    with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   static const gold = Color(0xFFD4A017);
 
   bool _expanded = false;
   bool _loading = false;
+  BuildContext? _focusedFieldContext;
+  double _keyboardInset = 0;
+  int _scrollFixToken = 0;
 
   late AnimationController _animCtrl;
   late Animation<double> _fadeAnim;
@@ -3655,13 +4007,51 @@ class _AdminAddBoxState extends State<_AdminAddBox>
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _animCtrl = AnimationController(
         vsync: this, duration: const Duration(milliseconds: 300));
     _fadeAnim = CurvedAnimation(parent: _animCtrl, curve: Curves.easeOut);
   }
 
   @override
+  void didChangeMetrics() {
+    super.didChangeMetrics();
+    _refreshKeyboardInsetAndScroll();
+  }
+
+  double _realKeyboardInset() {
+    final mediaInset = MediaQuery.maybeOf(context)?.viewInsets.bottom ?? 0;
+    final view = View.of(context);
+    final viewInset = view.viewInsets.bottom / view.devicePixelRatio;
+    return mediaInset > viewInset ? mediaInset : viewInset;
+  }
+
+  void _refreshKeyboardInsetAndScroll() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final nextInset = _realKeyboardInset();
+      if ((_keyboardInset - nextInset).abs() > 0.5) {
+        setState(() => _keyboardInset = nextInset);
+        // بعد setState لازم ننتظر فريم حتى تكبر مساحة التمرير فعلاً،
+        // وإلا الحساب يصير صحيح لكن ListView ما عنده مدى يكفي.
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          final focusedContext = _focusedFieldContext;
+          if (mounted && focusedContext != null) {
+            _keepFieldAboveKeyboard(focusedContext);
+          }
+        });
+      } else {
+        final focusedContext = _focusedFieldContext;
+        if (focusedContext != null) {
+          _keepFieldAboveKeyboard(focusedContext);
+        }
+      }
+    });
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _animCtrl.dispose();
     _numCtrl.dispose();
     _dayCtrl.dispose();
@@ -3686,17 +4076,78 @@ class _AdminAddBoxState extends State<_AdminAddBox>
   }
 
   void _keepFieldAboveKeyboard(BuildContext fieldContext) {
+    _focusedFieldContext = fieldContext;
+    final token = ++_scrollFixToken;
+
+    void adjust({bool finalPass = false}) {
+      if (!mounted || token != _scrollFixToken || !widget.scrollController.hasClients) return;
+
+      final renderObject = fieldContext.findRenderObject();
+      if (renderObject is! RenderBox || !renderObject.attached) return;
+
+      final keyboardHeight = _realKeyboardInset();
+      if ((_keyboardInset - keyboardHeight).abs() > 0.5) {
+        setState(() => _keyboardInset = keyboardHeight);
+        WidgetsBinding.instance.addPostFrameCallback((_) => adjust(finalPass: finalPass));
+        return;
+      }
+
+      if (keyboardHeight <= 0) return;
+
+      final media = MediaQuery.of(context);
+      final fieldTop = renderObject.localToGlobal(Offset.zero).dy;
+      final fieldBottom = fieldTop + renderObject.size.height;
+      final keyboardTop = media.size.height - keyboardHeight;
+
+      // FIX_KEYBOARD_REAL_20260622:
+      // بدل ما نحرك فقط مقدار الجزء المدفون، نخلي الحقل نفسه يستقر بمنطقة آمنة
+      // فوق الكيبورد. هذا يمنع بقاء أغلب الحقل داخل الكيبورد خصوصًا آخر حقل.
+      const safeGap = 96.0;
+      const topLimit = 92.0;
+      final wantedFieldBottom = keyboardTop - safeGap;
+      final wantedFieldTop = (wantedFieldBottom - renderObject.size.height)
+          .clamp(topLimit, wantedFieldBottom)
+          .toDouble();
+
+      double delta = fieldTop - wantedFieldTop;
+      if (fieldBottom > wantedFieldBottom) {
+        delta = math.max(delta, fieldBottom - wantedFieldBottom);
+      }
+
+      if (delta > 0.5) {
+        final position = widget.scrollController.position;
+        final target = (widget.scrollController.offset + delta + 24)
+            .clamp(position.minScrollExtent, position.maxScrollExtent)
+            .toDouble();
+
+        if ((target - widget.scrollController.offset).abs() > 0.5) {
+          if (finalPass) {
+            widget.scrollController.jumpTo(target);
+          } else {
+            widget.scrollController.animateTo(
+              target,
+              duration: const Duration(milliseconds: 210),
+              curve: Curves.easeOutCubic,
+            );
+          }
+        }
+      }
+    }
+
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      Future.delayed(const Duration(milliseconds: 180), () {
-        if (!mounted) return;
-        Scrollable.ensureVisible(
-          fieldContext,
-          duration: const Duration(milliseconds: 320),
-          curve: Curves.easeOutCubic,
-          alignment: 0.60,
-          alignmentPolicy: ScrollPositionAlignmentPolicy.explicit,
-        );
-      });
+      if (!mounted || token != _scrollFixToken) return;
+      final inset = _realKeyboardInset();
+      if ((_keyboardInset - inset).abs() > 0.5) {
+        setState(() => _keyboardInset = inset);
+      }
+
+      // عدة تمريرات لأن ارتفاع الكيبورد يتغير على مراحل في أندرويد،
+      // وآخر تمريرة jumpTo صغيرة تمنع بقاء الحقل مدفون بعد انتهاء الأنميشن.
+      adjust();
+      for (final delay in const [80, 160, 260, 420, 620, 820]) {
+        Future.delayed(Duration(milliseconds: delay), () => adjust());
+      }
+      Future.delayed(const Duration(milliseconds: 980), () => adjust(finalPass: true));
     });
   }
 
@@ -4006,6 +4457,15 @@ class _AdminAddBoxState extends State<_AdminAddBox>
                       ),
                     ),
                   ),
+                  AnimatedSize(
+                    duration: const Duration(milliseconds: 180),
+                    curve: Curves.easeOutCubic,
+                    child: SizedBox(
+                      // مساحة حقيقية وقت فتح الكيبورد. بدونها آخر حقل يبقى مدفوناً
+                      // لأن حد التمرير ينتهي قبل أن يصل الحقل فوق الكيبورد.
+                      height: _keyboardInset > 0 ? _keyboardInset + 90 : 0,
+                    ),
+                  ),
                 ],
               ),
             ),
@@ -4097,7 +4557,7 @@ class _AdminFieldState extends State<_AdminField> {
       inputFormatters: widget.inputFormatters,
       textAlign: TextAlign.right,
       onTap: () => widget.onFocused?.call(context),
-      scrollPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 18),
+      scrollPadding: const EdgeInsets.fromLTRB(16, 24, 16, 420),
       style: TextStyle(
         color: isDark ? Colors.white : const Color(0xFF1A1000),
         fontSize: 13,
@@ -5839,54 +6299,78 @@ class _LecturesTab extends StatelessWidget {
           child: Row(
             children: [
               Container(
-                width: 56,
-                height: 56,
-                decoration: const BoxDecoration(
-                  shape: BoxShape.circle,
-                  gradient: LinearGradient(
-                    colors: [Color(0xFFFF0000), Color(0xFFCC0000)],
-                  ),
-                ),
-                child: const Icon(Icons.play_arrow_rounded,
-                    color: Colors.white, size: 30),
-              ),
+  width: 58,
+  height: 58,
+  padding: const EdgeInsets.all(2),
+  decoration: BoxDecoration(
+    shape: BoxShape.circle,
+    gradient: const LinearGradient(
+      colors: [Color(0xFFFF0000), Color(0xFFCC0000)],
+    ),
+    boxShadow: [
+      BoxShadow(
+        color: const Color(0xFFFF0000).withOpacity(0.22),
+        blurRadius: 14,
+        offset: const Offset(0, 6),
+      ),
+    ],
+  ),
+  child: ClipOval(
+    child: Image.asset(
+      'assets/images/yt.jpeg',
+      fit: BoxFit.cover,
+    ),
+  ),
+),
               const SizedBox(width: 14),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('م. ماجد البنا',
+                    Text(' قناة د. ماجد البنا',
                         style: TextStyle(
                             color: textPrimary,
                             fontWeight: FontWeight.w800,
                             fontSize: 15)),
                     const SizedBox(height: 4),
-                    Text('قناة متخصصة في الهندسة الإنشائية والمدنية',
+                    Text('مكتبة هندسية شاملة ',
                         style: TextStyle(color: textSub, fontSize: 12)),
                   ],
                 ),
               ),
-              Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFFF0000).withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: const Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(Icons.subscriptions_rounded,
-                        color: Color(0xFFFF0000), size: 14),
-                    SizedBox(width: 4),
-                    Text('YouTube',
-                        style: TextStyle(
-                            color: Color(0xFFFF0000),
-                            fontSize: 11,
-                            fontWeight: FontWeight.w600)),
-                  ],
-                ),
-              ),
+              InkWell(
+  borderRadius: BorderRadius.circular(20),
+  onTap: () => _openPlainUrl(
+    context,
+    'https://www.youtube.com/user/majidalbana3',
+  ),
+  child: Container(
+    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+    decoration: BoxDecoration(
+      color: const Color(0xFFFF0000).withOpacity(0.1),
+      borderRadius: BorderRadius.circular(20),
+    ),
+    child: const Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(
+          Icons.subscriptions_rounded,
+          color: Color(0xFFFF0000),
+          size: 14,
+        ),
+        SizedBox(width: 4),
+        Text(
+          'YouTube',
+          style: TextStyle(
+            color: Color(0xFFFF0000),
+            fontSize: 11,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+      ],
+    ),
+  ),
+),
             ],
           ),
         ),
@@ -5903,7 +6387,7 @@ class _LecturesTab extends StatelessWidget {
             ),
             const SizedBox(width: 10),
             Text(
-              'أحدث المحاضرات',
+              'فيديوهات من القناة  ',
               style: TextStyle(
                 color: textPrimary,
                 fontSize: 16,
@@ -5957,9 +6441,18 @@ class _VideoCard extends StatelessWidget {
   static const gold = Color(0xFFD4A017);
 
   Future<void> _openVideo() async {
-    final videoId = video['id']!;
-    final url = Uri.parse('https://www.youtube.com/watch?v=$videoId');
-    if (await canLaunchUrl(url)) {
+    final videoId = video['id'] ?? '';
+    final rawUrl = video['url'] ?? 'https://www.youtube.com/watch?v=$videoId';
+    final url = Uri.parse(rawUrl);
+
+    if (!await canLaunchUrl(url)) return;
+
+    final openedInsideApp = await launchUrl(
+      url,
+      mode: LaunchMode.inAppWebView,
+    );
+
+    if (!openedInsideApp) {
       await launchUrl(url, mode: LaunchMode.externalApplication);
     }
   }
@@ -6080,8 +6573,8 @@ class _VideoCard extends StatelessWidget {
                         shape: BoxShape.circle,
                         color: const Color(0xFFFF0000).withOpacity(0.1),
                       ),
-                      child: const Icon(Icons.open_in_new_rounded,
-                          color: Color(0xFFFF0000), size: 16),
+                      child: const Icon(Icons.play_arrow_rounded,
+                          color: Color(0xFFFF0000), size: 18),
                     ),
                   ],
                 ),
