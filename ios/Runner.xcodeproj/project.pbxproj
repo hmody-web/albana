@@ -15,6 +15,11 @@
 		97C146FC1CF9000F007C117D /* Main.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 97C146FA1CF9000F007C117D /* Main.storyboard */; };
 		97C146FE1CF9000F007C117D /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 97C146FD1CF9000F007C117D /* Assets.xcassets */; };
 		97C147011CF9000F007C117D /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 97C146FF1CF9000F007C117D /* LaunchScreen.storyboard */; };
+		D1C0B1200000000000000120 /* AppIconDark-120.png in Resources */ = {isa = PBXBuildFile; fileRef = D1C0A1200000000000000120 /* AppIconDark-120.png */; };
+		D1C0B1800000000000000180 /* AppIconDark-180.png in Resources */ = {isa = PBXBuildFile; fileRef = D1C0A1800000000000000180 /* AppIconDark-180.png */; };
+		D1C0B0760000000000000076 /* AppIconDark-76.png in Resources */ = {isa = PBXBuildFile; fileRef = D1C0A0760000000000000076 /* AppIconDark-76.png */; };
+		D1C0B1520000000000000152 /* AppIconDark-152.png in Resources */ = {isa = PBXBuildFile; fileRef = D1C0A1520000000000000152 /* AppIconDark-152.png */; };
+		D1C0B1670000000000000167 /* AppIconDark-167.png in Resources */ = {isa = PBXBuildFile; fileRef = D1C0A1670000000000000167 /* AppIconDark-167.png */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -111,6 +116,11 @@
 		97C146F01CF9000F007C117D /* Runner */ = {
 			isa = PBXGroup;
 			children = (
+				D1C0A1200000000000000120 /* AppIconDark-120.png */,
+				D1C0A1800000000000000180 /* AppIconDark-180.png */,
+				D1C0A0760000000000000076 /* AppIconDark-76.png */,
+				D1C0A1520000000000000152 /* AppIconDark-152.png */,
+				D1C0A1670000000000000167 /* AppIconDark-167.png */,
 				97C146FA1CF9000F007C117D /* Main.storyboard */,
 				97C146FD1CF9000F007C117D /* Assets.xcassets */,
 				97C146FF1CF9000F007C117D /* LaunchScreen.storyboard */,
@@ -215,6 +225,11 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				D1C0B1200000000000000120 /* AppIconDark-120.png in Resources */,
+				D1C0B1800000000000000180 /* AppIconDark-180.png in Resources */,
+				D1C0B0760000000000000076 /* AppIconDark-76.png in Resources */,
+				D1C0B1520000000000000152 /* AppIconDark-152.png in Resources */,
+				D1C0B1670000000000000167 /* AppIconDark-167.png in Resources */,
 				97C147011CF9000F007C117D /* LaunchScreen.storyboard in Resources */,
 				3B3967161E833CAA004F5970 /* AppFrameworkInfo.plist in Resources */,
 				97C146FE1CF9000F007C117D /* Assets.xcassets in Resources */,
