@@ -42,6 +42,87 @@ List<String> _mergePdfCategories([Iterable<String> extra = const []]) {
   }
   return list;
 }
+
+
+String _mimeTypeForSharedImage(String value) {
+  final v = value.toLowerCase();
+  if (v.contains('.png') || v.contains('image/png')) return 'image/png';
+  if (v.contains('.webp') || v.contains('image/webp')) return 'image/webp';
+  return 'image/jpeg';
+}
+
+String _extensionForSharedImage(String value) {
+  final mime = _mimeTypeForSharedImage(value);
+  if (mime == 'image/png') return 'png';
+  if (mime == 'image/webp') return 'webp';
+  return 'jpg';
+}
+
+Future<XFile?> _prepareShareThumbnail(PdfFileItem file) async {
+  if (!file.hasThumbnail) return null;
+
+  try {
+    final thumbnailUrl = Uri.encodeFull(file.thumbnailUrl);
+    final response = await http
+        .get(Uri.parse(thumbnailUrl))
+        .timeout(const Duration(seconds: 12));
+
+    if (response.statusCode != 200 || response.bodyBytes.isEmpty) {
+      return null;
+    }
+
+    final contentType = response.headers['content-type'] ?? file.thumbnailUrl;
+    final extension = _extensionForSharedImage(contentType);
+    final mimeType = _mimeTypeForSharedImage(contentType);
+    final dir = await getTemporaryDirectory();
+    final localFile = File(
+      '${dir.path}/majid_pdf_share_${file.id}_${DateTime.now().millisecondsSinceEpoch}.$extension',
+    );
+
+    await localFile.writeAsBytes(response.bodyBytes, flush: true);
+
+    return XFile(
+      localFile.path,
+      mimeType: mimeType,
+      name: 'majid_pdf_thumbnail_${file.id}.$extension',
+    );
+  } catch (_) {
+    return null;
+  }
+}
+
+Future<void> _sharePdfFileItem({
+  required BuildContext shareContext,
+  required PdfFileItem file,
+}) async {
+  final box = shareContext.findRenderObject() as RenderBox?;
+  final origin = box == null
+      ? const Rect.fromLTWH(0, 0, 1, 1)
+      : box.localToGlobal(Offset.zero) & box.size;
+
+  final title = file.title.trim().isEmpty
+      ? 'ملف من منصة د.ماجد البنا'
+      : file.title.trim();
+  final fileLink = Uri.encodeFull(file.fileUrl);
+  final shareText = '$title\n\n$fileLink';
+  final thumbnail = await _prepareShareThumbnail(file);
+
+  if (thumbnail != null) {
+    await Share.shareXFiles(
+      [thumbnail],
+      text: shareText,
+      subject: title,
+      sharePositionOrigin: origin,
+    );
+    return;
+  }
+
+  await Share.share(
+    shareText,
+    subject: title,
+    sharePositionOrigin: origin,
+  );
+}
 // ══════════════════════════════════════════════════════════════════════════════
 //  LOCAL CACHE SERVICE
 //  Saves & loads the file list from disk so it's instant on re-open.
@@ -176,19 +257,7 @@ class _FileDirectPageState extends State<FileDirectPage> {
   }
 
   Future<void> _shareFile(BuildContext shareContext, PdfFileItem file) async {
-    final box = shareContext.findRenderObject() as RenderBox?;
-    final title = file.title.trim().isEmpty
-        ? 'ملف من منصة د.ماجد البنا'
-        : file.title.trim();
-    final fileLink = Uri.encodeFull(file.fileUrl);
-
-    await Share.share(
-      '$title\n\n$fileLink',
-      subject: title,
-      sharePositionOrigin: box == null
-          ? const Rect.fromLTWH(0, 0, 1, 1)
-          : box.localToGlobal(Offset.zero) & box.size,
-    );
+    await _sharePdfFileItem(shareContext: shareContext, file: file);
   }
 
   void _showDownloadSnack({required String message, required bool success}) {
@@ -437,6 +506,25 @@ bool _isSupervisor() {
     });
     _savePageMemory();
     _CacheService.save(_files);
+    _clearRealtimeMarksLater();
+  }
+
+  void _onFileDeleted(PdfFileItem deleted) {
+    setState(() {
+      final oldIndex = _files.indexWhere((f) => f.id == deleted.id);
+      _removingFiles[deleted.id] = deleted;
+      _removingFileIndexes[deleted.id] = oldIndex < 0 ? 0 : oldIndex;
+      _files.removeWhere((f) => f.id == deleted.id);
+      _filteredFiles.removeWhere((f) => f.id == deleted.id);
+      _incomingFileIds.remove(deleted.id);
+      _updatedFileIds.remove(deleted.id);
+      _downloading.remove(deleted.id);
+      _downloaded.remove(deleted.id);
+      _downloadProgress.remove(deleted.id);
+      _applyFilters();
+    });
+    _savePageMemory();
+    unawaited(_CacheService.save(_files));
     _clearRealtimeMarksLater();
   }
   void _rememberScrollOffset() {
@@ -971,20 +1059,7 @@ bool _isSupervisor() {
   }
 
   Future<void> _shareFile(BuildContext shareContext, PdfFileItem file) async {
-    final box = shareContext.findRenderObject() as RenderBox?;
-
-    final title = file.title.trim().isEmpty
-        ? 'ملف من منصة د.ماجد البنا'
-        : file.title.trim();
-    final fileLink = Uri.encodeFull(file.fileUrl);
-
-    await Share.share(
-      '$title\n\n$fileLink',
-      subject: title,
-      sharePositionOrigin: box == null
-          ? const Rect.fromLTWH(0, 0, 1, 1)
-          : box.localToGlobal(Offset.zero) & box.size,
-    );
+    await _sharePdfFileItem(shareContext: shareContext, file: file);
   }
 
   void _openFileDetails(PdfFileItem file) {
@@ -1149,6 +1224,7 @@ bool _isSupervisor() {
                         onOpenDetails: () => _openFileDetails(file),
                         isSupervisor: supervisor,
                         onEdited: _onFileEdited,
+                        onDeleted: _onFileDeleted,
                       ),
                     );
                   },
@@ -1784,6 +1860,7 @@ class _FileCard extends StatelessWidget {
   final VoidCallback onOpenDetails;
   final bool isSupervisor;
   final void Function(PdfFileItem) onEdited;
+  final void Function(PdfFileItem) onDeleted;
 
   const _FileCard({
     super.key,
@@ -1799,6 +1876,7 @@ class _FileCard extends StatelessWidget {
     required this.onOpenDetails,
     required this.isSupervisor,
     required this.onEdited,
+    required this.onDeleted,
   });
 
   static const gold = Color(0xFFD4A017);
@@ -1872,6 +1950,7 @@ class _FileCard extends StatelessWidget {
                               file: file,
                               isDark: isDark,
                               onSaved: onEdited,
+                              onDeleted: onDeleted,
                             ),
                           ),
                           child: Container(
@@ -5585,7 +5664,13 @@ class _EditPdfSheet extends StatefulWidget {
   final PdfFileItem file;
   final bool isDark;
   final void Function(PdfFileItem) onSaved;
-  const _EditPdfSheet({required this.file, required this.isDark, required this.onSaved});
+  final void Function(PdfFileItem) onDeleted;
+  const _EditPdfSheet({
+    required this.file,
+    required this.isDark,
+    required this.onSaved,
+    required this.onDeleted,
+  });
   @override
   State<_EditPdfSheet> createState() => _EditPdfSheetState();
 }
@@ -5593,6 +5678,7 @@ class _EditPdfSheet extends StatefulWidget {
 class _EditPdfSheetState extends State<_EditPdfSheet> {
   static const gold = Color(0xFFD4A017);
   static const _updateApi = 'https://majidalbana.com/admin/pdf-posts/update_pdf_post.php';
+  static const _deleteApi = 'https://majidalbana.com/admin/pdf-posts/delete_pdf_post.php';
 
   late TextEditingController _titleCtrl;
   late TextEditingController _descCtrl;
@@ -5600,6 +5686,7 @@ class _EditPdfSheetState extends State<_EditPdfSheet> {
   late String _selectedCategory;
   late bool _useCustomCategory;
   bool _saving = false;
+  bool _deleting = false;
 
   @override
   void initState() {
@@ -5638,6 +5725,113 @@ class _EditPdfSheetState extends State<_EditPdfSheet> {
         _showSnack('تم التعديل بنجاح ✓', success: true);
       } else { _showSnack('فشل التعديل'); setState(() => _saving = false); }
     } catch (_) { _showSnack('خطأ في الاتصال'); setState(() => _saving = false); }
+  }
+
+  Future<void> _confirmDelete() async {
+    FocusScope.of(context).unfocus();
+    final isDark = widget.isDark;
+    final textPrimary = isDark ? Colors.white : const Color(0xFF17120A);
+    final textSub = isDark ? Colors.white70 : Colors.black54;
+    final dialogBg = isDark ? const Color(0xFF151515) : Colors.white;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      barrierDismissible: !_deleting,
+      builder: (dialogContext) {
+        return Directionality(
+          textDirection: TextDirection.rtl,
+          child: AlertDialog(
+            backgroundColor: dialogBg,
+            elevation: 0,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
+            titlePadding: const EdgeInsets.fromLTRB(20, 22, 20, 0),
+            contentPadding: const EdgeInsets.fromLTRB(20, 12, 20, 10),
+            actionsPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+            title: Row(
+              children: [
+                Container(
+                  width: 38,
+                  height: 38,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFE53935).withOpacity(0.12),
+                    borderRadius: BorderRadius.circular(13),
+                  ),
+                  child: const Icon(Icons.delete_forever_rounded, color: Color(0xFFE53935), size: 21),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    'تأكيد حذف المنشور',
+                    style: TextStyle(color: textPrimary, fontSize: 17, fontWeight: FontWeight.w900),
+                  ),
+                ),
+              ],
+            ),
+            content: Text(
+              'سيتم حذف هذا المنشور نهائياً من الملفات. لا يمكن التراجع عن هذه العملية بعد التأكيد.',
+              style: TextStyle(color: textSub, height: 1.7, fontSize: 13.5, fontWeight: FontWeight.w600),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext, false),
+                style: TextButton.styleFrom(
+                  foregroundColor: textSub,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(13)),
+                ),
+                child: const Text('إلغاء', style: TextStyle(fontWeight: FontWeight.w900)),
+              ),
+              ElevatedButton.icon(
+                onPressed: () => Navigator.pop(dialogContext, true),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFFE53935),
+                  foregroundColor: Colors.white,
+                  elevation: 0,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(13)),
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                ),
+                icon: const Icon(Icons.delete_rounded, size: 18),
+                label: const Text('حذف نهائي', style: TextStyle(fontWeight: FontWeight.w900)),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+
+    if (confirmed == true) {
+      await _delete();
+    }
+  }
+
+  Future<void> _delete() async {
+    if (_deleting) return;
+    setState(() => _deleting = true);
+    try {
+      final res = await http.post(
+        Uri.parse(_deleteApi),
+        body: {'id': '${widget.file.id}'},
+      ).timeout(const Duration(seconds: 30));
+
+      final body = res.body.trim();
+      final ok = res.statusCode == 200 &&
+          (body.isEmpty ||
+              body == 'Deleted' ||
+              body.contains('success') ||
+              body.contains('تم'));
+
+      if (!ok) {
+        throw Exception(body.isEmpty ? 'فشل الحذف' : body);
+      }
+
+      widget.onDeleted(widget.file);
+      if (mounted) Navigator.pop(context);
+      _showSnack('تم حذف المنشور بنجاح ✓', success: true);
+    } catch (_) {
+      if (mounted) {
+        setState(() => _deleting = false);
+        _showSnack('تعذر حذف المنشور. تأكد من الاتصال وحاول مجدداً.');
+      }
+    }
   }
 
   void _showSnack(String msg, {bool success = false}) {
@@ -5741,24 +5935,55 @@ class _EditPdfSheetState extends State<_EditPdfSheet> {
                     onCustomModeChanged: (value) => setState(() => _useCustomCategory = value),
                   ),
                   const SizedBox(height: 14),
-                  SizedBox(
-                    height: 50,
-                    child: ElevatedButton(
-                      onPressed: _saving ? null : _save,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: gold, foregroundColor: Colors.white,
-                        disabledBackgroundColor: gold.withOpacity(0.5),
-                        elevation: 0,
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                  Row(
+                    textDirection: TextDirection.rtl,
+                    children: [
+                      Expanded(
+                        flex: 2,
+                        child: SizedBox(
+                          height: 50,
+                          child: ElevatedButton(
+                            onPressed: (_saving || _deleting) ? null : _save,
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: gold,
+                              foregroundColor: Colors.white,
+                              disabledBackgroundColor: gold.withOpacity(0.5),
+                              elevation: 0,
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                            ),
+                            child: _saving
+                                ? const SizedBox(width: 22, height: 22, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2.5))
+                                : const Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                                    Icon(Icons.check_rounded, size: 19),
+                                    SizedBox(width: 8),
+                                    Text('حفظ التعديلات', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800)),
+                                  ]),
+                          ),
+                        ),
                       ),
-                      child: _saving
-                          ? const SizedBox(width: 22, height: 22, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2.5))
-                          : const Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-                              Icon(Icons.check_rounded, size: 19),
-                              SizedBox(width: 8),
-                              Text('حفظ التعديلات', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800)),
-                            ]),
-                    ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: SizedBox(
+                          height: 50,
+                          child: OutlinedButton(
+                            onPressed: (_saving || _deleting) ? null : _confirmDelete,
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: const Color(0xFFE53935),
+                              side: BorderSide(color: const Color(0xFFE53935).withOpacity(0.55), width: 1.2),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                              backgroundColor: const Color(0xFFE53935).withOpacity(0.08),
+                            ),
+                            child: _deleting
+                                ? const SizedBox(width: 21, height: 21, child: CircularProgressIndicator(color: Color(0xFFE53935), strokeWidth: 2.4))
+                                : const Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                                    Icon(Icons.delete_outline_rounded, size: 18),
+                                    SizedBox(width: 6),
+                                    Text('حذف', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w900)),
+                                  ]),
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ]),
               ),

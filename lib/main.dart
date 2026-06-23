@@ -35,6 +35,23 @@ SystemUiOverlayStyle appSystemBarsStyle(bool isDark) {
 void applyAppSystemBarsStyle(bool isDark) {
   SystemChrome.setSystemUIOverlayStyle(appSystemBarsStyle(isDark));
 }
+
+class AppIconSwitcher {
+  static const MethodChannel _channel = MethodChannel('majidalbana/app_icon');
+
+  static Future<void> setIconForTheme(bool isDark) async {
+    if (kIsWeb) return;
+    final platform = defaultTargetPlatform;
+    if (platform != TargetPlatform.android && platform != TargetPlatform.iOS) return;
+
+    try {
+      await _channel.invokeMethod<bool>('setAppIcon', {'isDark': isDark});
+    } catch (_) {
+      // تجاهل الخطأ حتى لا يتأثر تغيير الثيم إذا رفض النظام تبديل الأيقونة.
+    }
+  }
+}
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
@@ -98,12 +115,14 @@ class _DrMajedAppState extends State<DrMajedApp> with WidgetsBindingObserver {
     if (!mounted) return;
     setState(() => _isDark = savedIsDark);
     _applySystemBarsStyle(savedIsDark);
+    unawaited(AppIconSwitcher.setIconForTheme(savedIsDark));
   }
 
   void _toggleTheme(bool val) {
     setState(() => _isDark = val);
     _applySystemBarsStyle(val);
     unawaited(_saveThemePreference(val));
+    unawaited(AppIconSwitcher.setIconForTheme(val));
   }
 
   Future<void> _saveThemePreference(bool val) async {

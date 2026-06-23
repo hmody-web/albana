@@ -7,7 +7,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>Majidalbana</string>
+	<string>د.ماجد البنا</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -66,29 +66,76 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
-<key>GIDClientID</key>
-<string>14634099103-49vla2iok1dqcd3rc8i5ekm603od3v1m.apps.googleusercontent.com</string>
-
-<key>CFBundleURLTypes</key>
-<array>
-	<dict>
-		<key>CFBundleTypeRole</key>
-		<string>Editor</string>
-		<key>CFBundleURLSchemes</key>
-		<array>
-			<string>com.googleusercontent.apps.14634099103-49vla2iok1dqcd3rc8i5ekm603od3v1m</string>
-		</array>
-	</dict>
-	<dict>
-		<key>CFBundleURLName</key>
-		<string>majidalbana</string>
-		<key>CFBundleTypeRole</key>
-		<string>Viewer</string>
-		<key>CFBundleURLSchemes</key>
-		<array>
+	<key>GIDClientID</key>
+	<string>14634099103-49vla2iok1dqcd3rc8i5ekm603od3v1m.apps.googleusercontent.com</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>com.googleusercontent.apps.14634099103-49vla2iok1dqcd3rc8i5ekm603od3v1m</string>
+			</array>
+		</dict>
+		<dict>
+			<key>CFBundleURLName</key>
 			<string>majidalbana</string>
-		</array>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>majidalbana</string>
+			</array>
+		</dict>
+	</array>
+	<key>CFBundleIcons</key>
+	<dict>
+		<key>CFBundlePrimaryIcon</key>
+		<dict>
+			<key>CFBundleIconFiles</key>
+			<array>
+				<string>AppIcon</string>
+			</array>
+			<key>CFBundleIconName</key>
+			<string>AppIcon</string>
+		</dict>
+		<key>CFBundleAlternateIcons</key>
+		<dict>
+			<key>AppIconDark</key>
+			<dict>
+				<key>CFBundleIconFiles</key>
+				<array>
+					<string>AppIconDark</string>
+				</array>
+				<key>CFBundleIconName</key>
+				<string>AppIconDark</string>
+			</dict>
+		</dict>
 	</dict>
-</array>
+	<key>CFBundleIcons~ipad</key>
+	<dict>
+		<key>CFBundlePrimaryIcon</key>
+		<dict>
+			<key>CFBundleIconFiles</key>
+			<array>
+				<string>AppIcon</string>
+			</array>
+			<key>CFBundleIconName</key>
+			<string>AppIcon</string>
+		</dict>
+		<key>CFBundleAlternateIcons</key>
+		<dict>
+			<key>AppIconDark</key>
+			<dict>
+				<key>CFBundleIconFiles</key>
+				<array>
+					<string>AppIconDark</string>
+				</array>
+				<key>CFBundleIconName</key>
+				<string>AppIconDark</string>
+			</dict>
+		</dict>
+	</dict>
 </dict>
 </plist>

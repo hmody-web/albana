@@ -32,13 +32,59 @@ class FirebaseNotificationService {
   static const String structuralPlansNotificationsKey = 'structural_plans';
   static const String lecturesNotificationsKey = 'lectures';
 
-  static const List<String> notificationPreferenceKeys = [
-    generalNotificationsKey,
-    postsNotificationsKey,
-    engineeringFilesNotificationsKey,
-    structuralPlansNotificationsKey,
-    lecturesNotificationsKey,
+  static const List<String> defaultFileCategories = [
+    'المخططات الأنشائية',
+    'الكتب',
+    'المدونات العراقية',
+    'المدونات الأمريكية',
+    'المدونات البريطانية',
+    'المدونات الاوربية',
+    'المدونات السعودية',
+    'المدونات الاماراتية',
+    'المدونات المصرية',
+    'المدونات السورية',
+    'كتب الخرسانة',
+    'كتب الأسس',
+    'كتب الجسور',
+    'تصنيفات أخرى',
   ];
+
+  static const Map<String, String> fileCategoryTopics = {
+    'المخططات الأنشائية': 'pdf_category_structural_plans',
+    'الكتب': 'pdf_category_books',
+    'المدونات العراقية': 'pdf_category_iraqi_codes',
+    'المدونات الأمريكية': 'pdf_category_american_codes',
+    'المدونات البريطانية': 'pdf_category_british_codes',
+    'المدونات الاوربية': 'pdf_category_european_codes',
+    'المدونات السعودية': 'pdf_category_saudi_codes',
+    'المدونات الاماراتية': 'pdf_category_uae_codes',
+    'المدونات المصرية': 'pdf_category_egyptian_codes',
+    'المدونات السورية': 'pdf_category_syrian_codes',
+    'كتب الخرسانة': 'pdf_category_concrete_books',
+    'كتب الأسس': 'pdf_category_foundations_books',
+    'كتب الجسور': 'pdf_category_bridges_books',
+    'تصنيفات أخرى': 'pdf_category_other',
+  };
+
+  static String fileCategoryPreferenceKey(String category) {
+    final clean = category.trim();
+    if (clean == 'المخططات الأنشائية') return structuralPlansNotificationsKey;
+    final topic = fileCategoryTopics[clean] ?? fileCategoryTopics['تصنيفات أخرى']!;
+    return 'file_$topic';
+  }
+
+  static List<String> get fileCategoryPreferenceKeys => defaultFileCategories
+      .map(fileCategoryPreferenceKey)
+      .toSet()
+      .toList(growable: false);
+
+  static List<String> get notificationPreferenceKeys => [
+        generalNotificationsKey,
+        postsNotificationsKey,
+        engineeringFilesNotificationsKey,
+        lecturesNotificationsKey,
+        ...fileCategoryPreferenceKeys,
+      ].toSet().toList(growable: false);
 
   static const Map<String, String> notificationTitles = {
     generalNotificationsKey: 'كل الإشعارات',
@@ -48,12 +94,29 @@ class FirebaseNotificationService {
     lecturesNotificationsKey: 'إشعارات المحاضرات',
   };
 
-  static const Map<String, List<String>> _topicsByPreferenceKey = {
-    postsNotificationsKey: ['posts'],
-    engineeringFilesNotificationsKey: ['engineering_files', 'files', 'pdf_files'],
-    structuralPlansNotificationsKey: ['structural_plans'],
-    lecturesNotificationsKey: ['lectures', 'courses', 'schedule'],
-  };
+  static Map<String, List<String>> get _topicsByPreferenceKey {
+    final map = <String, List<String>>{
+      postsNotificationsKey: ['posts'],
+      lecturesNotificationsKey: ['lectures'],
+    };
+
+    for (final category in defaultFileCategories) {
+      final topic = fileCategoryTopics[category];
+      if (topic == null) continue;
+      map[fileCategoryPreferenceKey(category)] = [topic];
+    }
+
+    return map;
+  }
+
+  static const List<String> _legacyTopics = [
+    'engineering_files',
+    'files',
+    'pdf_files',
+    'structural_plans',
+    'courses',
+    'schedule',
+  ];
 
   static const String _prefsPrefix = 'notification_pref_';
   static const MethodChannel _settingsChannel =
@@ -164,6 +227,17 @@ class FirebaseNotificationService {
     }
   }
 
+  static bool areAllFileCategoriesEnabled(Map<String, bool> values) {
+    for (final key in fileCategoryPreferenceKeys) {
+      if ((values[key] ?? true) == false) return false;
+    }
+    return true;
+  }
+
+  static int enabledFileCategoriesCount(Map<String, bool> values) {
+    return fileCategoryPreferenceKeys.where((key) => values[key] ?? true).length;
+  }
+
   static Future<Map<String, bool>> loadNotificationPreferences() async {
     final prefs = await SharedPreferences.getInstance();
     final values = <String, bool>{};
@@ -172,6 +246,10 @@ class FirebaseNotificationService {
       values[key] = prefs.getBool('$_prefsPrefix$key') ?? true;
     }
 
+    values[engineeringFilesNotificationsKey] = areAllFileCategoriesEnabled(values);
+    values[structuralPlansNotificationsKey] =
+        prefs.getBool('$_prefsPrefix$structuralPlansNotificationsKey') ?? true;
+
     return values;
   }
 
@@ -179,7 +257,26 @@ class FirebaseNotificationService {
     if (!notificationPreferenceKeys.contains(key)) return;
 
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool('$_prefsPrefix$key', enabled);
+
+    if (key == engineeringFilesNotificationsKey) {
+      await prefs.setBool('$_prefsPrefix$key', enabled);
+      for (final categoryKey in fileCategoryPreferenceKeys) {
+        await prefs.setBool('$_prefsPrefix$categoryKey', enabled);
+      }
+    } else {
+      await prefs.setBool('$_prefsPrefix$key', enabled);
+
+      if (fileCategoryPreferenceKeys.contains(key)) {
+        final current = <String, bool>{};
+        for (final categoryKey in fileCategoryPreferenceKeys) {
+          current[categoryKey] = prefs.getBool('$_prefsPrefix$categoryKey') ?? true;
+        }
+        await prefs.setBool(
+          '$_prefsPrefix$engineeringFilesNotificationsKey',
+          areAllFileCategoriesEnabled(current),
+        );
+      }
+    }
 
     if (key == generalNotificationsKey && !enabled) {
       await _unsubscribeFromAllTopics();
@@ -201,6 +298,10 @@ class FirebaseNotificationService {
     if (!generalEnabled) {
       await _unsubscribeFromAllTopics();
       return;
+    }
+
+    for (final legacyTopic in _legacyTopics) {
+      await _unsubscribeFromTopic(legacyTopic);
     }
 
     for (final entry in _topicsByPreferenceKey.entries) {
@@ -272,10 +373,13 @@ class FirebaseNotificationService {
   }
 
   static Future<void> _unsubscribeFromAllTopics() async {
-    for (final topics in _topicsByPreferenceKey.values) {
-      for (final topic in topics) {
-        await _unsubscribeFromTopic(topic);
-      }
+    final topics = <String>{
+      ..._legacyTopics,
+      for (final list in _topicsByPreferenceKey.values) ...list,
+    };
+
+    for (final topic in topics) {
+      await _unsubscribeFromTopic(topic);
     }
   }
 
@@ -290,10 +394,26 @@ class FirebaseNotificationService {
   }
 
   static String? _preferenceKeyForMessage(Map<String, dynamic> data) {
+    final topic = [
+      data['notification_topic'],
+      data['notificationTopic'],
+      data['topic'],
+    ].whereType<Object>().map((e) => e.toString()).firstWhere(
+          (value) => value.trim().isNotEmpty,
+          orElse: () => '',
+        );
+
+    if (topic.isNotEmpty) {
+      if (topic == 'posts') return postsNotificationsKey;
+      if (topic == 'lectures') return lecturesNotificationsKey;
+      for (final entry in fileCategoryTopics.entries) {
+        if (entry.value == topic) return fileCategoryPreferenceKey(entry.key);
+      }
+    }
+
     final raw = [
       data['notification_group'],
       data['notificationGroup'],
-      data['topic'],
       data['category'],
       data['screen'],
       data['type'],
@@ -304,6 +424,19 @@ class FirebaseNotificationService {
       return postsNotificationsKey;
     }
 
+    if (raw.contains('lecture') ||
+        raw.contains('course') ||
+        raw.contains('schedule') ||
+        raw.contains('محاض') ||
+        raw.contains('دور')) {
+      return lecturesNotificationsKey;
+    }
+
+    for (final category in defaultFileCategories) {
+      final normalized = category.toLowerCase();
+      if (raw.contains(normalized)) return fileCategoryPreferenceKey(category);
+    }
+
     if (raw.contains('structural') ||
         raw.contains('plan') ||
         raw.contains('scheme') ||
@@ -311,14 +444,6 @@ class FirebaseNotificationService {
         raw.contains('انش') ||
         raw.contains('إنش')) {
       return structuralPlansNotificationsKey;
-    }
-
-    if (raw.contains('lecture') ||
-        raw.contains('course') ||
-        raw.contains('schedule') ||
-        raw.contains('محاض') ||
-        raw.contains('دور')) {
-      return lecturesNotificationsKey;
     }
 
     if (raw.contains('file') || raw.contains('pdf') || raw.contains('ملف')) {

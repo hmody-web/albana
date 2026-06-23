@@ -1539,7 +1539,8 @@ class _NotificationsSettingsPage extends StatefulWidget {
   State<_NotificationsSettingsPage> createState() => _NotificationsSettingsPageState();
 }
 
-class _NotificationsSettingsPageState extends State<_NotificationsSettingsPage> with WidgetsBindingObserver {
+class _NotificationsSettingsPageState extends State<_NotificationsSettingsPage>
+    with WidgetsBindingObserver {
   static const gold = Color(0xFFD4A017);
 
   bool _loading = true;
@@ -1589,6 +1590,12 @@ class _NotificationsSettingsPageState extends State<_NotificationsSettingsPage> 
 
   bool get _generalEnabled => _generalLocal && _systemNotificationsEnabled;
 
+  bool get _filesEnabled =>
+      FirebaseNotificationService.areAllFileCategoriesEnabled(_prefs);
+
+  int get _enabledFileCategories =>
+      FirebaseNotificationService.enabledFileCategoriesCount(_prefs);
+
   Future<void> _openSystemSettings() async {
     HapticFeedback.selectionClick();
     final opened = await FirebaseNotificationService.openSystemNotificationSettings();
@@ -1609,7 +1616,9 @@ class _NotificationsSettingsPageState extends State<_NotificationsSettingsPage> 
   void _setFast(String key, bool value) {
     HapticFeedback.selectionClick();
 
-    if (key == FirebaseNotificationService.generalNotificationsKey && value && !_systemNotificationsEnabled) {
+    if (key == FirebaseNotificationService.generalNotificationsKey &&
+        value &&
+        !_systemNotificationsEnabled) {
       _openSystemSettings();
       return;
     }
@@ -1619,12 +1628,28 @@ class _NotificationsSettingsPageState extends State<_NotificationsSettingsPage> 
     setState(() {
       final next = Map<String, bool>.from(_prefs);
 
-      if (key != FirebaseNotificationService.generalNotificationsKey && value && !_generalLocal) {
+      if (key != FirebaseNotificationService.generalNotificationsKey &&
+          value &&
+          !_generalLocal) {
         next[FirebaseNotificationService.generalNotificationsKey] = true;
         _pendingKeys.add(FirebaseNotificationService.generalNotificationsKey);
       }
 
-      next[key] = value;
+      if (key == FirebaseNotificationService.engineeringFilesNotificationsKey) {
+        next[key] = value;
+        for (final categoryKey in FirebaseNotificationService.fileCategoryPreferenceKeys) {
+          next[categoryKey] = value;
+          _pendingKeys.add(categoryKey);
+        }
+      } else {
+        next[key] = value;
+        if (FirebaseNotificationService.fileCategoryPreferenceKeys.contains(key)) {
+          final allEnabled = FirebaseNotificationService.fileCategoryPreferenceKeys
+              .every((categoryKey) => next[categoryKey] ?? true);
+          next[FirebaseNotificationService.engineeringFilesNotificationsKey] = allEnabled;
+        }
+      }
+
       _prefs = next;
       _pendingKeys.add(key);
     });
@@ -1645,7 +1670,7 @@ class _NotificationsSettingsPageState extends State<_NotificationsSettingsPage> 
         if (!mounted) return;
         setState(() => _prefs = previousPrefs);
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('تعذر تحديث إعدادات الإشعارات. الإنترنت يبدو أنه أخذ استراحة قسرية.')),
+          const SnackBar(content: Text('تعذر تحديث إعدادات الإشعارات. تأكد من الاتصال ثم حاول مجدداً.')),
         );
       } finally {
         if (!mounted) return;
@@ -1654,9 +1679,28 @@ class _NotificationsSettingsPageState extends State<_NotificationsSettingsPage> 
           if (key != FirebaseNotificationService.generalNotificationsKey) {
             _pendingKeys.remove(FirebaseNotificationService.generalNotificationsKey);
           }
+          if (key == FirebaseNotificationService.engineeringFilesNotificationsKey) {
+            _pendingKeys.removeAll(FirebaseNotificationService.fileCategoryPreferenceKeys);
+          }
         });
         await _load(silent: true);
       }
+    });
+  }
+
+  void _openFileNotificationsPage() {
+    Navigator.of(context)
+        .push(
+          MaterialPageRoute<void>(
+            builder: (_) => _FileNotificationsSettingsPage(
+              isDark: widget.isDark,
+              systemNotificationsEnabled: _systemNotificationsEnabled,
+              generalEnabled: _generalEnabled,
+            ),
+          ),
+        )
+        .then((_) {
+      if (mounted) _load(silent: true);
     });
   }
 
@@ -1810,31 +1854,22 @@ class _NotificationsSettingsPageState extends State<_NotificationsSettingsPage> 
                       onChanged: (value) => _setFast(FirebaseNotificationService.postsNotificationsKey, value),
                     ),
                     const SizedBox(height: 10),
-                    _NotificationSwitchRow(
+                    _NotificationNavigationRow(
                       isDark: isDark,
                       icon: Icons.picture_as_pdf_rounded,
                       title: 'إشعارات الملفات الهندسية',
-                      subtitle: 'تنبيه عند إضافة ملفات ومواد هندسية.',
-                      value: _prefs[FirebaseNotificationService.engineeringFilesNotificationsKey] ?? true,
+                      subtitle: _filesEnabled
+                          ? 'كل تصنيفات الملفات مفعلة. اضغط للتحكم بكل تصنيف.'
+                          : 'مفعل $_enabledFileCategories من ${FirebaseNotificationService.fileCategoryPreferenceKeys.length} تصنيف. اضغط للتفاصيل.',
                       enabled: _generalEnabled,
-                      onChanged: (value) => _setFast(FirebaseNotificationService.engineeringFilesNotificationsKey, value),
-                    ),
-                    const SizedBox(height: 10),
-                    _NotificationSwitchRow(
-                      isDark: isDark,
-                      icon: Icons.architecture_rounded,
-                      title: 'إشعارات المخططات الإنشائية',
-                      subtitle: 'تنبيه خاص بالمخططات الإنشائية عند توفرها.',
-                      value: _prefs[FirebaseNotificationService.structuralPlansNotificationsKey] ?? true,
-                      enabled: _generalEnabled,
-                      onChanged: (value) => _setFast(FirebaseNotificationService.structuralPlansNotificationsKey, value),
+                      onTap: _generalEnabled ? _openFileNotificationsPage : null,
                     ),
                     const SizedBox(height: 10),
                     _NotificationSwitchRow(
                       isDark: isDark,
                       icon: Icons.school_rounded,
                       title: 'إشعارات المحاضرات',
-                      subtitle: 'تنبيه عند إضافة أو تحديث محاضرة.',
+                      subtitle: 'تنبيه عند إضافة محاضرة جديدة.',
                       value: _prefs[FirebaseNotificationService.lecturesNotificationsKey] ?? true,
                       enabled: _generalEnabled,
                       onChanged: (value) => _setFast(FirebaseNotificationService.lecturesNotificationsKey, value),
@@ -1847,6 +1882,344 @@ class _NotificationsSettingsPageState extends State<_NotificationsSettingsPage> 
   }
 }
 
+class _FileNotificationsSettingsPage extends StatefulWidget {
+  final bool isDark;
+  final bool systemNotificationsEnabled;
+  final bool generalEnabled;
+
+  const _FileNotificationsSettingsPage({
+    required this.isDark,
+    required this.systemNotificationsEnabled,
+    required this.generalEnabled,
+  });
+
+  @override
+  State<_FileNotificationsSettingsPage> createState() => _FileNotificationsSettingsPageState();
+}
+
+class _FileNotificationsSettingsPageState extends State<_FileNotificationsSettingsPage> {
+  static const gold = Color(0xFFD4A017);
+
+  bool _loading = true;
+  Map<String, bool> _prefs = const {};
+  final Set<String> _pendingKeys = <String>{};
+
+  bool get _generalEnabled =>
+      widget.systemNotificationsEnabled &&
+      (_prefs[FirebaseNotificationService.generalNotificationsKey] ?? widget.generalEnabled);
+
+  bool get _allFilesEnabled =>
+      FirebaseNotificationService.areAllFileCategoriesEnabled(_prefs);
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load({bool silent = false}) async {
+    if (!silent && mounted) setState(() => _loading = true);
+    final prefs = await FirebaseNotificationService.loadNotificationPreferences();
+    if (!mounted) return;
+    setState(() {
+      _prefs = prefs;
+      _loading = false;
+    });
+  }
+
+  void _setFast(String key, bool value) {
+    HapticFeedback.selectionClick();
+    final previousPrefs = Map<String, bool>.from(_prefs);
+
+    setState(() {
+      final next = Map<String, bool>.from(_prefs);
+      if (key == FirebaseNotificationService.engineeringFilesNotificationsKey) {
+        next[key] = value;
+        for (final categoryKey in FirebaseNotificationService.fileCategoryPreferenceKeys) {
+          next[categoryKey] = value;
+          _pendingKeys.add(categoryKey);
+        }
+      } else {
+        next[key] = value;
+        final allEnabled = FirebaseNotificationService.fileCategoryPreferenceKeys
+            .every((categoryKey) => next[categoryKey] ?? true);
+        next[FirebaseNotificationService.engineeringFilesNotificationsKey] = allEnabled;
+      }
+      _prefs = next;
+      _pendingKeys.add(key);
+    });
+
+    Future<void>(() async {
+      try {
+        await FirebaseNotificationService.setNotificationPreference(key, value);
+      } catch (_) {
+        if (!mounted) return;
+        setState(() => _prefs = previousPrefs);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('تعذر تحديث إشعارات الملفات. حاول مرة أخرى.')),
+        );
+      } finally {
+        if (!mounted) return;
+        setState(() {
+          _pendingKeys.remove(key);
+          if (key == FirebaseNotificationService.engineeringFilesNotificationsKey) {
+            _pendingKeys.removeAll(FirebaseNotificationService.fileCategoryPreferenceKeys);
+          }
+        });
+        await _load(silent: true);
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = widget.isDark;
+    final pageBg = isDark ? const Color(0xFF050505) : const Color(0xFFF7F4EE);
+    final cardBg = isDark ? const Color(0xFF121212) : Colors.white;
+    final textPrimary = isDark ? Colors.white : const Color(0xFF1A1000);
+    final textSub = isDark ? Colors.white60 : Colors.black54;
+
+    return Directionality(
+      textDirection: TextDirection.rtl,
+      child: AnnotatedRegion<SystemUiOverlayStyle>(
+        value: settingsSystemUiOverlayStyle(isDark),
+        child: Scaffold(
+          backgroundColor: pageBg,
+          appBar: AppBar(
+            backgroundColor: pageBg,
+            elevation: 0,
+            centerTitle: true,
+            iconTheme: IconThemeData(color: textPrimary),
+            title: Text(
+              'إشعارات الملفات الهندسية',
+              style: TextStyle(
+                color: textPrimary,
+                fontSize: 17,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+          ),
+          body: _loading
+              ? const Center(child: CircularProgressIndicator(color: gold))
+              : ListView(
+                  padding: EdgeInsets.fromLTRB(
+                    16,
+                    8,
+                    16,
+                    24 + MediaQuery.of(context).padding.bottom,
+                  ),
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(18),
+                      decoration: BoxDecoration(
+                        color: cardBg,
+                        borderRadius: BorderRadius.circular(26),
+                        border: Border.all(color: gold.withOpacity(0.16)),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(isDark ? 0.36 : 0.08),
+                            blurRadius: 24,
+                            offset: const Offset(0, 12),
+                          ),
+                        ],
+                      ),
+                      child: Row(
+                        children: [
+                          Container(
+                            width: 50,
+                            height: 50,
+                            decoration: BoxDecoration(
+                              color: gold.withOpacity(0.12),
+                              borderRadius: BorderRadius.circular(18),
+                            ),
+                            child: const Icon(Icons.folder_copy_rounded, color: gold, size: 26),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'تحكم بتصنيفات الملفات',
+                                  style: TextStyle(
+                                    color: textPrimary,
+                                    fontSize: 17,
+                                    fontWeight: FontWeight.w900,
+                                  ),
+                                ),
+                                const SizedBox(height: 5),
+                                Text(
+                                  'يمكنك إيقاف إشعارات كل الملفات أو إيقاف تصنيف محدد فقط.',
+                                  style: TextStyle(
+                                    color: textSub,
+                                    fontSize: 12.5,
+                                    height: 1.45,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    if (_pendingKeys.isNotEmpty) ...[
+                      const SizedBox(height: 12),
+                      Row(
+                        children: [
+                          const SizedBox(
+                            width: 15,
+                            height: 15,
+                            child: CircularProgressIndicator(strokeWidth: 2, color: gold),
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            'يتم حفظ تغييرات الملفات بالخلفية...',
+                            style: TextStyle(
+                              color: textSub,
+                              fontSize: 11.5,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                    const SizedBox(height: 14),
+                    _NotificationSwitchRow(
+                      isDark: isDark,
+                      icon: Icons.all_inbox_rounded,
+                      title: 'كل إشعارات الملفات',
+                      subtitle: 'إيقافها يلغي إشعارات جميع تصنيفات الملفات الهندسية.',
+                      value: _allFilesEnabled,
+                      enabled: _generalEnabled,
+                      onChanged: (value) => _setFast(FirebaseNotificationService.engineeringFilesNotificationsKey, value),
+                    ),
+                    const SizedBox(height: 12),
+                    Text(
+                      'تصنيفات الملفات',
+                      style: TextStyle(
+                        color: textPrimary,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    ...FirebaseNotificationService.defaultFileCategories.map((category) {
+                      final key = FirebaseNotificationService.fileCategoryPreferenceKey(category);
+                      return Padding(
+                        padding: const EdgeInsets.only(bottom: 10),
+                        child: _NotificationSwitchRow(
+                          isDark: isDark,
+                          icon: category == 'المخططات الأنشائية'
+                              ? Icons.architecture_rounded
+                              : Icons.folder_rounded,
+                          title: category,
+                          subtitle: category == 'المخططات الأنشائية'
+                              ? 'تنبيه فقط عند إضافة ملف ضمن المخططات الإنشائية.'
+                              : 'تنبيه عند إضافة ملف ضمن هذا التصنيف.',
+                          value: _prefs[key] ?? true,
+                          enabled: _generalEnabled,
+                          onChanged: (value) => _setFast(key, value),
+                        ),
+                      );
+                    }),
+                  ],
+                ),
+        ),
+      ),
+    );
+  }
+}
+
+class _NotificationNavigationRow extends StatelessWidget {
+  final bool isDark;
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final bool enabled;
+  final VoidCallback? onTap;
+
+  const _NotificationNavigationRow({
+    required this.isDark,
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.enabled,
+    required this.onTap,
+  });
+
+  static const gold = Color(0xFFD4A017);
+
+  @override
+  Widget build(BuildContext context) {
+    final textPrimary = isDark ? Colors.white : const Color(0xFF1A1000);
+    final textSub = isDark ? Colors.white60 : Colors.black54;
+    final bg = isDark ? const Color(0xFF191919) : const Color(0xFFF9F5EA);
+
+    return AnimatedOpacity(
+      duration: const Duration(milliseconds: 180),
+      opacity: enabled ? 1 : 0.48,
+      child: Material(
+        color: bg,
+        borderRadius: BorderRadius.circular(20),
+        child: InkWell(
+          onTap: enabled ? onTap : null,
+          borderRadius: BorderRadius.circular(20),
+          splashColor: gold.withOpacity(0.08),
+          highlightColor: gold.withOpacity(0.06),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+            child: Row(
+              children: [
+                Container(
+                  width: 38,
+                  height: 38,
+                  decoration: BoxDecoration(
+                    color: gold.withOpacity(0.12),
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  child: Icon(icon, color: gold, size: 21),
+                ),
+                const SizedBox(width: 11),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: textPrimary,
+                          fontSize: 13.5,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                      const SizedBox(height: 3),
+                      Text(
+                        subtitle,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: textSub,
+                          fontSize: 11.5,
+                          height: 1.35,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 10),
+                const Icon(Icons.arrow_back_ios_new_rounded, color: gold, size: 16),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
 
 class _NotificationStatusBadge extends StatelessWidget {
   final bool isDark;

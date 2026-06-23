@@ -925,6 +925,50 @@ Future<void> _openPlainUrl(BuildContext context, String rawUrl) async {
   }
 }
 
+Uri _googleMapsSchemeUri(Uri uri) {
+  return Uri.parse(
+    uri.toString().replaceFirst(RegExp(r'^https?://'), 'comgooglemapsurl://'),
+  );
+}
+
+Uri _appleMapsSchemeUri(Uri uri) {
+  return Uri(
+    scheme: 'maps',
+    queryParameters: {'q': uri.toString()},
+  );
+}
+
+Future<bool> _tryOpenUrl(Uri uri, LaunchMode mode) async {
+  try {
+    return await launchUrl(uri, mode: mode);
+  } catch (_) {
+    return false;
+  }
+}
+
+Future<void> _openLectureLocationUrl(BuildContext context, String rawUrl) async {
+  final uri = _safeUrl(rawUrl);
+
+  if (uri == null) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('رابط المحاضرة غير موجود')),
+    );
+    return;
+  }
+
+  final opened = Platform.isIOS
+      ? await _tryOpenUrl(uri, LaunchMode.externalNonBrowserApplication) ||
+          await _tryOpenUrl(_googleMapsSchemeUri(uri), LaunchMode.externalApplication) ||
+          await _tryOpenUrl(_appleMapsSchemeUri(uri), LaunchMode.externalApplication)
+      : await _tryOpenUrl(uri, LaunchMode.externalApplication);
+
+  if (!opened && context.mounted) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('تعذر فتح رابط المحاضرة')),
+    );
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Tab Bar Delegate
 // ─────────────────────────────────────────────────────────────────────────────
@@ -4628,7 +4672,7 @@ const _ScheduleTable({
   static const gold = Color(0xFFD4A017);
 
   void _openLocation(BuildContext context, _ScheduleItem item) {
-    _openPlainUrl(context, item.urlLocation);
+    _openLectureLocationUrl(context, item.urlLocation);
   }
   Future<void> _showEditDialog(
     BuildContext context,
