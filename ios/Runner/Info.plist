@@ -106,9 +106,10 @@
 			<dict>
 				<key>CFBundleIconFiles</key>
 				<array>
-					<string>AppIconDark-120</string>
-					<string>AppIconDark-180</string>
+					<string>AppIconDark</string>
 				</array>
+				<key>CFBundleIconName</key>
+				<string>AppIconDark</string>
 				<key>UIPrerenderedIcon</key>
 				<false/>
 			</dict>
@@ -131,10 +132,10 @@
 			<dict>
 				<key>CFBundleIconFiles</key>
 				<array>
-					<string>AppIconDark-76</string>
-					<string>AppIconDark-152</string>
-					<string>AppIconDark-167</string>
+					<string>AppIconDark</string>
 				</array>
+				<key>CFBundleIconName</key>
+				<string>AppIconDark</string>
 				<key>UIPrerenderedIcon</key>
 				<false/>
 			</dict>
