@@ -36,7 +36,7 @@ class SceneDelegate: FlutterSceneDelegate {
       return
     }
 
-    let targetIconName: String? = isDark ? "AppIconDark" : nil
+    let targetIconName: String? = isDark ? "AppIconBlackAlt" : nil
 
     if UIApplication.shared.alternateIconName == targetIconName {
       result(true)

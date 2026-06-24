@@ -102,11 +102,11 @@
 		</dict>
 		<key>CFBundleAlternateIcons</key>
 		<dict>
-			<key>AppIconDark</key>
+			<key>AppIconBlackAlt</key>
 			<dict>
 				<key>CFBundleIconFiles</key>
 				<array>
-					<string>AppIconDark</string>
+					<string>AppIconBlackAlt</string>
 				</array>
 				<key>UIPrerenderedIcon</key>
 				<false/>
@@ -126,12 +126,12 @@
 		</dict>
 		<key>CFBundleAlternateIcons</key>
 		<dict>
-			<key>AppIconDark</key>
+			<key>AppIconBlackAlt</key>
 			<dict>
 				<key>CFBundleIconFiles</key>
 				<array>
-					<string>AppIconDark</string>
-					<string>AppIconDark~ipad</string>
+					<string>AppIconBlackAlt</string>
+					<string>AppIconBlackAlt~ipad</string>
 				</array>
 				<key>UIPrerenderedIcon</key>
 				<false/>
