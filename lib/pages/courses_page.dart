@@ -352,9 +352,15 @@ class _CoursesPageState extends State<CoursesPage>
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
     CoursesPageDeepLinkBus.requestedScheduleId.addListener(_handleScheduleDeepLink);
-    _fetchVideos();
-    _fetchSchedule();
-    _handleScheduleDeepLink();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      Future<void>.delayed(const Duration(milliseconds: 450), () {
+        if (!mounted) return;
+        _fetchVideos();
+        _fetchSchedule();
+        _handleScheduleDeepLink();
+      });
+    });
     // بدء المراقبة الخفية كل 8 ثواني
     _pollTimer = Timer.periodic(const Duration(seconds: 8), (_) {
       _silentPollSchedule();
@@ -404,7 +410,7 @@ class _CoursesPageState extends State<CoursesPage>
     }
 
     try {
-      final response = await http.get(Uri.parse(_youtubeVideosUrl));
+      final response = await http.get(Uri.parse(_youtubeVideosUrl)).timeout(const Duration(seconds: 15));
 
       if (response.statusCode != 200) {
         throw Exception('فشل الاتصال بالخادم: HTTP ${response.statusCode}');
@@ -539,7 +545,7 @@ class _CoursesPageState extends State<CoursesPage>
 
   /// تحميل عناصر الجدول من الخادم (مشترك)
   Future<List<_ScheduleItem>> _loadScheduleItems() async {
-    final response = await http.get(Uri.parse(_scheduleUrl));
+    final response = await http.get(Uri.parse(_scheduleUrl)).timeout(const Duration(seconds: 15));
     if (response.statusCode != 200) {
       throw Exception('فشل الاتصال: HTTP ${response.statusCode}');
     }

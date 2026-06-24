@@ -2078,7 +2078,12 @@ class _ProjectsShowcaseCardState extends State<_ProjectsShowcaseCard> {
   @override
   void initState() {
     super.initState();
-    _loadProjectsInstantly();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      Future<void>.delayed(const Duration(milliseconds: 300), () {
+        if (mounted) _loadProjectsInstantly();
+      });
+    });
     _refreshTimer = Timer.periodic(const Duration(seconds: 15), (_) {
       _fetchProjectsFromServer(silent: true);
     });
@@ -4021,8 +4026,14 @@ void initState() {
             begin: const Offset(0, 0.1), end: Offset.zero)
         .animate(CurvedAnimation(parent: _ctrl, curve: Curves.easeOutCubic));
     _ctrl.forward();
-    _loadLatestHomeUpdates();
-    if (widget.isActive) _startLatestUpdatesTimer();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      Future<void>.delayed(const Duration(milliseconds: 250), () {
+        if (!mounted) return;
+        _loadLatestHomeUpdates();
+        if (widget.isActive) _startLatestUpdatesTimer();
+      });
+    });
   }
 
   @override

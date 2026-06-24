@@ -580,14 +580,20 @@ bool _isSupervisor() {
 
     _searchCtrl.addListener(_onSearchChanged);
 
-    if (_files.isNotEmpty || _FilesPageMemory.didLoadOnce) {
-      _applyFilters();
-      _loading = false;
-      _restoreScrollPositionSoon();
-      _fetchFromNetwork(silent: true);
-    } else {
-      _initLoad();
-    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      Future<void>.delayed(const Duration(milliseconds: 350), () {
+        if (!mounted) return;
+        if (_files.isNotEmpty || _FilesPageMemory.didLoadOnce) {
+          _applyFilters();
+          _loading = false;
+          _restoreScrollPositionSoon();
+          _fetchFromNetwork(silent: true);
+        } else {
+          _initLoad();
+        }
+      });
+    });
 
     _refreshTimer = Timer.periodic(const Duration(seconds: 5), (_) {
       _fetchFromNetwork(silent: true);
@@ -716,14 +722,16 @@ bool _isSupervisor() {
 
     try {
       final uri = Uri.parse('$_apiUrl?t=${DateTime.now().millisecondsSinceEpoch}');
-      final request = await HttpClient().getUrl(uri);
-      final response = await request.close();
+      final client = HttpClient()..connectionTimeout = const Duration(seconds: 15);
+      try {
+        final request = await client.getUrl(uri).timeout(const Duration(seconds: 15));
+        final response = await request.close().timeout(const Duration(seconds: 15));
 
-      if (response.statusCode != 200) throw Exception('HTTP ${response.statusCode}');
+        if (response.statusCode != 200) throw Exception('HTTP ${response.statusCode}');
 
-      final body = await response.transform(utf8.decoder).join();
-      final decoded = jsonDecode(body);
-      if (decoded is! List) throw Exception('صيغة البيانات غير صحيحة');
+        final body = await response.transform(utf8.decoder).join().timeout(const Duration(seconds: 15));
+        final decoded = jsonDecode(body);
+        if (decoded is! List) throw Exception('صيغة البيانات غير صحيحة');
 
       final fresh = decoded
           .map((e) => PdfFileItem.fromJson(Map<String, dynamic>.from(e)))
@@ -774,6 +782,9 @@ bool _isSupervisor() {
           _error = null;
           _backgroundRefreshing = false;
         });
+      }
+      } finally {
+        client.close(force: true);
       }
     } catch (_) {
       if (!mounted) return;

@@ -354,8 +354,13 @@ class _PublicationsPageState extends State<PublicationsPage> {
     _publicationsSearchCtrl.addListener(_onPublicationsSearchTyping);
     PublicationsPageScrollBus.goTopSignal.addListener(_scrollPostsToTop);
     PublicationsPageDeepLinkBus.requestedPostId.addListener(_onDeepLinkPostRequested);
-    WidgetsBinding.instance.addPostFrameCallback((_) => _onDeepLinkPostRequested());
-    _initPosts();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _onDeepLinkPostRequested();
+      Future<void>.delayed(const Duration(milliseconds: 300), () {
+        if (mounted) _initPosts();
+      });
+    });
   }
 
   @override
