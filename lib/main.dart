@@ -108,15 +108,14 @@ class _DrMajedAppState extends State<DrMajedApp> with WidgetsBindingObserver {
     }
   }
 
-  Future<void> _loadSavedTheme() async {
-    final prefs = await SharedPreferences.getInstance();
-    final savedIsDark = prefs.getBool(_themePrefsKey) ?? false;
+Future<void> _loadSavedTheme() async {
+  final prefs = await SharedPreferences.getInstance();
+  final savedIsDark = prefs.getBool(_themePrefsKey) ?? false;
 
-    if (!mounted) return;
-    setState(() => _isDark = savedIsDark);
-    _applySystemBarsStyle(savedIsDark);
-    unawaited(AppIconSwitcher.setIconForTheme(savedIsDark));
-  }
+  if (!mounted) return;
+  setState(() => _isDark = savedIsDark);
+  _applySystemBarsStyle(savedIsDark);
+}
 
   void _toggleTheme(bool val) {
     setState(() => _isDark = val);
