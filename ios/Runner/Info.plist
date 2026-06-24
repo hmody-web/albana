@@ -108,8 +108,6 @@
 				<array>
 					<string>AppIconDark</string>
 				</array>
-				<key>CFBundleIconName</key>
-				<string>AppIconDark</string>
 				<key>UIPrerenderedIcon</key>
 				<false/>
 			</dict>
@@ -133,9 +131,8 @@
 				<key>CFBundleIconFiles</key>
 				<array>
 					<string>AppIconDark</string>
+					<string>AppIconDark~ipad</string>
 				</array>
-				<key>CFBundleIconName</key>
-				<string>AppIconDark</string>
 				<key>UIPrerenderedIcon</key>
 				<false/>
 			</dict>
