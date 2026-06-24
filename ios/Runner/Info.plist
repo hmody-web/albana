@@ -111,6 +111,15 @@
 				<key>UIPrerenderedIcon</key>
 				<false/>
 			</dict>
+			<key>AppIconWhiteAlt</key>
+			<dict>
+				<key>CFBundleIconFiles</key>
+				<array>
+					<string>AppIconWhiteAlt</string>
+				</array>
+				<key>UIPrerenderedIcon</key>
+				<false/>
+			</dict>
 		</dict>
 	</dict>
 	<key>CFBundleIcons~ipad</key>
@@ -132,6 +141,16 @@
 				<array>
 					<string>AppIconBlackAlt</string>
 					<string>AppIconBlackAlt~ipad</string>
+				</array>
+				<key>UIPrerenderedIcon</key>
+				<false/>
+			</dict>
+			<key>AppIconWhiteAlt</key>
+			<dict>
+				<key>CFBundleIconFiles</key>
+				<array>
+					<string>AppIconWhiteAlt</string>
+					<string>AppIconWhiteAlt~ipad</string>
 				</array>
 				<key>UIPrerenderedIcon</key>
 				<false/>

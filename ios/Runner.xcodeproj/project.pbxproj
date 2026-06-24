@@ -26,6 +26,17 @@
 		D2C0B1670000000000000004 /* AppIconBlackAlt@3x~ipad.png in Resources */ = {isa = PBXBuildFile; fileRef = D2C0A1670000000000000004 /* AppIconBlackAlt@3x~ipad.png */; };
 		D2C0B2520000000000000005 /* AppIconBlackAlt~ipad@2x.png in Resources */ = {isa = PBXBuildFile; fileRef = D2C0A2520000000000000005 /* AppIconBlackAlt~ipad@2x.png */; };
 		D2C0B2670000000000000006 /* AppIconBlackAlt~ipad@3x.png in Resources */ = {isa = PBXBuildFile; fileRef = D2C0A2670000000000000006 /* AppIconBlackAlt~ipad@3x.png */; };
+		E3C0B0000000000000000001 /* AppIconWhiteAlt@2x.png in Resources */ = {isa = PBXBuildFile; fileRef = E3C0A0000000000000000001 /* AppIconWhiteAlt@2x.png */; };
+		E3C0B0000000000000000002 /* AppIconWhiteAlt@3x.png in Resources */ = {isa = PBXBuildFile; fileRef = E3C0A0000000000000000002 /* AppIconWhiteAlt@3x.png */; };
+		E3C0B0000000000000000003 /* AppIconWhiteAlt@2x~ipad.png in Resources */ = {isa = PBXBuildFile; fileRef = E3C0A0000000000000000003 /* AppIconWhiteAlt@2x~ipad.png */; };
+		E3C0B0000000000000000004 /* AppIconWhiteAlt@3x~ipad.png in Resources */ = {isa = PBXBuildFile; fileRef = E3C0A0000000000000000004 /* AppIconWhiteAlt@3x~ipad.png */; };
+		E3C0B0000000000000000005 /* AppIconWhiteAlt~ipad@2x.png in Resources */ = {isa = PBXBuildFile; fileRef = E3C0A0000000000000000005 /* AppIconWhiteAlt~ipad@2x.png */; };
+		E3C0B0000000000000000006 /* AppIconWhiteAlt~ipad@3x.png in Resources */ = {isa = PBXBuildFile; fileRef = E3C0A0000000000000000006 /* AppIconWhiteAlt~ipad@3x.png */; };
+		E3C0B0000000000000000007 /* AppIconWhiteAlt-120.png in Resources */ = {isa = PBXBuildFile; fileRef = E3C0A0000000000000000007 /* AppIconWhiteAlt-120.png */; };
+		E3C0B0000000000000000008 /* AppIconWhiteAlt-180.png in Resources */ = {isa = PBXBuildFile; fileRef = E3C0A0000000000000000008 /* AppIconWhiteAlt-180.png */; };
+		E3C0B0000000000000000009 /* AppIconWhiteAlt-76.png in Resources */ = {isa = PBXBuildFile; fileRef = E3C0A0000000000000000009 /* AppIconWhiteAlt-76.png */; };
+		E3C0B0000000000000000010 /* AppIconWhiteAlt-152.png in Resources */ = {isa = PBXBuildFile; fileRef = E3C0A0000000000000000010 /* AppIconWhiteAlt-152.png */; };
+		E3C0B0000000000000000011 /* AppIconWhiteAlt-167.png in Resources */ = {isa = PBXBuildFile; fileRef = E3C0A0000000000000000011 /* AppIconWhiteAlt-167.png */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -74,6 +85,17 @@
 		D2C0A1670000000000000004 /* AppIconBlackAlt@3x~ipad.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "AppIconBlackAlt@3x~ipad.png"; sourceTree = "<group>"; };
 		D2C0A2520000000000000005 /* AppIconBlackAlt~ipad@2x.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "AppIconBlackAlt~ipad@2x.png"; sourceTree = "<group>"; };
 		D2C0A2670000000000000006 /* AppIconBlackAlt~ipad@3x.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "AppIconBlackAlt~ipad@3x.png"; sourceTree = "<group>"; };
+		E3C0A0000000000000000001 /* AppIconWhiteAlt@2x.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "AppIconWhiteAlt@2x.png"; sourceTree = "<group>"; };
+		E3C0A0000000000000000002 /* AppIconWhiteAlt@3x.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "AppIconWhiteAlt@3x.png"; sourceTree = "<group>"; };
+		E3C0A0000000000000000003 /* AppIconWhiteAlt@2x~ipad.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "AppIconWhiteAlt@2x~ipad.png"; sourceTree = "<group>"; };
+		E3C0A0000000000000000004 /* AppIconWhiteAlt@3x~ipad.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "AppIconWhiteAlt@3x~ipad.png"; sourceTree = "<group>"; };
+		E3C0A0000000000000000005 /* AppIconWhiteAlt~ipad@2x.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "AppIconWhiteAlt~ipad@2x.png"; sourceTree = "<group>"; };
+		E3C0A0000000000000000006 /* AppIconWhiteAlt~ipad@3x.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "AppIconWhiteAlt~ipad@3x.png"; sourceTree = "<group>"; };
+		E3C0A0000000000000000007 /* AppIconWhiteAlt-120.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "AppIconWhiteAlt-120.png"; sourceTree = "<group>"; };
+		E3C0A0000000000000000008 /* AppIconWhiteAlt-180.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "AppIconWhiteAlt-180.png"; sourceTree = "<group>"; };
+		E3C0A0000000000000000009 /* AppIconWhiteAlt-76.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "AppIconWhiteAlt-76.png"; sourceTree = "<group>"; };
+		E3C0A0000000000000000010 /* AppIconWhiteAlt-152.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "AppIconWhiteAlt-152.png"; sourceTree = "<group>"; };
+		E3C0A0000000000000000011 /* AppIconWhiteAlt-167.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "AppIconWhiteAlt-167.png"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -128,6 +150,17 @@
 		97C146F01CF9000F007C117D /* Runner */ = {
 			isa = PBXGroup;
 			children = (
+				E3C0A0000000000000000001 /* AppIconWhiteAlt@2x.png */,
+				E3C0A0000000000000000002 /* AppIconWhiteAlt@3x.png */,
+				E3C0A0000000000000000003 /* AppIconWhiteAlt@2x~ipad.png */,
+				E3C0A0000000000000000004 /* AppIconWhiteAlt@3x~ipad.png */,
+				E3C0A0000000000000000005 /* AppIconWhiteAlt~ipad@2x.png */,
+				E3C0A0000000000000000006 /* AppIconWhiteAlt~ipad@3x.png */,
+				E3C0A0000000000000000007 /* AppIconWhiteAlt-120.png */,
+				E3C0A0000000000000000008 /* AppIconWhiteAlt-180.png */,
+				E3C0A0000000000000000009 /* AppIconWhiteAlt-76.png */,
+				E3C0A0000000000000000010 /* AppIconWhiteAlt-152.png */,
+				E3C0A0000000000000000011 /* AppIconWhiteAlt-167.png */,
 				D2C0A1200000000000000001 /* AppIconBlackAlt@2x.png */,
 				D2C0A1800000000000000002 /* AppIconBlackAlt@3x.png */,
 				D2C0A1520000000000000003 /* AppIconBlackAlt@2x~ipad.png */,
@@ -243,6 +276,17 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				E3C0B0000000000000000001 /* AppIconWhiteAlt@2x.png in Resources */,
+				E3C0B0000000000000000002 /* AppIconWhiteAlt@3x.png in Resources */,
+				E3C0B0000000000000000003 /* AppIconWhiteAlt@2x~ipad.png in Resources */,
+				E3C0B0000000000000000004 /* AppIconWhiteAlt@3x~ipad.png in Resources */,
+				E3C0B0000000000000000005 /* AppIconWhiteAlt~ipad@2x.png in Resources */,
+				E3C0B0000000000000000006 /* AppIconWhiteAlt~ipad@3x.png in Resources */,
+				E3C0B0000000000000000007 /* AppIconWhiteAlt-120.png in Resources */,
+				E3C0B0000000000000000008 /* AppIconWhiteAlt-180.png in Resources */,
+				E3C0B0000000000000000009 /* AppIconWhiteAlt-76.png in Resources */,
+				E3C0B0000000000000000010 /* AppIconWhiteAlt-152.png in Resources */,
+				E3C0B0000000000000000011 /* AppIconWhiteAlt-167.png in Resources */,
 				D1C0B1200000000000000120 /* AppIconBlackAlt-120.png in Resources */,
 				D1C0B1800000000000000180 /* AppIconBlackAlt-180.png in Resources */,
 				D1C0B0760000000000000076 /* AppIconBlackAlt-76.png in Resources */,
