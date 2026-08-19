@@ -6340,6 +6340,7 @@ class _CommentBubble extends StatefulWidget {
   final bool highlighted;
 
   const _CommentBubble({
+    super.key,
     required this.comment,
     required this.isDark,
     this.onEdit,
