@@ -75,7 +75,27 @@ unless copy_phase.files_references.include?(target.product_reference)
     ]
   }
 end
+# Ensure Embed App Extensions runs before Flutter Thin Binary
+embed_phase = runner.build_phases.find do |phase|
+  phase.respond_to?(:name) && phase.name == 'Embed App Extensions'
+end
 
+thin_binary_phase = runner.build_phases.find do |phase|
+  phase.respond_to?(:name) && phase.name == 'Thin Binary'
+end
+
+if embed_phase && thin_binary_phase
+  runner.build_phases.delete(embed_phase)
+
+  thin_index = runner.build_phases.index(thin_binary_phase)
+
+  if thin_index
+    runner.build_phases.insert(thin_index, embed_phase)
+    puts 'Moved Embed App Extensions before Thin Binary.'
+  else
+    runner.build_phases << embed_phase
+  end
+end
 project.save
 
 puts 'NotificationService configuration complete.'
