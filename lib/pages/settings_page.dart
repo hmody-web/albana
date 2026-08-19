@@ -86,7 +86,7 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
 
   bool _isSupervisor(User? user) {
     final email = user?.email?.trim().toLowerCase();
-    return email == 'hmode.qq@gmail.com' || email == 'hmode.qu@gmail.com';
+    return email == 'hmode.qq@gmail.com' || email == 'hmode.qu@gmail.com' || email == 'info@majidalbana.com';
   }
 
   Future<void> _signInWithGoogle(BuildContext context) async {

@@ -488,7 +488,7 @@ void _scrollToTopFromNav() {
 bool _isSupervisor() {
     final user = FirebaseAuth.instance.currentUser;
     final email = user?.email?.trim().toLowerCase();
-    return email == 'hmode.qq@gmail.com' || email == 'hmode.qu@gmail.com';
+    return email == 'hmode.qq@gmail.com' || email == 'hmode.qu@gmail.com' || email == 'info@majidalbana.com';
   }
 
   void _onFilePublished() {
@@ -4028,7 +4028,7 @@ class _PdfCommentsSectionState extends State<_PdfCommentsSection> {
 
   bool get _isSupervisor {
     final email = FirebaseAuth.instance.currentUser?.email?.trim().toLowerCase();
-    return email == 'hmode.qq@gmail.com' || email == 'hmode.qu@gmail.com';
+    return email == 'hmode.qq@gmail.com' || email == 'hmode.qu@gmail.com' || email == 'info@majidalbana.com';
   }
 
   Future<void> _loadComments({bool initial = false, bool silent = false}) async {

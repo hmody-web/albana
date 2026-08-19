@@ -344,7 +344,7 @@ class _CoursesPageState extends State<CoursesPage>
 
   bool _isSupervisor(User? user) {
     final email = user?.email?.trim().toLowerCase();
-    return email == 'hmode.qq@gmail.com' || email == 'hmode.qu@gmail.com';
+    return email == 'hmode.qq@gmail.com' || email == 'hmode.qu@gmail.com' || email == 'info@majidalbana.com';
   }
 
   @override
@@ -6705,6 +6705,270 @@ class _DataCell extends StatelessWidget {
         textAlign: TextAlign.center,
         style:
             TextStyle(color: color, fontSize: 12, fontWeight: FontWeight.w500),
+      ),
+    );
+  }
+}
+/// Opens the exact registration referenced by an administrative push notification.
+class RegistrationNotificationDetailPage extends StatefulWidget {
+  final bool isDark;
+  final int registrationId;
+
+  const RegistrationNotificationDetailPage({
+    super.key,
+    required this.isDark,
+    required this.registrationId,
+  });
+
+  @override
+  State<RegistrationNotificationDetailPage> createState() =>
+      _RegistrationNotificationDetailPageState();
+}
+
+class _RegistrationNotificationDetailPageState
+    extends State<RegistrationNotificationDetailPage> {
+  static const _api =
+      'https://majidalbana.com/admin/registrations/registrations_api.php';
+  static const _gold = Color(0xFFD4A017);
+
+  Map<String, dynamic>? _registration;
+  bool _loading = true;
+  String? _error;
+
+  Color get _bg =>
+      widget.isDark ? const Color(0xFF101010) : const Color(0xFFF7F3EC);
+  Color get _card => widget.isDark ? const Color(0xFF181818) : Colors.white;
+  Color get _text =>
+      widget.isDark ? Colors.white : const Color(0xFF1A1000);
+  Color get _sub => widget.isDark ? Colors.white70 : Colors.black54;
+
+  bool get _isSupervisor {
+    final email = FirebaseAuth.instance.currentUser?.email?.trim().toLowerCase();
+    return email == 'hmode.qq@gmail.com' ||
+        email == 'hmode.qu@gmail.com' ||
+        email == 'info@majidalbana.com';
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    if (!_isSupervisor) {
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _error = 'هذه التفاصيل متاحة للمشرفين فقط.';
+        });
+      }
+      return;
+    }
+
+    try {
+      final email = FirebaseAuth.instance.currentUser?.email?.trim() ?? '';
+      final uri = Uri.parse(_api).replace(queryParameters: {
+        'action': 'status',
+        'account_email': email,
+        'with_list': '1',
+      });
+      final response = await http.get(uri).timeout(const Duration(seconds: 15));
+      final decoded = jsonDecode(utf8.decode(response.bodyBytes));
+      if (decoded is! Map) throw const FormatException('Invalid response');
+
+      final registrations = decoded['registrations'];
+      Map<String, dynamic>? found;
+      if (registrations is List) {
+        for (final item in registrations.whereType<Map>()) {
+          final row = Map<String, dynamic>.from(item);
+          if (int.tryParse('${row['id'] ?? ''}') == widget.registrationId) {
+            found = row;
+            break;
+          }
+        }
+      }
+
+      if (!mounted) return;
+      setState(() {
+        _registration = found;
+        _loading = false;
+        _error = found == null ? 'تعذر العثور على بيانات هذا التسجيل.' : null;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _error = 'تعذر تحميل تفاصيل التسجيل حالياً.';
+      });
+    }
+  }
+
+  String _value(String key) {
+    final value = _registration?[key]?.toString().trim() ?? '';
+    return value.isEmpty ? 'غير مضاف' : value;
+  }
+
+  Widget _avatar(double size) {
+    final url = _registration?['photo_url']?.toString().trim() ?? '';
+    return ClipOval(
+      child: Container(
+        width: size,
+        height: size,
+        color: _gold.withOpacity(0.13),
+        child: url.isEmpty
+            ? Icon(Icons.person_rounded, color: _gold, size: size * 0.45)
+            : Image.network(
+                url,
+                fit: BoxFit.cover,
+                errorBuilder: (_, __, ___) =>
+                    Icon(Icons.person_rounded, color: _gold, size: size * 0.45),
+              ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final rows = <MapEntry<String, String>>[
+      MapEntry('الاسم الثلاثي', _value('full_name')),
+      MapEntry('الشهادة والاختصاص', _value('certificate')),
+      MapEntry('سنة التخرج', _value('graduation_year')),
+      MapEntry('المحافظة', _value('governorate')),
+      MapEntry('رقم الهاتف', _value('phone')),
+      MapEntry('البريد الإلكتروني', _value('email')),
+      MapEntry('عدد الحضور', _value('attendance_count')),
+    ];
+
+    return Directionality(
+      textDirection: TextDirection.rtl,
+      child: Scaffold(
+        backgroundColor: _bg,
+        appBar: AppBar(
+          backgroundColor: _bg,
+          elevation: 0,
+          iconTheme: IconThemeData(color: _text),
+          title: Text(
+            'تفاصيل التسجيل',
+            style: TextStyle(color: _text, fontWeight: FontWeight.w900),
+          ),
+        ),
+        body: _loading
+            ? const Center(child: CircularProgressIndicator(color: _gold))
+            : _error != null
+                ? Center(
+                    child: Padding(
+                      padding: const EdgeInsets.all(24),
+                      child: Text(
+                        _error!,
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: _sub,
+                          fontWeight: FontWeight.w800,
+                          height: 1.6,
+                        ),
+                      ),
+                    ),
+                  )
+                : ListView(
+                    padding: const EdgeInsets.fromLTRB(16, 18, 16, 40),
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.fromLTRB(16, 22, 16, 18),
+                        decoration: BoxDecoration(
+                          color: _card,
+                          borderRadius: BorderRadius.circular(28),
+                          border: Border.all(color: _gold.withOpacity(0.22)),
+                          boxShadow: [
+                            BoxShadow(
+                              color: _gold.withOpacity(widget.isDark ? 0.08 : 0.12),
+                              blurRadius: 28,
+                              offset: const Offset(0, 12),
+                            ),
+                          ],
+                        ),
+                        child: Column(
+                          children: [
+                            _avatar(92),
+                            const SizedBox(height: 12),
+                            Text(
+                              _value('full_name'),
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                color: _text,
+                                fontSize: 19,
+                                fontWeight: FontWeight.w900,
+                              ),
+                            ),
+                            const SizedBox(height: 6),
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                                vertical: 6,
+                              ),
+                              decoration: BoxDecoration(
+                                color: Colors.green.withOpacity(0.10),
+                                borderRadius: BorderRadius.circular(99),
+                              ),
+                              child: const Text(
+                                'تسجيل جديد',
+                                style: TextStyle(
+                                  color: Colors.green,
+                                  fontWeight: FontWeight.w900,
+                                  fontSize: 12,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 18),
+                            ...rows.map(
+                              (entry) => Container(
+                                width: double.infinity,
+                                margin: const EdgeInsets.only(bottom: 9),
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 12,
+                                  vertical: 12,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: widget.isDark
+                                      ? const Color(0xFF111111)
+                                      : const Color(0xFFFAFAFA),
+                                  borderRadius: BorderRadius.circular(16),
+                                  border:
+                                      Border.all(color: _gold.withOpacity(0.08)),
+                                ),
+                                child: Row(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    SizedBox(
+                                      width: 112,
+                                      child: Text(
+                                        entry.key,
+                                        style: TextStyle(
+                                          color: _sub,
+                                          fontWeight: FontWeight.w800,
+                                          fontSize: 12,
+                                        ),
+                                      ),
+                                    ),
+                                    Expanded(
+                                      child: Text(
+                                        entry.value,
+                                        style: TextStyle(
+                                          color: _text,
+                                          fontWeight: FontWeight.w900,
+                                          height: 1.45,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
       ),
     );
   }

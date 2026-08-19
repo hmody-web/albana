@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
@@ -50,6 +51,15 @@ class FirebaseNotificationService {
   FirebaseNotificationService._();
 
   static bool _initialized = false;
+  static StreamSubscription<User?>? _authSubscription;
+  static const String _supervisorsTopic = 'supervisors';
+
+  static bool _isSupervisorEmail(String? email) {
+    final clean = email?.trim().toLowerCase();
+    return clean == 'hmode.qq@gmail.com' ||
+        clean == 'hmode.qu@gmail.com' ||
+        clean == 'info@majidalbana.com';
+  }
 
   static const String generalNotificationsKey = 'general';
   static const String postsNotificationsKey = 'posts';
@@ -188,6 +198,7 @@ class FirebaseNotificationService {
       await _captureLocalNotificationLaunch();
       _listenToForegroundMessages();
       await _listenToNotificationClicks();
+      _listenToAuthChangesForSupervisorTopic();
       unawaited(_completeStartupNotificationWork());
     } catch (e) {
       debugPrint('FirebaseNotificationService initialize error: $e');
@@ -220,6 +231,7 @@ static Future<void> _completeStartupNotificationWork() async {
     }
 
     await applySavedNotificationSubscriptions();
+    await _syncSupervisorTopic();
     await _printFcmToken();
   } catch (e) {
     debugPrint('FirebaseNotificationService startup error: $e');
@@ -449,6 +461,22 @@ static Future<void> _setupLocalNotifications() async {
   await androidPlugin?.createNotificationChannel(_androidChannel);
 }
 
+  static void _listenToAuthChangesForSupervisorTopic() {
+    _authSubscription?.cancel();
+    _authSubscription = FirebaseAuth.instance.authStateChanges().listen((_) {
+      unawaited(_syncSupervisorTopic());
+    });
+  }
+
+  static Future<void> _syncSupervisorTopic() async {
+    final email = FirebaseAuth.instance.currentUser?.email;
+    if (_isSupervisorEmail(email)) {
+      await _subscribeToTopic(_supervisorsTopic);
+    } else {
+      await _unsubscribeFromTopic(_supervisorsTopic);
+    }
+  }
+
   static Future<void> _subscribeToTopic(String topic) async {
     try {
       await _messaging.subscribeToTopic(topic);
@@ -479,6 +507,14 @@ static Future<void> _setupLocalNotifications() async {
   }
 
   static Future<bool> _canShowForegroundMessage(RemoteMessage message) async {
+    final type = '${message.data['type'] ?? ''}'.toLowerCase().trim();
+    final topic = '${message.data['notification_topic'] ?? message.data['topic'] ?? ''}'.toLowerCase().trim();
+    if (topic == _supervisorsTopic ||
+        type == 'new_post_comment' ||
+        type == 'new_registration') {
+      return _isSupervisorEmail(FirebaseAuth.instance.currentUser?.email);
+    }
+
     final values = await loadNotificationPreferences();
     if (values[generalNotificationsKey] == false) return false;
 
@@ -556,6 +592,7 @@ static Future<void> _setupLocalNotifications() async {
       FirebaseMessaging.instance.onTokenRefresh.listen((newToken) async {
         debugPrint('FCM TOKEN REFRESHED: $newToken');
         await applySavedNotificationSubscriptions();
+        await _syncSupervisorTopic();
       });
     } catch (e) {
       debugPrint('FCM token error: $e');

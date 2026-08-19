@@ -272,6 +272,40 @@ void _openFromNotificationData(Map<String, dynamic> data) {
   final screen = '${data['screen'] ?? ''}'.toLowerCase().trim();
   final type = '${data['type'] ?? ''}'.toLowerCase().trim();
 
+  if (type == 'new_post_comment') {
+    final postId = int.tryParse('${data['post_id'] ?? data['postId'] ?? ''}');
+    final commentId = int.tryParse('${data['comment_id'] ?? data['commentId'] ?? ''}');
+    if (postId != null && postId > 0 && commentId != null && commentId > 0) {
+      Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => PublicationDirectPage(
+            postId: postId,
+            isDark: widget.isDark,
+            targetCommentId: commentId,
+          ),
+        ),
+      );
+      return;
+    }
+  }
+
+  if (type == 'new_registration' || screen == 'registration_details') {
+    final registrationId = int.tryParse(
+      '${data['registration_id'] ?? data['registrationId'] ?? ''}',
+    );
+    if (registrationId != null && registrationId > 0) {
+      Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => RegistrationNotificationDetailPage(
+            isDark: widget.isDark,
+            registrationId: registrationId,
+          ),
+        ),
+      );
+      return;
+    }
+  }
+
   final rawScheduleId = data['schedule_id'] ??
       data['scheduleId'] ??
       data['lecture_id'] ??

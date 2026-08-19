@@ -23,7 +23,7 @@ import 'package:video_thumbnail/video_thumbnail.dart';
 
 bool _isSupervisorEmail(String? email) {
   final cleanEmail = email?.trim().toLowerCase();
-  return cleanEmail == 'hmode.qq@gmail.com' || cleanEmail == 'hmode.qu@gmail.com';
+  return cleanEmail == 'hmode.qq@gmail.com' || cleanEmail == 'hmode.qu@gmail.com' || cleanEmail == 'info@majidalbana.com';
 }
 
 bool _isCurrentUserSupervisor() {
@@ -210,11 +210,13 @@ class PublicationsPageDeepLinkBus {
 class PublicationDirectPage extends StatefulWidget {
   final int postId;
   final bool isDark;
+  final int? targetCommentId;
 
   const PublicationDirectPage({
     super.key,
     required this.postId,
     required this.isDark,
+    this.targetCommentId,
   });
 
   @override
@@ -303,6 +305,7 @@ class _PublicationDirectPageState extends State<PublicationDirectPage> {
           post: post,
           isDark: widget.isDark,
           isSupervisor: _isCurrentUserSupervisor(),
+          targetCommentId: widget.targetCommentId,
         );
       },
     );
@@ -5267,12 +5270,14 @@ class _PostDetailPage extends StatefulWidget {
   final bool isDark;
   final VideoPlayerController? existingController;
   final bool? isSupervisor;
+  final int? targetCommentId;
 
   const _PostDetailPage({
     required this.post,
     required this.isDark,
     this.existingController,
     this.isSupervisor,
+    this.targetCommentId,
   });
 
   @override
@@ -5486,6 +5491,10 @@ class _PostDetailPageState extends State<_PostDetailPage> {
   bool _videoOwned = false;
   Timer? _refreshTimer;
   VoidCallback? _realtimeBusListener;
+  final Map<int, GlobalKey> _commentKeys = <int, GlobalKey>{};
+  int? _highlightedCommentId;
+  bool _targetCommentFocused = false;
+  Timer? _commentHighlightTimer;
 
   String get _cacheKey => 'post_detail_${widget.post.id}';
 
@@ -5537,6 +5546,7 @@ _onRealtimeUpdate();
           _loadingComments = false;
         }
       });
+      _focusTargetCommentIfNeeded();
     } catch (_) {}
   }
 
@@ -5600,6 +5610,7 @@ _onRealtimeUpdate();
     if (publish) {
       _PostRealtimeBus.publishComments(widget.post.id, safeFresh);
     }
+    _focusTargetCommentIfNeeded();
   }
 
   void _onRealtimeUpdate() {
@@ -5692,6 +5703,37 @@ _onRealtimeUpdate();
     } catch (_) {}
   }
 
+
+  void _focusTargetCommentIfNeeded() {
+    final targetId = widget.targetCommentId;
+    if (_targetCommentFocused || targetId == null || targetId <= 0) return;
+    if (!_comments.any((comment) => comment.id == targetId)) return;
+
+    _targetCommentFocused = true;
+    setState(() => _highlightedCommentId = targetId);
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      Future<void>.delayed(const Duration(milliseconds: 120), () async {
+        if (!mounted) return;
+        final targetContext = _commentKeys[targetId]?.currentContext;
+        if (targetContext != null) {
+          await Scrollable.ensureVisible(
+            targetContext,
+            duration: const Duration(milliseconds: 650),
+            curve: Curves.easeOutCubic,
+            alignment: 0.28,
+          );
+        }
+
+        _commentHighlightTimer?.cancel();
+        _commentHighlightTimer = Timer(const Duration(seconds: 2), () {
+          if (mounted && _highlightedCommentId == targetId) {
+            setState(() => _highlightedCommentId = null);
+          }
+        });
+      });
+    });
+  }
 
   Future<void> _loadLikes() async {
     try {
@@ -5800,6 +5842,7 @@ _onRealtimeUpdate();
   @override
   void dispose() {
     _refreshTimer?.cancel();
+    _commentHighlightTimer?.cancel();
     final listener = _realtimeBusListener;
 if (listener != null) {
   _PostRealtimeBus.tick.removeListener(listener);
@@ -6224,11 +6267,13 @@ if (p.videoUrl != null)
                     .map((c) => Column(
                           children: [
                             _CommentBubble(
+                              key: _commentKeys.putIfAbsent(c.id, () => GlobalKey()),
                               comment: c,
                               isDark: isDark,
                               onEdit: _editComment,
                               onDelete: _deleteComment,
                               isSupervisor: isSupervisor,
+                              highlighted: _highlightedCommentId == c.id,
                             ),
                             Divider(
                               height: 1,
@@ -6292,6 +6337,7 @@ class _CommentBubble extends StatefulWidget {
   final Future<void> Function(int, String)? onEdit;
   final Future<void> Function(int)? onDelete;
   final bool isSupervisor;
+  final bool highlighted;
 
   const _CommentBubble({
     required this.comment,
@@ -6299,6 +6345,7 @@ class _CommentBubble extends StatefulWidget {
     this.onEdit,
     this.onDelete,
     this.isSupervisor = false,
+    this.highlighted = false,
   });
 
   @override
@@ -6339,8 +6386,28 @@ class _CommentBubbleState extends State<_CommentBubble> {
     final canEditComment = _isOwner;
     final canDeleteComment = _isOwner || widget.isSupervisor;
 
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 320),
+      curve: Curves.easeOutCubic,
+      margin: const EdgeInsets.fromLTRB(10, 4, 10, 4),
+      padding: const EdgeInsets.fromLTRB(6, 6, 6, 6),
+      decoration: BoxDecoration(
+        color: widget.highlighted ? gold.withOpacity(isDark ? 0.16 : 0.13) : Colors.transparent,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(
+          color: widget.highlighted ? gold.withOpacity(0.88) : Colors.transparent,
+          width: widget.highlighted ? 1.5 : 0,
+        ),
+        boxShadow: widget.highlighted
+            ? [
+                BoxShadow(
+                  color: gold.withOpacity(isDark ? 0.30 : 0.22),
+                  blurRadius: 24,
+                  spreadRadius: 2,
+                ),
+              ]
+            : const [],
+      ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         textDirection: TextDirection.rtl,
