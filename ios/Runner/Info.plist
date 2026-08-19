@@ -157,5 +157,13 @@
 			</dict>
 		</dict>
 	</dict>
+	<key>NSPhotoLibraryUsageDescription</key>
+<string>يحتاج التطبيق إلى الوصول إلى مكتبة الصور لاختيار الصور والملفات المرئية التي تريد استخدامها داخل التطبيق.</string>
+
+<key>NSCameraUsageDescription</key>
+<string>يحتاج التطبيق إلى الوصول إلى الكاميرا لالتقاط الصور أو الفيديو عند استخدام الميزات التي تتطلب ذلك.</string>
+
+<key>NSLocationWhenInUseUsageDescription</key>
+<string>يحتاج التطبيق إلى الوصول إلى موقعك أثناء استخدام التطبيق لتوفير الميزات التي تعتمد على الموقع.</string>
 </dict>
 </plist>
