@@ -324,43 +324,50 @@ class FirebaseNotificationService {
     }
   }
 
-  static Future<void> _setupLocalNotifications() async {
-    const androidInit = AndroidInitializationSettings('@mipmap/ic_launcher');
+static Future<void> _setupLocalNotifications() async {
+  const androidInit = AndroidInitializationSettings('@mipmap/ic_launcher');
 
-    const initSettings = InitializationSettings(
-      android: androidInit,
-    );
+  const iosInit = DarwinInitializationSettings(
+    requestAlertPermission: false,
+    requestBadgePermission: false,
+    requestSoundPermission: false,
+  );
 
-    await _localNotifications.initialize(
-      initSettings,
-      onDidReceiveNotificationResponse: (NotificationResponse response) {
-        debugPrint('Local notification clicked: ${response.payload}');
+  const initSettings = InitializationSettings(
+    android: androidInit,
+    iOS: iosInit,
+  );
 
-        final payload = response.payload;
-        if (payload == null || payload.trim().isEmpty) {
+  await _localNotifications.initialize(
+    initSettings,
+    onDidReceiveNotificationResponse: (NotificationResponse response) {
+      debugPrint('Local notification clicked: ${response.payload}');
+
+      final payload = response.payload;
+      if (payload == null || payload.trim().isEmpty) {
+        _handleNotificationClick({'screen': 'posts'});
+        return;
+      }
+
+      try {
+        final decoded = jsonDecode(payload);
+        if (decoded is Map) {
+          _handleNotificationClick(Map<String, dynamic>.from(decoded));
+        } else {
           _handleNotificationClick({'screen': 'posts'});
-          return;
         }
+      } catch (_) {
+        _handleNotificationClick({'screen': 'posts'});
+      }
+    },
+  );
 
-        try {
-          final decoded = jsonDecode(payload);
-          if (decoded is Map) {
-            _handleNotificationClick(Map<String, dynamic>.from(decoded));
-          } else {
-            _handleNotificationClick({'screen': 'posts'});
-          }
-        } catch (_) {
-          _handleNotificationClick({'screen': 'posts'});
-        }
-      },
-    );
+  final androidPlugin =
+      _localNotifications.resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin>();
 
-    final androidPlugin =
-        _localNotifications.resolvePlatformSpecificImplementation<
-            AndroidFlutterLocalNotificationsPlugin>();
-
-    await androidPlugin?.createNotificationChannel(_androidChannel);
-  }
+  await androidPlugin?.createNotificationChannel(_androidChannel);
+}
 
   static Future<void> _subscribeToTopic(String topic) async {
     try {
@@ -485,10 +492,29 @@ class FirebaseNotificationService {
         return;
       }
 
-      final notification = message.notification;
-      final android = message.notification?.android;
+final notification = message.notification;
 
-      if (notification == null || android == null) return;
+if (notification == null) return;
+
+if (defaultTargetPlatform == TargetPlatform.iOS) {
+  await _localNotifications.show(
+    notification.hashCode,
+    notification.title,
+    notification.body,
+    const NotificationDetails(
+      iOS: DarwinNotificationDetails(
+        presentAlert: true,
+        presentBadge: true,
+        presentSound: true,
+      ),
+    ),
+    payload: jsonEncode(message.data),
+  );
+  return;
+}
+
+final android = message.notification?.android;
+if (android == null) return;
 
       final androidDetails = await _buildAndroidNotificationDetails(
         title: notification.title,

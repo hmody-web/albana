@@ -59,12 +59,14 @@ void main() async {
     options: DefaultFirebaseOptions.currentPlatform,
   );
 
-  final isAndroid = !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
+final isMobile = !kIsWeb &&
+    (defaultTargetPlatform == TargetPlatform.android ||
+     defaultTargetPlatform == TargetPlatform.iOS);
 
-  if (isAndroid) {
-    FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
-    unawaited(FirebaseNotificationService.initialize());
-  }
+if (isMobile) {
+  FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
+  unawaited(FirebaseNotificationService.initialize());
+}
 
   await SystemChrome.setPreferredOrientations([
     DeviceOrientation.portraitUp,

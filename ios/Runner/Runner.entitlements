@@ -7,5 +7,8 @@
 		<string>applinks:majidalbana.com</string>
 		<string>applinks:www.majidalbana.com</string>
 	</array>
+
+	<key>aps-environment</key>
+	<string>development</string>
 </dict>
 </plist>

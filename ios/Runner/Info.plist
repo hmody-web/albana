@@ -165,5 +165,11 @@
 
 <key>NSLocationWhenInUseUsageDescription</key>
 <string>يحتاج التطبيق إلى الوصول إلى موقعك أثناء استخدام التطبيق لتوفير الميزات التي تعتمد على الموقع.</string>
+
+<key>UIBackgroundModes</key>
+<array>
+	<string>remote-notification</string>
+</array>
+
 </dict>
 </plist>
