@@ -65,7 +65,7 @@ final isMobile = !kIsWeb &&
 
 if (isMobile) {
   FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
-  unawaited(FirebaseNotificationService.initialize());
+  await FirebaseNotificationService.initialize();
 }
 
   await SystemChrome.setPreferredOrientations([

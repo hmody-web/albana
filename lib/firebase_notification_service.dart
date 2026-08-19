@@ -185,8 +185,9 @@ class FirebaseNotificationService {
 
     try {
       await _setupLocalNotifications();
+      await _captureLocalNotificationLaunch();
       _listenToForegroundMessages();
-      unawaited(_listenToNotificationClicks());
+      await _listenToNotificationClicks();
       unawaited(_completeStartupNotificationWork());
     } catch (e) {
       debugPrint('FirebaseNotificationService initialize error: $e');
@@ -370,6 +371,38 @@ static Future<void> _completeStartupNotificationWork() async {
       }
     }
   }
+
+static Future<void> _captureLocalNotificationLaunch() async {
+  try {
+    final launchDetails =
+        await _localNotifications.getNotificationAppLaunchDetails();
+
+    if (launchDetails?.didNotificationLaunchApp != true) return;
+
+    final payload = launchDetails?.notificationResponse?.payload;
+    if (payload == null || payload.trim().isEmpty) {
+      _initialNotificationData ??= {'screen': 'posts'};
+      return;
+    }
+
+    try {
+      final decoded = jsonDecode(payload);
+      if (decoded is Map) {
+        _initialNotificationData ??= Map<String, dynamic>.from(decoded);
+      } else {
+        _initialNotificationData ??= {'screen': 'posts'};
+      }
+    } catch (_) {
+      _initialNotificationData ??= {'screen': 'posts'};
+    }
+
+    debugPrint(
+      'App launched from local notification: $_initialNotificationData',
+    );
+  } catch (e) {
+    debugPrint('Local notification launch details error: $e');
+  }
+}
 
 static Future<void> _setupLocalNotifications() async {
   const androidInit = AndroidInitializationSettings('@mipmap/ic_launcher');
@@ -651,7 +684,7 @@ if (android == null) return;
       debugPrint('Notification opened from terminated state');
       debugPrint('Initial message data: ${initialMessage.data}');
 
-      _initialNotificationData = initialMessage.data;
+      _initialNotificationData ??= initialMessage.data;
     }
   }
 }
