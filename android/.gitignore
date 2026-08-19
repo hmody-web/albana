@@ -1,14 +1,13 @@
-gradle-wrapper.jar
-/.gradle
+/.gradle/
+/.kotlin/
+/build/
 /captures/
-/gradlew
-/gradlew.bat
+.cxx/
+*.iml
 /local.properties
 GeneratedPluginRegistrant.java
-.cxx/
 
-# Remember to never publicly share your keystore.
-# See https://flutter.dev/to/reference-keystore
+# لا ترفع ملفات التوقيع للعامة. Google Play يعتمد عليها، لكن مكانها مو GitHub.
 key.properties
 **/*.keystore
 **/*.jks

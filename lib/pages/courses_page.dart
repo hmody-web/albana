@@ -354,12 +354,9 @@ class _CoursesPageState extends State<CoursesPage>
     CoursesPageDeepLinkBus.requestedScheduleId.addListener(_handleScheduleDeepLink);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      Future<void>.delayed(const Duration(milliseconds: 450), () {
-        if (!mounted) return;
-        _fetchVideos();
-        _fetchSchedule();
-        _handleScheduleDeepLink();
-      });
+      _fetchVideos();
+      _fetchSchedule();
+      _handleScheduleDeepLink();
     });
     // بدء المراقبة الخفية كل 8 ثواني
     _pollTimer = Timer.periodic(const Duration(seconds: 8), (_) {

@@ -582,17 +582,14 @@ bool _isSupervisor() {
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      Future<void>.delayed(const Duration(milliseconds: 350), () {
-        if (!mounted) return;
-        if (_files.isNotEmpty || _FilesPageMemory.didLoadOnce) {
-          _applyFilters();
-          _loading = false;
-          _restoreScrollPositionSoon();
-          _fetchFromNetwork(silent: true);
-        } else {
-          _initLoad();
-        }
-      });
+      if (_files.isNotEmpty || _FilesPageMemory.didLoadOnce) {
+        _applyFilters();
+        _loading = false;
+        _restoreScrollPositionSoon();
+        _fetchFromNetwork(silent: true);
+      } else {
+        _initLoad();
+      }
     });
 
     _refreshTimer = Timer.periodic(const Duration(seconds: 5), (_) {

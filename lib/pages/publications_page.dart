@@ -357,9 +357,7 @@ class _PublicationsPageState extends State<PublicationsPage> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       _onDeepLinkPostRequested();
-      Future<void>.delayed(const Duration(milliseconds: 300), () {
-        if (mounted) _initPosts();
-      });
+      _initPosts();
     });
   }
 

@@ -159,14 +159,22 @@ class FirebaseNotificationService {
     _initialized = true;
 
     try {
-      await _requestPermission();
       await _setupLocalNotifications();
-      await applySavedNotificationSubscriptions();
-      await _printFcmToken();
       _listenToForegroundMessages();
-      await _listenToNotificationClicks();
+      unawaited(_listenToNotificationClicks());
+      unawaited(_completeStartupNotificationWork());
     } catch (e) {
       debugPrint('FirebaseNotificationService initialize error: $e');
+    }
+  }
+
+  static Future<void> _completeStartupNotificationWork() async {
+    try {
+      await _requestPermission();
+      await applySavedNotificationSubscriptions();
+      await _printFcmToken();
+    } catch (e) {
+      debugPrint('FirebaseNotificationService background startup error: $e');
     }
   }
 

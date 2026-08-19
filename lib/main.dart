@@ -63,7 +63,7 @@ void main() async {
 
   if (isAndroid) {
     FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
-    await FirebaseNotificationService.initialize();
+    unawaited(FirebaseNotificationService.initialize());
   }
 
   await SystemChrome.setPreferredOrientations([
@@ -4028,11 +4028,8 @@ void initState() {
     _ctrl.forward();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      Future<void>.delayed(const Duration(milliseconds: 250), () {
-        if (!mounted) return;
-        _loadLatestHomeUpdates();
-        if (widget.isActive) _startLatestUpdatesTimer();
-      });
+      _loadLatestHomeUpdates();
+      if (widget.isActive) _startLatestUpdatesTimer();
     });
   }
 

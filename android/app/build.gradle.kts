@@ -24,10 +24,10 @@ android {
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
-    isCoreLibraryDesugaringEnabled = true
-    sourceCompatibility = JavaVersion.VERSION_17
-    targetCompatibility = JavaVersion.VERSION_17
-}
+        isCoreLibraryDesugaringEnabled = true
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
 
     kotlinOptions {
         jvmTarget = JavaVersion.VERSION_17.toString()
@@ -54,12 +54,8 @@ android {
 
     buildTypes {
         release {
-            signingConfig = if (hasReleaseKeystore) {
-                signingConfigs.getByName("release")
-            } else {
-                // فقط حتى لا يفشل البناء إذا لم تنشئ android/key.properties بعد.
-                // للروابط العميقة الحقيقية لازم تبني Release بشهادة upload-keystore.jks.
-                signingConfigs.getByName("debug")
+            if (hasReleaseKeystore) {
+                signingConfig = signingConfigs.getByName("release")
             }
         }
     }
