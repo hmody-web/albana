@@ -51,7 +51,6 @@ unless target
     config.build_settings['TARGETED_DEVICE_FAMILY'] = '1,2'
   end
 
-  runner.add_dependency(target)
 else
   puts 'NotificationService target already exists.'
 end
