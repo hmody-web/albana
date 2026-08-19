@@ -445,34 +445,18 @@ void _openCoursesPageFromNotification() {
     });
   }
 
-  void _openSharedFile(int fileId) {
-    _pendingFileId = fileId;
+void _openSharedFile(int fileId) {
+  if (!mounted || fileId <= 0) return;
 
-    if (!mounted) return;
-
-    if (_currentIndex != 1) {
-      _expandNavBar();
-      setState(() {
-        _currentIndex = 1;
-      });
-      if (_pageController.hasClients) {
-        _pageController.animateToPage(
-          1,
-          duration: const Duration(milliseconds: 280),
-          curve: Curves.easeOutCubic,
-        );
-      }
-    }
-
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      Future.delayed(const Duration(milliseconds: 360), () {
-        final id = _pendingFileId;
-        if (!mounted || id == null) return;
-        _pendingFileId = null;
-        FilesPageDeepLinkBus.openFile(id);
-      });
-    });
-  }
+  Navigator.of(context).push(
+    MaterialPageRoute(
+      builder: (_) => FileDirectPage(
+        fileId: fileId,
+        isDark: widget.isDark,
+      ),
+    ),
+  );
+}
 
   void _openSharedSchedule(String scheduleId) {
     final cleanedId = scheduleId.trim();
