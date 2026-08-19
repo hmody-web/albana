@@ -61,7 +61,7 @@ static const FirebaseOptions android = FirebaseOptions(
 );
   static const FirebaseOptions ios = FirebaseOptions(
     apiKey: 'AIzaSyACkgCBefJvqkkZh56fyw78PyQItqeF6fw',
-    appId: '1:14634099103:ios:67e4f078bed0395f3d1daa',
+    appId: '1:14634099103:ios:9b4b01c818f8c7b63d1daa',
     messagingSenderId: '14634099103',
     projectId: 'majidalbana-c2da3',
     storageBucket: 'majidalbana-c2da3.firebasestorage.app',

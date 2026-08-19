@@ -22,6 +22,31 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
 }
 
 class FirebaseNotificationService {
+  static Future<bool> _waitForApnsToken() async {
+  if (kIsWeb || defaultTargetPlatform != TargetPlatform.iOS) {
+    return true;
+  }
+
+  for (var i = 0; i < 20; i++) {
+    try {
+      final token = await _messaging.getAPNSToken();
+
+      if (token != null && token.isNotEmpty) {
+        debugPrint('APNS TOKEN READY: $token');
+        return true;
+      }
+    } catch (e) {
+      debugPrint('Waiting for APNS token: $e');
+    }
+
+    await Future<void>.delayed(
+      const Duration(milliseconds: 500),
+    );
+  }
+
+  debugPrint('APNS TOKEN NOT AVAILABLE');
+  return false;
+}
   FirebaseNotificationService._();
 
   static bool _initialized = false;
@@ -168,15 +193,37 @@ class FirebaseNotificationService {
     }
   }
 
-  static Future<void> _completeStartupNotificationWork() async {
-    try {
-      await _requestPermission();
-      await applySavedNotificationSubscriptions();
-      await _printFcmToken();
-    } catch (e) {
-      debugPrint('FirebaseNotificationService background startup error: $e');
+static Future<void> _completeStartupNotificationWork() async {
+  try {
+    final settings = await _requestPermission();
+
+    if (settings == null) {
+      debugPrint('Notification permission settings unavailable.');
+      return;
     }
+
+    final allowed =
+        settings.authorizationStatus == AuthorizationStatus.authorized ||
+        settings.authorizationStatus == AuthorizationStatus.provisional;
+
+    if (!allowed) {
+      debugPrint('Notifications are not authorized.');
+      return;
+    }
+
+    final apnsReady = await _waitForApnsToken();
+
+    if (!apnsReady) {
+      debugPrint('FCM startup stopped because APNS token is not ready.');
+      return;
+    }
+
+    await applySavedNotificationSubscriptions();
+    await _printFcmToken();
+  } catch (e) {
+    debugPrint('FirebaseNotificationService startup error: $e');
   }
+}
 
   static Future<NotificationSettings?> _requestPermission() async {
     try {
