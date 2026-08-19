@@ -41,6 +41,8 @@ unless target
     config.build_settings['PRODUCT_NAME'] = 'NotificationService'
     config.build_settings['PRODUCT_MODULE_NAME'] = 'NotificationService'
     config.build_settings['EXECUTABLE_NAME'] = '$(PRODUCT_NAME)'
+    config.build_settings['MARKETING_VERSION'] = '$(FLUTTER_BUILD_NAME)'
+    config.build_settings['CURRENT_PROJECT_VERSION'] = '$(FLUTTER_BUILD_NUMBER)'
     config.build_settings['INFOPLIST_FILE'] = 'NotificationService/Info.plist'
     config.build_settings['GENERATE_INFOPLIST_FILE'] = 'NO'
     config.build_settings['SWIFT_VERSION'] = '5.0'
