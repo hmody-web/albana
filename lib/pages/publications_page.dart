@@ -3049,6 +3049,7 @@ _onRealtimeUpdate();
         body: {
           'post_id': '${widget.post.id}',
           'user_email': user.email ?? '',
+          'user_name': (user.displayName ?? '').trim(),
         },
       ).timeout(const Duration(seconds: 15));
 
@@ -5709,29 +5710,45 @@ _onRealtimeUpdate();
     if (_targetCommentFocused || targetId == null || targetId <= 0) return;
     if (!_comments.any((comment) => comment.id == targetId)) return;
 
-    _targetCommentFocused = true;
-    setState(() => _highlightedCommentId = targetId);
-
+    // Cold-starts can restore cached comments before the comment widgets have
+    // actually been laid out. Retry until the target GlobalKey has a context;
+    // only then mark the navigation as completed.
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      Future<void>.delayed(const Duration(milliseconds: 120), () async {
-        if (!mounted) return;
-        final targetContext = _commentKeys[targetId]?.currentContext;
-        if (targetContext != null) {
-          await Scrollable.ensureVisible(
-            targetContext,
-            duration: const Duration(milliseconds: 650),
-            curve: Curves.easeOutCubic,
-            alignment: 0.28,
-          );
-        }
+      unawaited(_tryFocusTargetComment(targetId, 0));
+    });
+  }
 
-        _commentHighlightTimer?.cancel();
-        _commentHighlightTimer = Timer(const Duration(seconds: 2), () {
-          if (mounted && _highlightedCommentId == targetId) {
-            setState(() => _highlightedCommentId = null);
-          }
-        });
+  Future<void> _tryFocusTargetComment(int targetId, int attempt) async {
+    if (!mounted || _targetCommentFocused) return;
+
+    final targetContext = _commentKeys[targetId]?.currentContext;
+    if (targetContext == null) {
+      if (attempt >= 12) return;
+      await Future<void>.delayed(Duration(milliseconds: 90 + (attempt * 35)));
+      if (!mounted) return;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        unawaited(_tryFocusTargetComment(targetId, attempt + 1));
       });
+      return;
+    }
+
+    _targetCommentFocused = true;
+    if (_highlightedCommentId != targetId) {
+      setState(() => _highlightedCommentId = targetId);
+    }
+
+    await Scrollable.ensureVisible(
+      targetContext,
+      duration: const Duration(milliseconds: 650),
+      curve: Curves.easeOutCubic,
+      alignment: 0.28,
+    );
+
+    _commentHighlightTimer?.cancel();
+    _commentHighlightTimer = Timer(const Duration(seconds: 2), () {
+      if (mounted && _highlightedCommentId == targetId) {
+        setState(() => _highlightedCommentId = null);
+      }
     });
   }
 
@@ -5803,6 +5820,7 @@ _onRealtimeUpdate();
         body: {
           'post_id': '${widget.post.id}',
           'user_email': user.email ?? '',
+          'user_name': (user.displayName ?? '').trim(),
         },
       ).timeout(const Duration(seconds: 15));
 

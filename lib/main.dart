@@ -256,21 +256,45 @@ String? _pendingScheduleId;
     );
   }
 void _initNotificationClicks() {
-  final initialData = FirebaseNotificationService.consumeInitialNotificationData();
-
-  if (initialData != null) {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _openFromNotificationData(initialData);
-    });
-  }
-
+  // Listen first so a click that arrives during cold-start cannot be lost.
   _notificationClickSub =
       FirebaseNotificationService.notificationClicks.listen(_openFromNotificationData);
+
+  void drainInitialNotification() {
+    final initialData =
+        FirebaseNotificationService.consumeInitialNotificationData();
+    if (initialData != null && mounted) {
+      _openFromNotificationData(initialData);
+    }
+  }
+
+  WidgetsBinding.instance.addPostFrameCallback((_) {
+    drainInitialNotification();
+    // A second drain protects slower iOS cold-start handoff paths.
+    Future<void>.delayed(const Duration(milliseconds: 500), () {
+      if (mounted) drainInitialNotification();
+    });
+  });
 }
 
 void _openFromNotificationData(Map<String, dynamic> data) {
   final screen = '${data['screen'] ?? ''}'.toLowerCase().trim();
   final type = '${data['type'] ?? ''}'.toLowerCase().trim();
+
+  if (type == 'new_post_like') {
+    final postId = int.tryParse('${data['post_id'] ?? data['postId'] ?? ''}');
+    if (postId != null && postId > 0) {
+      Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => PublicationDirectPage(
+            postId: postId,
+            isDark: widget.isDark,
+          ),
+        ),
+      );
+      return;
+    }
+  }
 
   if (type == 'new_post_comment') {
     final postId = int.tryParse('${data['post_id'] ?? data['postId'] ?? ''}');

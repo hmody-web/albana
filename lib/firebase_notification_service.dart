@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:firebase_core/firebase_core.dart';
@@ -9,6 +10,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:http/http.dart' as http;
+import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'firebase_options.dart';
@@ -511,6 +513,7 @@ static Future<void> _setupLocalNotifications() async {
     final topic = '${message.data['notification_topic'] ?? message.data['topic'] ?? ''}'.toLowerCase().trim();
     if (topic == _supervisorsTopic ||
         type == 'new_post_comment' ||
+        type == 'new_post_like' ||
         type == 'new_registration') {
       return _isSupervisorEmail(FirebaseAuth.instance.currentUser?.email);
     }
@@ -609,43 +612,61 @@ static Future<void> _setupLocalNotifications() async {
         return;
       }
 
-final notification = message.notification;
+      final notification = message.notification;
+      final title = notification?.title ??
+          message.data['title']?.toString() ??
+          'د. ماجد البنا';
+      final body = notification?.body ??
+          message.data['body']?.toString() ??
+          message.data['message']?.toString() ??
+          '';
+      final imageUrl = message.data['image_url']?.toString() ??
+          notification?.android?.imageUrl;
+      final notificationId = message.messageId?.hashCode ??
+          Object.hash(title, body, DateTime.now().millisecondsSinceEpoch);
 
-if (notification == null) return;
+      // Always create a local foreground notification. iOS/Android do not
+      // consistently present a remote notification while the app is active.
+      if (defaultTargetPlatform == TargetPlatform.iOS) {
+        final attachmentPath = await _downloadNotificationImageToTempFile(imageUrl);
+        final iosDetails = DarwinNotificationDetails(
+          presentAlert: true,
+          presentBadge: true,
+          presentSound: true,
+          presentBanner: true,
+          presentList: true,
+          attachments: attachmentPath == null
+              ? null
+              : <DarwinNotificationAttachment>[
+                  DarwinNotificationAttachment(attachmentPath),
+                ],
+        );
 
-if (defaultTargetPlatform == TargetPlatform.iOS) {
-  await _localNotifications.show(
-    notification.hashCode,
-    notification.title,
-    notification.body,
-    const NotificationDetails(
-      iOS: DarwinNotificationDetails(
-        presentAlert: true,
-        presentBadge: true,
-        presentSound: true,
-      ),
-    ),
-    payload: jsonEncode(message.data),
-  );
-  return;
-}
+        await _localNotifications.show(
+          notificationId,
+          title,
+          body,
+          NotificationDetails(iOS: iosDetails),
+          payload: jsonEncode(message.data),
+        );
+        return;
+      }
 
-final android = message.notification?.android;
-if (android == null) return;
+      if (defaultTargetPlatform == TargetPlatform.android) {
+        final androidDetails = await _buildAndroidNotificationDetails(
+          title: title,
+          body: body,
+          imageUrl: imageUrl,
+        );
 
-      final androidDetails = await _buildAndroidNotificationDetails(
-        title: notification.title,
-        body: notification.body,
-        imageUrl: message.data['image_url']?.toString(),
-      );
-
-      await _localNotifications.show(
-        notification.hashCode,
-        notification.title,
-        notification.body,
-        NotificationDetails(android: androidDetails),
-        payload: jsonEncode(message.data),
-      );
+        await _localNotifications.show(
+          notificationId,
+          title,
+          body,
+          NotificationDetails(android: androidDetails),
+          payload: jsonEncode(message.data),
+        );
+      }
     });
   }
 
@@ -705,6 +726,37 @@ if (android == null) return;
     }
 
     return null;
+  }
+
+  static Future<String?> _downloadNotificationImageToTempFile(
+    String? imageUrl,
+  ) async {
+    if (imageUrl == null || imageUrl.trim().isEmpty) return null;
+
+    final uri = Uri.tryParse(imageUrl.trim());
+    if (uri == null || !uri.hasScheme || uri.host.isEmpty) return null;
+
+    try {
+      final response = await http.get(uri).timeout(const Duration(seconds: 6));
+      if (response.statusCode < 200 || response.statusCode >= 300) return null;
+
+      final tempDir = await getTemporaryDirectory();
+      var extension = uri.pathSegments.isNotEmpty
+          ? uri.pathSegments.last.split('.').last.toLowerCase()
+          : 'jpg';
+      if (!{'jpg', 'jpeg', 'png', 'gif', 'webp', 'heic', 'heif'}.contains(extension)) {
+        extension = 'jpg';
+      }
+
+      final file = File(
+        '${tempDir.path}/notification_${DateTime.now().microsecondsSinceEpoch}.$extension',
+      );
+      await file.writeAsBytes(response.bodyBytes, flush: true);
+      return file.path;
+    } catch (e) {
+      debugPrint('iOS foreground notification image error: $e');
+      return null;
+    }
   }
 
   static Future<void> _listenToNotificationClicks() async {
