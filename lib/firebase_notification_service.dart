@@ -55,6 +55,7 @@ class FirebaseNotificationService {
   static bool _initialized = false;
   static StreamSubscription<User?>? _authSubscription;
   static const String _supervisorsTopic = 'supervisors';
+  static const String _allUsersTopic = 'all_users';
 
   static bool _isSupervisorEmail(String? email) {
     final clean = email?.trim().toLowerCase();
@@ -133,6 +134,7 @@ class FirebaseNotificationService {
 
   static Map<String, List<String>> get _topicsByPreferenceKey {
     final map = <String, List<String>>{
+      generalNotificationsKey: [_allUsersTopic],
       postsNotificationsKey: ['posts'],
       lecturesNotificationsKey: ['lectures'],
     };
