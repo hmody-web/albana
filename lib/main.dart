@@ -343,6 +343,11 @@ void _openFromNotificationData(Map<String, dynamic> data) {
     return;
   }
 
+  if (screen == 'home' || screen == 'main') {
+    _openHomePageFromNotification();
+    return;
+  }
+
   if (screen == 'courses') {
     _openCoursesPageFromNotification();
     return;
@@ -409,6 +414,26 @@ void _openFilesPageFromNotification() {
   if (_pageController.hasClients) {
     _pageController.animateToPage(
       1,
+      duration: const Duration(milliseconds: 280),
+      curve: Curves.easeOutCubic,
+    );
+  }
+}
+void _openHomePageFromNotification() {
+  if (!mounted) return;
+
+  if (_currentIndex == 2) {
+    return;
+  }
+
+  _expandNavBar();
+  setState(() {
+    _currentIndex = 2;
+  });
+
+  if (_pageController.hasClients) {
+    _pageController.animateToPage(
+      2,
       duration: const Duration(milliseconds: 280),
       curve: Curves.easeOutCubic,
     );
