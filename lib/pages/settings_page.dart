@@ -10,6 +10,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../firebase_notification_service.dart';
 import '../services/app_auth_service.dart';
+import '../services/app_notice.dart';
 import '../widgets/shared_widgets.dart';
 
 SystemUiOverlayStyle settingsSystemUiOverlayStyle(bool isDark) {
@@ -94,7 +95,7 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
     try {
       await AppAuthService.signInWithGoogle();
     } catch (e) {
-      messenger.showSnackBar(SnackBar(content: Text('فشل تسجيل الدخول: $e')));
+      AppNotice.showSnackBar(context, const SnackBar(content: Text('تعذر تسجيل الدخول. حاول مرة أخرى.')));
     }
   }
 
@@ -103,7 +104,7 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
     try {
       await AppAuthService.signInWithApple();
     } catch (e) {
-      messenger.showSnackBar(SnackBar(content: Text('فشل تسجيل الدخول بواسطة Apple: $e')));
+      AppNotice.showSnackBar(context, const SnackBar(content: Text('تعذر تسجيل الدخول. حاول مرة أخرى.')));
     }
   }
 
@@ -113,7 +114,7 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
     final uri = Uri.parse(rawUrl);
     if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
+      AppNotice.showSnackBar(context, 
         const SnackBar(content: Text('تعذر فتح الرابط')),
       );
     }
@@ -129,7 +130,7 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
     );
     if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
+      AppNotice.showSnackBar(context, 
         const SnackBar(content: Text('تعذر فتح البريد الإلكتروني')),
       );
     }
@@ -396,7 +397,7 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
   Future<void> _deleteAccountCompletely() async {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
+      AppNotice.showSnackBar(context, 
         const SnackBar(content: Text('يجب تسجيل الدخول أولاً.')),
       );
       return;
@@ -421,12 +422,12 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
       await AppAuthService.signOut();
 
       if (!mounted) return;
-      messenger.showSnackBar(
+      AppNotice.showSnackBar(context, 
         const SnackBar(content: Text('تم حذف بيانات الحساب بنجاح.')),
       );
     } catch (e) {
       if (!mounted) return;
-      messenger.showSnackBar(
+      AppNotice.showSnackBar(context, 
         SnackBar(content: Text('تعذر حذف الحساب: $e')),
       );
     } finally {
@@ -471,7 +472,7 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
     if (!opened) {
       final allowed = await FirebaseNotificationService.requestNotificationPermission();
       if (!allowed && mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
+        AppNotice.showSnackBar(context, 
           const SnackBar(
             content: Text('الإشعارات غير مفعلة من إعدادات النظام. فعّلها من إعدادات التطبيق.'),
           ),
@@ -1239,7 +1240,7 @@ class _ModernLoginCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final loggedIn = user != null;
     final isApple = AppAuthService.isAppleUser(user);
-    final title = loggedIn ? (user!.displayName?.trim().isNotEmpty == true ? user!.displayName! : 'مستخدم') : 'مرحباً بك';
+    final title = loggedIn ? (AppAuthService.displayNameFor(user)) : 'مرحباً بك';
     final subtitle = loggedIn ? (user!.email ?? (isApple ? 'حساب Apple' : 'حساب Google')) : 'سجّل الدخول للاستفادة من مزايا المنصة';
     final role = loggedIn ? (isSupervisor ? 'مشرف' : 'عضو') : (showAppleLogin ? 'Google أو Apple' : 'Google');
 
@@ -1740,7 +1741,7 @@ class _NotificationsSettingsPageState extends State<_NotificationsSettingsPage>
     if (!opened) {
       final allowed = await FirebaseNotificationService.requestNotificationPermission();
       if (!allowed && mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
+        AppNotice.showSnackBar(context, 
           const SnackBar(
             content: Text('الإشعارات غير مفعلة من إعدادات النظام. فعّلها من إعدادات التطبيق.'),
           ),
@@ -1807,7 +1808,7 @@ class _NotificationsSettingsPageState extends State<_NotificationsSettingsPage>
       } catch (_) {
         if (!mounted) return;
         setState(() => _prefs = previousPrefs);
-        ScaffoldMessenger.of(context).showSnackBar(
+        AppNotice.showSnackBar(context, 
           const SnackBar(content: Text('تعذر تحديث إعدادات الإشعارات. تأكد من الاتصال ثم حاول مجدداً.')),
         );
       } finally {
@@ -2093,7 +2094,7 @@ class _FileNotificationsSettingsPageState extends State<_FileNotificationsSettin
       } catch (_) {
         if (!mounted) return;
         setState(() => _prefs = previousPrefs);
-        ScaffoldMessenger.of(context).showSnackBar(
+        AppNotice.showSnackBar(context, 
           const SnackBar(content: Text('تعذر تحديث إشعارات الملفات. حاول مرة أخرى.')),
         );
       } finally {

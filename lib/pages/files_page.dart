@@ -10,6 +10,7 @@ import 'package:flutter_pdfview/flutter_pdfview.dart';
 import 'package:file_picker/file_picker.dart';
 import '../widgets/shared_widgets.dart';
 import '../services/app_auth_service.dart';
+import '../services/app_notice.dart';
 import 'package:http/http.dart' as http;
 import 'package:flutter/gestures.dart';
 import 'package:share_plus/share_plus.dart';
@@ -264,7 +265,7 @@ class _FileDirectPageState extends State<FileDirectPage> {
   void _showDownloadSnack({required String message, required bool success}) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).hideCurrentSnackBar();
-    ScaffoldMessenger.of(context).showSnackBar(
+    AppNotice.showSnackBar(context, 
       SnackBar(
         behavior: SnackBarBehavior.floating,
         backgroundColor: success ? const Color(0xFF1B8F4D) : const Color(0xFFB3261E),
@@ -861,9 +862,7 @@ bool _isSupervisor() {
     required bool success,
   }) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
+    AppNotice.showSnackBar(context, 
         SnackBar(
           elevation: 0,
           behavior: SnackBarBehavior.floating,
@@ -1045,7 +1044,7 @@ bool _isSupervisor() {
     if (!mounted) return;
 
     if (file == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
+      AppNotice.showSnackBar(context, 
         const SnackBar(
           content: Text(
             'تعذر فتح الملف المطلوب',
@@ -4118,10 +4117,11 @@ class _PdfCommentsSectionState extends State<_PdfCommentsSection> {
                     onTap: () async {
                       Navigator.pop(sheetContext);
                       try {
-                        await AppAuthService.signInWithApple();
+                        final result = await AppAuthService.signInWithApple();
+                        if (result == null) return;
                         if (mounted) setState(() {});
                       } catch (_) {
-                        if (mounted) _showSnack('تعذر تسجيل الدخول بواسطة Apple.', success: false);
+                        if (mounted) _showSnack('تعذر تسجيل الدخول.', success: false);
                       }
                     },
                   ),
@@ -4135,10 +4135,11 @@ class _PdfCommentsSectionState extends State<_PdfCommentsSection> {
                   onTap: () async {
                     Navigator.pop(sheetContext);
                     try {
-                      await AppAuthService.signInWithGoogle();
+                      final result = await AppAuthService.signInWithGoogle();
+                      if (result == null) return;
                       if (mounted) setState(() {});
                     } catch (_) {
-                      if (mounted) _showSnack('تعذر تسجيل الدخول بواسطة Google.', success: false);
+                      if (mounted) _showSnack('تعذر تسجيل الدخول.', success: false);
                     }
                   },
                 ),
@@ -4211,9 +4212,9 @@ class _PdfCommentsSectionState extends State<_PdfCommentsSection> {
         Uri.parse(_addUrl),
         body: {
           'pdf_id': '${widget.fileId}',
-          'user_name': (user.displayName ?? user.email ?? 'مستخدم').trim(),
+          'user_name': AppAuthService.displayNameFor(user),
           'user_avatar': (user.photoURL ?? '').trim(),
-          'user_email': (user.email ?? '').trim(),
+          'user_email': AppAuthService.userIdentity(user),
           'comment_text': text,
         },
       ).timeout(const Duration(seconds: 15));
@@ -4323,8 +4324,9 @@ class _PdfCommentsSectionState extends State<_PdfCommentsSection> {
     final newText = result?.trim() ?? '';
     if (newText.isEmpty || newText == comment.text) return;
 
-    final email = FirebaseAuth.instance.currentUser?.email?.trim() ?? '';
-    if (email.isEmpty) return;
+    final currentUser = FirebaseAuth.instance.currentUser;
+    if (currentUser == null) return;
+    final email = AppAuthService.userIdentity(currentUser);
 
     try {
       final response = await http.post(
@@ -4371,7 +4373,9 @@ class _PdfCommentsSectionState extends State<_PdfCommentsSection> {
     );
     if (confirm != true) return;
 
-    final email = FirebaseAuth.instance.currentUser?.email?.trim() ?? '';
+    final currentUser = FirebaseAuth.instance.currentUser;
+    if (currentUser == null) return;
+    final email = AppAuthService.userIdentity(currentUser);
     try {
       final response = await http.post(
         Uri.parse(_deleteUrl),
@@ -4405,9 +4409,7 @@ class _PdfCommentsSectionState extends State<_PdfCommentsSection> {
 
   void _showSnack(String message, {required bool success}) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
+    AppNotice.showSnackBar(context, 
         SnackBar(
           behavior: SnackBarBehavior.floating,
           elevation: 0,
@@ -4439,7 +4441,7 @@ class _PdfCommentsSectionState extends State<_PdfCommentsSection> {
     final textSub = widget.isDark ? Colors.white70 : Colors.black54;
     final inputBg = widget.isDark ? const Color(0xFF171717) : const Color(0xFFF8F6F0);
     final currentUser = FirebaseAuth.instance.currentUser;
-    final currentUserName = (currentUser?.displayName ?? currentUser?.email ?? 'مستخدم').trim();
+    final currentUserName = AppAuthService.displayNameFor(currentUser);
     final currentUserAvatar = (currentUser?.photoURL ?? '').trim();
 
     return _DetailSectionCard(
@@ -4509,7 +4511,8 @@ class _PdfCommentsSectionState extends State<_PdfCommentsSection> {
                             separatorBuilder: (_, __) => const SizedBox(height: 10),
                             itemBuilder: (context, index) {
                               final comment = _comments[index];
-                              final currentEmail = FirebaseAuth.instance.currentUser?.email?.trim().toLowerCase() ?? '';
+                              final currentUser = FirebaseAuth.instance.currentUser;
+                              final currentEmail = currentUser == null ? '' : AppAuthService.userIdentity(currentUser).trim().toLowerCase();
                               final ownsComment = currentEmail.isNotEmpty && currentEmail == comment.userEmail.trim().toLowerCase();
                               return _PdfCommentBubble(
                                 comment: comment,
@@ -4914,9 +4917,7 @@ class _PdfBrowserPageState extends State<_PdfBrowserPage> {
 
   void _showViewerSnack({required String message, required bool success}) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
+    AppNotice.showSnackBar(context, 
         SnackBar(
           elevation: 0,
           behavior: SnackBarBehavior.floating,
@@ -5592,7 +5593,7 @@ class _AdminPdfPublishBoxState extends State<_AdminPdfPublishBox> {
 
   void _showSnack(String msg, {bool success = false}) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+    AppNotice.showSnackBar(context, SnackBar(
       content: Text(msg, textDirection: TextDirection.rtl,
           style: const TextStyle(fontWeight: FontWeight.w600)),
       backgroundColor: success ? const Color(0xFF2E7D32) : Colors.red.shade700,
@@ -5963,7 +5964,7 @@ class _EditPdfSheetState extends State<_EditPdfSheet> {
 
   void _showSnack(String msg, {bool success = false}) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+    AppNotice.showSnackBar(context, SnackBar(
       content: Text(msg, textDirection: TextDirection.rtl, style: const TextStyle(fontWeight: FontWeight.w600)),
       backgroundColor: success ? const Color(0xFF2E7D32) : Colors.red.shade700,
       behavior: SnackBarBehavior.floating,

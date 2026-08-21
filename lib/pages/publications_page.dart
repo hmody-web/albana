@@ -15,6 +15,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:path_provider/path_provider.dart';
 import '../widgets/shared_widgets.dart';
 import '../services/app_auth_service.dart';
+import '../services/app_notice.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:visibility_detector/visibility_detector.dart';
 import 'package:provider/provider.dart';
@@ -647,7 +648,7 @@ class _PublicationsPageState extends State<PublicationsPage> {
     if (!mounted) return;
 
     if (post == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
+      AppNotice.showSnackBar(context, 
         const SnackBar(
           content: Text(
             'تعذر فتح المنشور من الرابط',
@@ -1899,7 +1900,7 @@ class _AdminPublishBoxState extends State<_AdminPublishBox> {
 
   void _showSnack(String msg, {bool success = false}) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+    AppNotice.showSnackBar(context, SnackBar(
       content: Text(msg,
           textDirection: TextDirection.rtl,
           style: const TextStyle(fontWeight: FontWeight.w600)),
@@ -2726,7 +2727,7 @@ Future<void> _sharePublicationPost(
     } catch (_) {}
 
     try {
-      ScaffoldMessenger.of(context).showSnackBar(
+      AppNotice.showSnackBar(context, 
         const SnackBar(
           content: Text(
             'تعذر فتح نافذة المشاركة، تم نسخ الرابط',
@@ -2748,6 +2749,7 @@ class _Comment {
   final int postId;
   final String userName;
   final String userAvatar;
+  final String userEmail;
   final String text;
   final String createdAt;
 
@@ -2756,6 +2758,7 @@ class _Comment {
     required this.postId,
     required this.userName,
     required this.userAvatar,
+    required this.userEmail,
     required this.text,
     required this.createdAt,
   });
@@ -2766,6 +2769,7 @@ class _Comment {
       postId: int.tryParse('${json['post_id'] ?? 0}') ?? 0,
       userName: '${json['user_name'] ?? 'مستخدم'}',
       userAvatar: '${json['user_avatar'] ?? ''}',
+      userEmail: '${json['user_email'] ?? ''}',
       text: '${json['comment_text'] ?? ''}',
       createdAt: '${json['created_at'] ?? ''}',
     );
@@ -2776,6 +2780,7 @@ class _Comment {
     'post_id': postId,
     'user_name': userName,
     'user_avatar': userAvatar,
+    'user_email': userEmail,
     'comment_text': text,
     'created_at': createdAt,
   };
@@ -2952,7 +2957,7 @@ _onRealtimeUpdate();
   Future<void> _loadLikes() async {
     try {
       final user = FirebaseAuth.instance.currentUser;
-      final email = user?.email ?? '';
+      final email = user == null ? '' : AppAuthService.userIdentity(user);
       final uri = Uri.parse(_getLikesApi).replace(queryParameters: {
         'post_id': '${widget.post.id}',
         if (email.isNotEmpty) 'user_email': email,
@@ -2986,7 +2991,7 @@ _onRealtimeUpdate();
   Future<void> _silentReloadLikes() async {
     try {
       final user = FirebaseAuth.instance.currentUser;
-      final email = user?.email ?? '';
+      final email = user == null ? '' : AppAuthService.userIdentity(user);
       final uri = Uri.parse(_getLikesApi).replace(queryParameters: {
         'post_id': '${widget.post.id}',
         if (email.isNotEmpty) 'user_email': email,
@@ -3021,7 +3026,7 @@ _onRealtimeUpdate();
     if (_likeLoading) return;
 
     final user = FirebaseAuth.instance.currentUser;
-    if (user == null || (user.email ?? '').isEmpty) {
+    if (user == null) {
       _showLoginSheet();
       return;
     }
@@ -3048,8 +3053,8 @@ _onRealtimeUpdate();
         Uri.parse(_toggleLikeApi),
         body: {
           'post_id': '${widget.post.id}',
-          'user_email': user.email ?? '',
-          'user_name': (user.displayName ?? '').trim(),
+          'user_email': AppAuthService.userIdentity(user),
+          'user_name': AppAuthService.displayNameFor(user),
         },
       ).timeout(const Duration(seconds: 15));
 
@@ -3218,10 +3223,10 @@ Future<void> _loadComments() async {
         Uri.parse(_addCommentApi),
         body: {
           'post_id': '${widget.post.id}',
-          'user_name': user.displayName ?? 'مستخدم',
+          'user_name': AppAuthService.displayNameFor(user),
           'user_avatar': user.photoURL ?? '',
           'comment_text': text,
-          'user_email': user.email ?? '',
+          'user_email': AppAuthService.userIdentity(user),
         },
       ).timeout(const Duration(seconds: 15));
 
@@ -3240,7 +3245,7 @@ Future<void> _loadComments() async {
       print('ERROR: $e');
       print('STACK: $stack');
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        AppNotice.showSnackBar(context, SnackBar(
           content: Text('خطأ: $e',
               textDirection: TextDirection.rtl,
               style: const TextStyle(fontWeight: FontWeight.w600)),
@@ -3266,7 +3271,7 @@ Future<void> _editComment(int commentId, String newText) async {
         body: {
           'comment_id': '$commentId',
           'comment_text': newText,
-          'user_email': user.email ?? '',
+          'user_email': AppAuthService.userIdentity(user),
         },
       ).timeout(const Duration(seconds: 15));
       debugPrint('### EDIT STATUS: ${res.statusCode} ###');
@@ -3283,6 +3288,7 @@ Future<void> _editComment(int commentId, String newText) async {
                 postId: _comments[idx].postId,
                 userName: _comments[idx].userName,
                 userAvatar: _comments[idx].userAvatar,
+                userEmail: _comments[idx].userEmail,
                 text: newText,
                 createdAt: _comments[idx].createdAt,
               );
@@ -3307,7 +3313,7 @@ Future<void> _editComment(int commentId, String newText) async {
         Uri.parse('https://majidalbana.com/admin/comments/delete_comment.php'),
         body: {
           'comment_id': '$commentId',
-          'user_email': user.email ?? '',
+          'user_email': AppAuthService.userIdentity(user),
         },
       ).timeout(const Duration(seconds: 15));
       if (!mounted) return;
@@ -4780,8 +4786,10 @@ class _CommentTileState extends State<_CommentTile> {
   bool get _isOwner {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) return false;
-    return user.displayName == widget.comment.userName ||
-        user.email == widget.comment.userName;
+    final identity = AppAuthService.userIdentity(user).trim().toLowerCase();
+    final commentEmail = widget.comment.userEmail.trim().toLowerCase();
+    if (commentEmail.isNotEmpty && identity == commentEmail) return true;
+    return AppAuthService.displayNameFor(user).trim() == widget.comment.userName.trim();
   }
 
   @override
@@ -5074,7 +5082,11 @@ class _LoginSheetState extends State<_LoginSheet> {
   Future<void> _signInWithApple() async {
     setState(() { _loading = true; _error = null; });
     try {
-      await AppAuthService.signInWithApple();
+      final result = await AppAuthService.signInWithApple();
+      if (result == null) {
+        if (mounted) setState(() => _loading = false);
+        return;
+      }
       if (mounted) widget.onLoggedIn();
     } catch (e) {
       if (!mounted) return;
@@ -5657,7 +5669,7 @@ _onRealtimeUpdate();
   Future<void> _silentRefresh() async {
     try {
       final user = FirebaseAuth.instance.currentUser;
-      final email = user?.email ?? '';
+      final email = user == null ? '' : AppAuthService.userIdentity(user);
 
       // تحديث الإعجابات
       final likeUri = Uri.parse(_getLikesApi).replace(queryParameters: {
@@ -5752,7 +5764,7 @@ _onRealtimeUpdate();
   Future<void> _loadLikes() async {
     try {
       final user = FirebaseAuth.instance.currentUser;
-      final email = user?.email ?? '';
+      final email = user == null ? '' : AppAuthService.userIdentity(user);
       final uri = Uri.parse(_getLikesApi).replace(queryParameters: {
         'post_id': '${widget.post.id}',
         if (email.isNotEmpty) 'user_email': email,
@@ -5788,7 +5800,7 @@ _onRealtimeUpdate();
     if (_likeLoading) return;
 
     final user = FirebaseAuth.instance.currentUser;
-    if (user == null || (user.email ?? '').isEmpty) {
+    if (user == null) {
       _showLoginSheet();
       return;
     }
@@ -5816,8 +5828,8 @@ _onRealtimeUpdate();
         Uri.parse(_toggleLikeApi),
         body: {
           'post_id': '${widget.post.id}',
-          'user_email': user.email ?? '',
-          'user_name': (user.displayName ?? '').trim(),
+          'user_email': AppAuthService.userIdentity(user),
+          'user_name': AppAuthService.displayNameFor(user),
         },
       ).timeout(const Duration(seconds: 15));
 
@@ -5898,10 +5910,10 @@ Future<void> _sendComment() async {
         Uri.parse(_addCommentApi),
         body: {
           'post_id': '${widget.post.id}',
-          'user_name': user.displayName ?? 'مستخدم',
+          'user_name': AppAuthService.displayNameFor(user),
           'user_avatar': user.photoURL ?? '',
           'comment_text': text,
-          'user_email': user.email ?? '',
+          'user_email': AppAuthService.userIdentity(user),
         },
       ).timeout(const Duration(seconds: 15));
 
@@ -5922,7 +5934,7 @@ if (res.statusCode == 200) {
   await _loadComments();
 } else {
           if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            AppNotice.showSnackBar(context, SnackBar(
               content: Text(
                 'فشل إرسال التعليق: ${data['error'] ?? 'خطأ غير معروف'}',
                 textDirection: TextDirection.rtl,
@@ -5951,7 +5963,7 @@ Future<void> _editComment(int commentId, String newText) async {
         body: {
           'comment_id': '$commentId',
           'comment_text': newText,
-          'user_email': user.email ?? '',
+          'user_email': AppAuthService.userIdentity(user),
         },
       ).timeout(const Duration(seconds: 15));
       if (!mounted) return;
@@ -5972,7 +5984,7 @@ Future<void> _editComment(int commentId, String newText) async {
         Uri.parse(_deleteCommentApi),
         body: {
           'comment_id': '$commentId',
-          'user_email': user.email ?? '',
+          'user_email': AppAuthService.userIdentity(user),
         },
       ).timeout(const Duration(seconds: 15));
       if (!mounted) return;
@@ -6388,8 +6400,10 @@ class _CommentBubbleState extends State<_CommentBubble> {
   bool get _isOwner {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) return false;
-    return user.displayName == widget.comment.userName ||
-        user.email == widget.comment.userName;
+    final identity = AppAuthService.userIdentity(user).trim().toLowerCase();
+    final commentEmail = widget.comment.userEmail.trim().toLowerCase();
+    if (commentEmail.isNotEmpty && identity == commentEmail) return true;
+    return AppAuthService.displayNameFor(user).trim() == widget.comment.userName.trim();
   }
 
   @override
@@ -6747,7 +6761,7 @@ class _EditPostSheetState extends State<_EditPostSheet> {
   void _showSnack(String msg, {bool success = false}) {
     
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+    AppNotice.showSnackBar(context, SnackBar(
       content: Text(msg,
           textDirection: TextDirection.rtl,
           style: const TextStyle(fontWeight: FontWeight.w600)),

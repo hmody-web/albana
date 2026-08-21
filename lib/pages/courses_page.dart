@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../services/app_notice.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:url_launcher/url_launcher.dart';
@@ -210,7 +211,7 @@ Future<void> _openRegistrationsPdfInsideApp(
   String archiveLabel = '',
 }) async {
   if (registrations.isEmpty) {
-    ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+    AppNotice.showSnackBar(context, 
       const SnackBar(content: Text('لا توجد بيانات لإنشاء ملف PDF.')),
     );
     return;
@@ -228,7 +229,7 @@ Future<void> _openRegistrationsPdfInsideApp(
       onLayout: (_) async => bytes,
     );
   } catch (_) {
-    ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+    AppNotice.showSnackBar(context, 
       const SnackBar(content: Text('تعذر إنشاء ملف PDF داخل التطبيق.')),
     );
   }
@@ -907,7 +908,7 @@ Future<void> _openPlainUrl(BuildContext context, String rawUrl) async {
   final uri = _safeUrl(rawUrl);
 
   if (uri == null) {
-    ScaffoldMessenger.of(context).showSnackBar(
+    AppNotice.showSnackBar(context, 
       const SnackBar(content: Text('رابط الموقع غير موجود')),
     );
     return;
@@ -916,13 +917,13 @@ Future<void> _openPlainUrl(BuildContext context, String rawUrl) async {
   try {
     final opened = await launchUrl(uri, mode: LaunchMode.platformDefault);
     if (!opened && context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
+      AppNotice.showSnackBar(context, 
         const SnackBar(content: Text('تعذر فتح الرابط')),
       );
     }
   } catch (_) {
     if (!context.mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
+    AppNotice.showSnackBar(context, 
       const SnackBar(content: Text('تعذر فتح الرابط')),
     );
   }
@@ -953,7 +954,7 @@ Future<void> _openLectureLocationUrl(BuildContext context, String rawUrl) async 
   final uri = _safeUrl(rawUrl);
 
   if (uri == null) {
-    ScaffoldMessenger.of(context).showSnackBar(
+    AppNotice.showSnackBar(context, 
       const SnackBar(content: Text('رابط المحاضرة غير موجود')),
     );
     return;
@@ -966,7 +967,7 @@ Future<void> _openLectureLocationUrl(BuildContext context, String rawUrl) async 
       : await _tryOpenUrl(uri, LaunchMode.externalApplication);
 
   if (!opened && context.mounted) {
-    ScaffoldMessenger.of(context).showSnackBar(
+    AppNotice.showSnackBar(context, 
       const SnackBar(content: Text('تعذر فتح رابط المحاضرة')),
     );
   }
@@ -1348,13 +1349,13 @@ class _CourseGroupsJoinCard extends StatelessWidget {
     try {
       final opened = await launchUrl(uri, mode: LaunchMode.externalApplication);
       if (!opened && context.mounted) {
-        ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+        AppNotice.showSnackBar(context, 
           const SnackBar(content: Text('تعذر فتح رابط المجموعة حالياً.')),
         );
       }
     } catch (_) {
       if (context.mounted) {
-        ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+        AppNotice.showSnackBar(context, 
           const SnackBar(content: Text('تعذر فتح رابط المجموعة حالياً.')),
         );
       }
@@ -1945,7 +1946,7 @@ class _RegistrationFormPageState extends State<RegistrationFormPage> {
 
   void _toast(String msg) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+    AppNotice.showSnackBar(context, SnackBar(content: Text(msg)));
   }
 
   Future<void> _pickPhoto() async {
@@ -3032,7 +3033,7 @@ Future<void> _renameArchive(Map<String, dynamic> archive) async {
 
     if (!mounted) return;
 
-    ScaffoldMessenger.of(context).showSnackBar(
+    AppNotice.showSnackBar(context, 
       const SnackBar(content: Text('تم تعديل اسم الأرشيف بنجاح.')),
     );
 
@@ -3040,7 +3041,7 @@ Future<void> _renameArchive(Map<String, dynamic> archive) async {
   } catch (e) {
     if (!mounted) return;
 
-    ScaffoldMessenger.of(context).showSnackBar(
+    AppNotice.showSnackBar(context, 
       SnackBar(content: Text('تعذر تعديل اسم الأرشيف: $e')),
     );
   }
@@ -3069,11 +3070,11 @@ Future<void> _renameArchive(Map<String, dynamic> archive) async {
     try {
       await _postArchiveAction({'action': 'archive_delete', 'archive_name': name});
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تم حذف الأرشيف بنجاح.')));
+      AppNotice.showSnackBar(context, const SnackBar(content: Text('تم حذف الأرشيف بنجاح.')));
       await _loadArchives();
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('تعذر حذف الأرشيف: $e')));
+      AppNotice.showSnackBar(context, SnackBar(content: Text('تعذر حذف الأرشيف: $e')));
     }
   }
 
@@ -3531,7 +3532,7 @@ class _AttendancePageState extends State<AttendancePage> {
 
   void _toast(String msg) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+    AppNotice.showSnackBar(context, SnackBar(content: Text(msg)));
   }
 
   String _attendanceCacheKey(String scheduleId) => 'attendance_cache_v3_$scheduleId';
@@ -4203,7 +4204,7 @@ class _AdminAddBoxState extends State<_AdminAddBox>
         _dayCtrl.text.isEmpty ||
         _timeCtrl.text.isEmpty ||
         _locCtrl.text.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
+      AppNotice.showSnackBar(context, 
         const SnackBar(
           content: Text('يرجى ملء جميع الحقول المطلوبة'),
           backgroundColor: Colors.redAccent,
@@ -4235,7 +4236,7 @@ class _AdminAddBoxState extends State<_AdminAddBox>
     _animCtrl.reverse();
 
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
+    AppNotice.showSnackBar(context, 
       SnackBar(
         content: const Row(
           children: [

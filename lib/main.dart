@@ -20,6 +20,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'firebase_notification_service.dart';
 import 'services/app_auth_service.dart';
+import 'services/app_notice.dart';
 SystemUiOverlayStyle appSystemBarsStyle(bool isDark) {
   return SystemUiOverlayStyle(
     statusBarColor: Colors.transparent,
@@ -2983,7 +2984,7 @@ Widget _buildSocialTile({
 
 void _showContactLaunchError() {
   if (!mounted) return;
-  ScaffoldMessenger.of(context).showSnackBar(
+  AppNotice.showSnackBar(context, 
     SnackBar(
       behavior: SnackBarBehavior.floating,
       margin: const EdgeInsets.fromLTRB(18, 0, 18, 96),
@@ -6072,8 +6073,8 @@ class _UserPopupCard extends StatelessWidget {
     try {
       await AppAuthService.signInWithGoogle();
     } catch (e) {
-      messenger.showSnackBar(
-        SnackBar(content: Text('فشل تسجيل الدخول: $e')),
+      AppNotice.showSnackBar(context, 
+        const SnackBar(content: Text('تعذر تسجيل الدخول. حاول مرة أخرى.')),
       );
     }
   }
@@ -6084,8 +6085,8 @@ class _UserPopupCard extends StatelessWidget {
     try {
       await AppAuthService.signInWithApple();
     } catch (e) {
-      messenger.showSnackBar(
-        SnackBar(content: Text('فشل تسجيل الدخول بواسطة Apple: $e')),
+      AppNotice.showSnackBar(context, 
+        const SnackBar(content: Text('تعذر تسجيل الدخول. حاول مرة أخرى.')),
       );
     }
   }
@@ -6227,7 +6228,7 @@ class _UserPopupCard extends StatelessWidget {
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 Text(
-                                  user?.displayName ?? 'مستخدم',
+                                  AppAuthService.displayNameFor(user),
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
                                   style: TextStyle(
