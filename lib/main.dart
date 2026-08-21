@@ -14,12 +14,12 @@ import 'widgets/shared_widgets.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
-import 'package:google_sign_in/google_sign_in.dart';
 import 'firebase_options.dart';
 import 'package:app_links/app_links.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'firebase_notification_service.dart';
+import 'services/app_auth_service.dart';
 SystemUiOverlayStyle appSystemBarsStyle(bool isDark) {
   return SystemUiOverlayStyle(
     statusBarColor: Colors.transparent,
@@ -6070,14 +6070,7 @@ class _UserPopupCard extends StatelessWidget {
     onClose();
     final messenger = ScaffoldMessenger.of(context);
     try {
-      final googleUser = await GoogleSignIn().signIn();
-      if (googleUser == null) return;
-      final googleAuth = await googleUser.authentication;
-      final credential = GoogleAuthProvider.credential(
-        accessToken: googleAuth.accessToken,
-        idToken: googleAuth.idToken,
-      );
-      await FirebaseAuth.instance.signInWithCredential(credential);
+      await AppAuthService.signInWithGoogle();
     } catch (e) {
       messenger.showSnackBar(
         SnackBar(content: Text('فشل تسجيل الدخول: $e')),
@@ -6085,10 +6078,21 @@ class _UserPopupCard extends StatelessWidget {
     }
   }
 
+  Future<void> _signInWithApple(BuildContext context) async {
+    onClose();
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      await AppAuthService.signInWithApple();
+    } catch (e) {
+      messenger.showSnackBar(
+        SnackBar(content: Text('فشل تسجيل الدخول بواسطة Apple: $e')),
+      );
+    }
+  }
+
   Future<void> _signOut(BuildContext context) async {
     onClose();
-    await GoogleSignIn().signOut();
-    await FirebaseAuth.instance.signOut();
+    await AppAuthService.signOut();
   }
 
   String _formatDate(DateTime? date) {
@@ -6399,55 +6403,39 @@ child: ClipOval(
                         ),
                       ),
                     ),
-                    // ── Sign in button ──
+                    // ── Sign in buttons ──
                     Padding(
                       padding: const EdgeInsets.fromLTRB(14, 12, 14, 16),
-                      child: GestureDetector(
-                        onTap: () => _signInWithGoogle(context),
-                        child: Container(
-                          width: double.infinity,
-                          padding: const EdgeInsets.symmetric(vertical: 8),
-                          decoration: BoxDecoration(
-                            gradient: const LinearGradient(
-                              colors: [ui.Color.fromARGB(255, 0, 110, 255), ui.Color.fromARGB(255, 23, 89, 212)],                              end: Alignment.bottomLeft,
+                      child: Column(
+                        children: [
+                          if (AppAuthService.showAppleSignIn) ...[
+                            _PopupAuthButton(
+                              label: 'المتابعة بواسطة Apple',
+                              icon: Icons.apple_rounded,
+                              backgroundColor: isDark ? Colors.white : Colors.black,
+                              foregroundColor: isDark ? Colors.black : Colors.white,
+                              onTap: () => _signInWithApple(context),
                             ),
-                            borderRadius: BorderRadius.circular(14),
-                            boxShadow: [
-                              BoxShadow(
-                                color: const ui.Color.fromARGB(120, 23, 89, 212).withOpacity(0.4),
-                                blurRadius: 6,
-                                offset: const Offset(0, 2),
+                            const SizedBox(height: 9),
+                          ],
+                          _PopupAuthButton(
+                            label: 'المتابعة بواسطة Google',
+                            icon: Icons.g_mobiledata_rounded,
+                            backgroundColor: const ui.Color.fromARGB(255, 23, 89, 212),
+                            foregroundColor: Colors.white,
+                            onTap: () => _signInWithGoogle(context),
+                            leading: Container(
+                              width: 24,
+                              height: 24,
+                              padding: const EdgeInsets.all(3),
+                              decoration: const BoxDecoration(
+                                color: Colors.white,
+                                shape: BoxShape.circle,
                               ),
-                            ],
+                              child: Image.asset('assets/images/google.webp', fit: BoxFit.contain),
+                            ),
                           ),
-                          child: Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Container(
-  width: 22,
-  height: 22,
-  padding: const EdgeInsets.all(3),
-  decoration: const BoxDecoration(
-    color: Colors.white,
-    shape: BoxShape.circle,
-  ),
-  child: Image.asset(
-    'assets/images/google.webp',
-    fit: BoxFit.contain,
-  ),
-),
-                              const SizedBox(width: 8),
-                              const Text(
-                                'تسجيل الدخول بـ Google',
-                                style: TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 13,
-                                  fontWeight: FontWeight.w800,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
+                        ],
                       ),
                     ),
                   ],
@@ -6455,6 +6443,48 @@ child: ClipOval(
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+class _PopupAuthButton extends StatelessWidget {
+  final String label;
+  final IconData icon;
+  final Color backgroundColor;
+  final Color foregroundColor;
+  final VoidCallback onTap;
+  final Widget? leading;
+
+  const _PopupAuthButton({
+    required this.label,
+    required this.icon,
+    required this.backgroundColor,
+    required this.foregroundColor,
+    required this.onTap,
+    this.leading,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: backgroundColor,
+      borderRadius: BorderRadius.circular(14),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(14),
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              leading ?? Icon(icon, color: foregroundColor, size: 22),
+              const SizedBox(width: 8),
+              Text(label, style: TextStyle(color: foregroundColor, fontSize: 13, fontWeight: FontWeight.w800)),
+            ],
+          ),
         ),
       ),
     );

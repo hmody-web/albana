@@ -12,9 +12,9 @@ import 'package:image_picker/image_picker.dart' show ImagePicker, ImageSource, X
 import 'package:video_player/video_player.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:google_sign_in/google_sign_in.dart';
 import 'package:path_provider/path_provider.dart';
 import '../widgets/shared_widgets.dart';
+import '../services/app_auth_service.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:visibility_detector/visibility_detector.dart';
 import 'package:provider/provider.dart';
@@ -5056,22 +5056,30 @@ class _LoginSheetState extends State<_LoginSheet> {
   Future<void> _signInWithGoogle() async {
     setState(() { _loading = true; _error = null; });
     try {
-      final googleUser = await GoogleSignIn().signIn();
-      if (googleUser == null) {
-        setState(() => _loading = false);
+      final result = await AppAuthService.signInWithGoogle();
+      if (result == null) {
+        if (mounted) setState(() => _loading = false);
         return;
       }
-      final googleAuth = await googleUser.authentication;
-      final credential = GoogleAuthProvider.credential(
-        accessToken: googleAuth.accessToken,
-        idToken: googleAuth.idToken,
-      );
-      await FirebaseAuth.instance.signInWithCredential(credential);
-      await FirebaseAuth.instance.currentUser?.reload();
       if (mounted) widget.onLoggedIn();
     } catch (e) {
+      if (!mounted) return;
       setState(() {
-        _error = 'فشل تسجيل الدخول. حاول مرة أخرى.';
+        _error = 'فشل تسجيل الدخول بواسطة Google. حاول مرة أخرى.';
+        _loading = false;
+      });
+    }
+  }
+
+  Future<void> _signInWithApple() async {
+    setState(() { _loading = true; _error = null; });
+    try {
+      await AppAuthService.signInWithApple();
+      if (mounted) widget.onLoggedIn();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = 'فشل تسجيل الدخول بواسطة Apple. حاول مرة أخرى.';
         _loading = false;
       });
     }
@@ -5176,77 +5184,66 @@ return GestureDetector(
                   const SizedBox(height: 16),
                 ],
 
-                // Google Sign In Button
+                if (AppAuthService.showAppleSignIn) ...[
+                  SizedBox(
+                    width: double.infinity,
+                    height: 54,
+                    child: ElevatedButton.icon(
+                      onPressed: _loading ? null : _signInWithApple,
+                      icon: const Icon(Icons.apple_rounded, size: 25),
+                      label: const Text(
+                        'المتابعة بواسطة Apple',
+                        style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800),
+                      ),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: isDark ? Colors.white : Colors.black,
+                        foregroundColor: isDark ? Colors.black : Colors.white,
+                        disabledBackgroundColor: isDark ? Colors.white38 : Colors.black38,
+                        elevation: 0,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 11),
+                ],
+
                 SizedBox(
                   width: double.infinity,
                   height: 54,
                   child: ElevatedButton(
                     onPressed: _loading ? null : _signInWithGoogle,
                     style: ElevatedButton.styleFrom(
-                      backgroundColor:
-                          isDark ? const Color(0xFF2A2A2A) : Colors.white,
+                      backgroundColor: isDark ? const Color(0xFF2A2A2A) : Colors.white,
                       foregroundColor: textPrimary,
                       elevation: 0,
-                      side: BorderSide(
-                          color: isDark
-                              ? Colors.white12
-                              : Colors.black12),
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(16)),
+                      side: BorderSide(color: isDark ? Colors.white12 : Colors.black12),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
                     ),
                     child: _loading
-                        ? SizedBox(
+                        ? const SizedBox(
                             width: 24,
                             height: 24,
-                            child: CircularProgressIndicator(
-                                color: gold, strokeWidth: 2.5))
+                            child: CircularProgressIndicator(color: gold, strokeWidth: 2.5),
+                          )
                         : Row(
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: [
-                              // Google logo
                               Container(
-                                width: 24,
-                                height: 24,
-                                decoration: const BoxDecoration(
-                                  image: DecorationImage(
-                                    image: NetworkImage(
-                                        'https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg'),
-                                    fit: BoxFit.contain,
-                                  ),
+                                width: 28,
+                                height: 28,
+                                decoration: const BoxDecoration(color: Colors.white, shape: BoxShape.circle),
+                                padding: const EdgeInsets.all(4),
+                                child: SvgPicture.network(
+                                  'https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg',
+                                  width: 20,
+                                  height: 20,
                                 ),
                               ),
-                              const SizedBox(width: 12),
-                              Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Text(
-                                    'تسجيل الدخول بـ Google',
-                                    textDirection: TextDirection.rtl,
-                                    style: TextStyle(
-                                      color: textPrimary,
-                                      fontSize: 15,
-                                      fontWeight: FontWeight.w700,
-                                    ),
-                                  ),
-                                  const SizedBox(width: 10),
-                                  Transform.translate(
-                                    offset: const Offset(0, -2), // ← غيّر الأرقام: (يمين/يسار, أعلى/أسفل)
-                                    child: Container(
-                                      width: 28,
-                                      height: 28,
-                                      decoration: const BoxDecoration(
-                                        color: Colors.white,
-                                        shape: BoxShape.circle,
-                                      ),
-                                      padding: const EdgeInsets.all(4),
-                                      child: SvgPicture.network(
-                                        'https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg',
-                                        width: 20,
-                                        height: 20,
-                                      ),
-                                    ),
-                                  ),
-                                ],
+                              const SizedBox(width: 10),
+                              Text(
+                                'المتابعة بواسطة Google',
+                                textDirection: TextDirection.rtl,
+                                style: TextStyle(color: textPrimary, fontSize: 15, fontWeight: FontWeight.w700),
                               ),
                             ],
                           ),

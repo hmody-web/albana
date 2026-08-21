@@ -9,6 +9,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:flutter_pdfview/flutter_pdfview.dart';
 import 'package:file_picker/file_picker.dart';
 import '../widgets/shared_widgets.dart';
+import '../services/app_auth_service.dart';
 import 'package:http/http.dart' as http;
 import 'package:flutter/gestures.dart';
 import 'package:share_plus/share_plus.dart';
@@ -3978,6 +3979,46 @@ class _PdfFileComment {
   }
 }
 
+class _PdfAuthButton extends StatelessWidget {
+  final String label;
+  final IconData icon;
+  final Color backgroundColor;
+  final Color foregroundColor;
+  final VoidCallback onTap;
+
+  const _PdfAuthButton({
+    required this.label,
+    required this.icon,
+    required this.backgroundColor,
+    required this.foregroundColor,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: backgroundColor,
+      borderRadius: BorderRadius.circular(16),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(16),
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(icon, color: foregroundColor, size: 24),
+              const SizedBox(width: 9),
+              Text(label, style: TextStyle(color: foregroundColor, fontSize: 14, fontWeight: FontWeight.w900)),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _PdfCommentsSection extends StatefulWidget {
   final int fileId;
   final bool isDark;
@@ -4031,6 +4072,84 @@ class _PdfCommentsSectionState extends State<_PdfCommentsSection> {
     return email == 'hmode.qq@gmail.com' || email == 'hmode.qu@gmail.com' || email == 'info@majidalbana.com';
   }
 
+  Future<void> _showLoginOptions() async {
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (sheetContext) {
+        final isDark = widget.isDark;
+        final textPrimary = isDark ? Colors.white : const Color(0xFF1A1000);
+        return SafeArea(
+          child: Container(
+            margin: const EdgeInsets.all(16),
+            padding: const EdgeInsets.fromLTRB(18, 14, 18, 18),
+            decoration: BoxDecoration(
+              color: isDark ? const Color(0xFF171717) : Colors.white,
+              borderRadius: BorderRadius.circular(24),
+              border: Border.all(color: gold.withOpacity(0.20)),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(isDark ? 0.45 : 0.12),
+                  blurRadius: 28,
+                  offset: const Offset(0, 12),
+                ),
+              ],
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 42,
+                  height: 4,
+                  decoration: BoxDecoration(color: gold.withOpacity(0.35), borderRadius: BorderRadius.circular(99)),
+                ),
+                const SizedBox(height: 18),
+                Text(
+                  'سجّل الدخول لإضافة تعليق',
+                  style: TextStyle(color: textPrimary, fontSize: 18, fontWeight: FontWeight.w900),
+                ),
+                const SizedBox(height: 14),
+                if (AppAuthService.showAppleSignIn) ...[
+                  _PdfAuthButton(
+                    label: 'المتابعة بواسطة Apple',
+                    icon: Icons.apple_rounded,
+                    backgroundColor: isDark ? Colors.white : Colors.black,
+                    foregroundColor: isDark ? Colors.black : Colors.white,
+                    onTap: () async {
+                      Navigator.pop(sheetContext);
+                      try {
+                        await AppAuthService.signInWithApple();
+                        if (mounted) setState(() {});
+                      } catch (_) {
+                        if (mounted) _showSnack('تعذر تسجيل الدخول بواسطة Apple.', success: false);
+                      }
+                    },
+                  ),
+                  const SizedBox(height: 10),
+                ],
+                _PdfAuthButton(
+                  label: 'المتابعة بواسطة Google',
+                  icon: Icons.g_mobiledata_rounded,
+                  backgroundColor: const Color(0xFF1769E0),
+                  foregroundColor: Colors.white,
+                  onTap: () async {
+                    Navigator.pop(sheetContext);
+                    try {
+                      await AppAuthService.signInWithGoogle();
+                      if (mounted) setState(() {});
+                    } catch (_) {
+                      if (mounted) _showSnack('تعذر تسجيل الدخول بواسطة Google.', success: false);
+                    }
+                  },
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   Future<void> _loadComments({bool initial = false, bool silent = false}) async {
     if (!silent && mounted) {
       setState(() {
@@ -4080,7 +4199,7 @@ class _PdfCommentsSectionState extends State<_PdfCommentsSection> {
 
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) {
-      _showSnack('سجل دخولك أولاً لأضافة تعليق.', success: false);
+      await _showLoginOptions();
       return;
     }
 

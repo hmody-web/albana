@@ -4,12 +4,12 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:google_sign_in/google_sign_in.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../firebase_notification_service.dart';
+import '../services/app_auth_service.dart';
 import '../widgets/shared_widgets.dart';
 
 SystemUiOverlayStyle settingsSystemUiOverlayStyle(bool isDark) {
@@ -92,23 +92,22 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
   Future<void> _signInWithGoogle(BuildContext context) async {
     final messenger = ScaffoldMessenger.of(context);
     try {
-      final googleUser = await GoogleSignIn().signIn();
-      if (googleUser == null) return;
-      final googleAuth = await googleUser.authentication;
-      final credential = GoogleAuthProvider.credential(
-        accessToken: googleAuth.accessToken,
-        idToken: googleAuth.idToken,
-      );
-      await FirebaseAuth.instance.signInWithCredential(credential);
+      await AppAuthService.signInWithGoogle();
     } catch (e) {
       messenger.showSnackBar(SnackBar(content: Text('فشل تسجيل الدخول: $e')));
     }
   }
 
-  Future<void> _signOut() async {
-    await GoogleSignIn().signOut();
-    await FirebaseAuth.instance.signOut();
+  Future<void> _signInWithApple(BuildContext context) async {
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      await AppAuthService.signInWithApple();
+    } catch (e) {
+      messenger.showSnackBar(SnackBar(content: Text('فشل تسجيل الدخول بواسطة Apple: $e')));
+    }
   }
+
+  Future<void> _signOut() => AppAuthService.signOut();
 
   Future<void> _launchExternal(String rawUrl) async {
     final uri = Uri.parse(rawUrl);
@@ -285,6 +284,63 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
     return result == true;
   }
 
+  Future<void> _showLoginOptions(BuildContext context) async {
+    if (!AppAuthService.showAppleSignIn) {
+      await _signInWithGoogle(context);
+      return;
+    }
+
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (sheetContext) => SafeArea(
+        child: Container(
+          margin: const EdgeInsets.all(16),
+          padding: const EdgeInsets.all(18),
+          decoration: BoxDecoration(
+            color: widget.isDark ? const Color(0xFF171717) : Colors.white,
+            borderRadius: BorderRadius.circular(24),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                'اختر طريقة تسجيل الدخول',
+                style: TextStyle(
+                  color: widget.isDark ? Colors.white : const Color(0xFF1A1000),
+                  fontSize: 17,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              const SizedBox(height: 16),
+              _LoginOptionButton(
+                label: 'المتابعة بواسطة Apple',
+                icon: Icons.apple_rounded,
+                backgroundColor: widget.isDark ? Colors.white : Colors.black,
+                foregroundColor: widget.isDark ? Colors.black : Colors.white,
+                onTap: () {
+                  Navigator.pop(sheetContext);
+                  _signInWithApple(context);
+                },
+              ),
+              const SizedBox(height: 10),
+              _LoginOptionButton(
+                label: 'المتابعة بواسطة Google',
+                icon: Icons.g_mobiledata_rounded,
+                backgroundColor: const Color(0xFF1769E0),
+                foregroundColor: Colors.white,
+                onTap: () {
+                  Navigator.pop(sheetContext);
+                  _signInWithGoogle(context);
+                },
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Future<void> _showSignOutConfirmation() async {
     final confirmed = await _confirmDialog(
       title: 'تأكيد تسجيل الخروج',
@@ -319,22 +375,16 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
   }
 
   Future<void> _deleteFirebaseAccount(User user) async {
+    if (AppAuthService.isAppleUser(user)) {
+      await AppAuthService.reauthenticateAndDelete(user);
+      return;
+    }
+
     try {
       await user.delete();
     } on FirebaseAuthException catch (e) {
       if (e.code != 'requires-recent-login') rethrow;
-
-      final googleUser = await GoogleSignIn().signIn();
-      if (googleUser == null) {
-        throw Exception('يجب تسجيل الدخول مرة أخرى لتأكيد حذف الحساب.');
-      }
-      final googleAuth = await googleUser.authentication;
-      final credential = GoogleAuthProvider.credential(
-        accessToken: googleAuth.accessToken,
-        idToken: googleAuth.idToken,
-      );
-      await user.reauthenticateWithCredential(credential);
-      await FirebaseAuth.instance.currentUser?.delete();
+      await AppAuthService.reauthenticateAndDelete(user);
     }
   }
 
@@ -367,9 +417,8 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
     try {
       await _deleteServerAccountData(user);
       await _deleteFirebaseAccount(user);
-      await GoogleSignIn().signOut();
       await _clearLocalAppData();
-      await FirebaseAuth.instance.signOut();
+      await AppAuthService.signOut();
 
       if (!mounted) return;
       messenger.showSnackBar(
@@ -682,7 +731,9 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
                         isDark: widget.isDark,
                         user: user,
                         isSupervisor: _isSupervisor(user),
-                        onLogin: () => _signInWithGoogle(context),
+                        onGoogleLogin: () => _signInWithGoogle(context),
+                        onAppleLogin: () => _signInWithApple(context),
+                        showAppleLogin: AppAuthService.showAppleSignIn,
                       );
                     },
                   ),
@@ -782,8 +833,8 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
                           _SettingsActionTile(
                             isDark: widget.isDark,
                             icon: loggedIn ? Icons.logout_rounded : Icons.login_rounded,
-                            title: loggedIn ? 'تسجيل الخروج' : 'تسجيل الدخول بواسطة Google',
-                            onTap: loggedIn ? _showSignOutConfirmation : () => _signInWithGoogle(context),
+                            title: loggedIn ? 'تسجيل الخروج' : 'تسجيل الدخول',
+                            onTap: loggedIn ? _showSignOutConfirmation : () => _showLoginOptions(context),
                           ),
                         ],
                       );
@@ -983,7 +1034,7 @@ class _AboutAppPage extends StatelessWidget {
                         title: 'تسجيل الدخول',
                         icon: Icons.login_rounded,
                         child: Text(
-                          'يتم استخدام تسجيل الدخول عبر Google فقط عند الحاجة إلى التفاعل مع المحتوى، مثل إضافة التعليقات أو تسجيل الإعجاب بالمنشورات والملفات أو التسجيل في الدورات التدريبية، وذلك لضمان تجربة آمنة ومنظمة للمستخدمين.',
+                          'يتم استخدام تسجيل الدخول عبر Google، وعلى أجهزة Apple يتوفر أيضاً تسجيل الدخول بواسطة Apple، عند الحاجة إلى التفاعل مع المحتوى مثل إضافة التعليقات أو الإعجاب أو التسجيل في الدورات، وذلك لضمان تجربة آمنة ومنظمة للمستخدمين.',
                           style: TextStyle(color: textSub, fontSize: 13.5, height: 1.75, fontWeight: FontWeight.w600),
                         ),
                       ),
@@ -1169,13 +1220,17 @@ class _ModernLoginCard extends StatelessWidget {
   final bool isDark;
   final User? user;
   final bool isSupervisor;
-  final VoidCallback onLogin;
+  final VoidCallback onGoogleLogin;
+  final VoidCallback onAppleLogin;
+  final bool showAppleLogin;
 
   const _ModernLoginCard({
     required this.isDark,
     required this.user,
     required this.isSupervisor,
-    required this.onLogin,
+    required this.onGoogleLogin,
+    required this.onAppleLogin,
+    required this.showAppleLogin,
   });
 
   static const gold = Color(0xFFD4A017);
@@ -1183,9 +1238,10 @@ class _ModernLoginCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final loggedIn = user != null;
-    final title = loggedIn ? (user!.displayName ?? 'مستخدم Google') : 'مرحباً بك';
-    final subtitle = loggedIn ? (user!.email ?? 'حساب Google') : 'سجّل الدخول للاستفادة من مزايا المنصة';
-    final role = loggedIn ? (isSupervisor ? 'مشرف' : 'عضو') : 'Google';
+    final isApple = AppAuthService.isAppleUser(user);
+    final title = loggedIn ? (user!.displayName?.trim().isNotEmpty == true ? user!.displayName! : 'مستخدم') : 'مرحباً بك';
+    final subtitle = loggedIn ? (user!.email ?? (isApple ? 'حساب Apple' : 'حساب Google')) : 'سجّل الدخول للاستفادة من مزايا المنصة';
+    final role = loggedIn ? (isSupervisor ? 'مشرف' : 'عضو') : (showAppleLogin ? 'Google أو Apple' : 'Google');
 
     return Container(
       padding: const EdgeInsets.all(18),
@@ -1261,7 +1317,12 @@ class _ModernLoginCard extends StatelessWidget {
                           : null,
                       child: !loggedIn
                           ? const Icon(Icons.person_rounded, color: gold, size: 34)
-                          : null,
+                          : (user!.photoURL == null || user!.photoURL!.isEmpty)
+                              ? Text(
+                                  (title.trim().isNotEmpty ? title.trim()[0] : 'م'),
+                                  style: const TextStyle(color: gold, fontSize: 25, fontWeight: FontWeight.w900),
+                                )
+                              : null,
                     ),
                   ),
                   const SizedBox(width: 14),
@@ -1330,16 +1391,93 @@ class _ModernLoginCard extends StatelessWidget {
                   ),
                   const Spacer(),
                   if (!loggedIn)
-                    _SmallGoldButton(
-                      label: 'تسجيل الدخول',
-                      icon: Icons.login_rounded,
-                      onTap: onLogin,
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (showAppleLogin) ...[
+                          _SmallAppleButton(onTap: onAppleLogin),
+                          const SizedBox(width: 8),
+                        ],
+                        _SmallGoldButton(
+                          label: 'Google',
+                          icon: Icons.login_rounded,
+                          onTap: onGoogleLogin,
+                        ),
+                      ],
                     ),
                 ],
               ),
             ],
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _SmallAppleButton extends StatelessWidget {
+  final VoidCallback onTap;
+
+  const _SmallAppleButton({required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.black,
+      borderRadius: BorderRadius.circular(16),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(16),
+        child: const Padding(
+          padding: EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.apple_rounded, color: Colors.white, size: 18),
+              SizedBox(width: 5),
+              Text('Apple', style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w900)),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _LoginOptionButton extends StatelessWidget {
+  final String label;
+  final IconData icon;
+  final Color backgroundColor;
+  final Color foregroundColor;
+  final VoidCallback onTap;
+
+  const _LoginOptionButton({
+    required this.label,
+    required this.icon,
+    required this.backgroundColor,
+    required this.foregroundColor,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: backgroundColor,
+      borderRadius: BorderRadius.circular(16),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(16),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(icon, color: foregroundColor, size: 23),
+              const SizedBox(width: 10),
+              Text(label, style: TextStyle(color: foregroundColor, fontSize: 14, fontWeight: FontWeight.w800)),
+            ],
+          ),
+        ),
       ),
     );
   }
