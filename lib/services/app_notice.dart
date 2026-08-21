@@ -171,12 +171,13 @@ class AppNotice {
     });
   }
 
-  static String? _extractText(Widget widget) {
+  static String? _extractText(Widget? widget) {
+    if (widget == null) return null;
     if (widget is Text) return widget.data;
     if (widget is Directionality) return _extractText(widget.child);
     if (widget is Container && widget.child != null) return _extractText(widget.child!);
     if (widget is Padding) return _extractText(widget.child);
-    if (widget is Center) return _extractText(widget.child!);
+    if (widget is Center) return _extractText(widget.child);
     if (widget is Align && widget.child != null) return _extractText(widget.child!);
     if (widget is Row) {
       for (final child in widget.children) {
