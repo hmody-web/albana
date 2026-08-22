@@ -4707,23 +4707,71 @@ Listener(
                                           },
                                           isSupervisor: widget.isSupervisor,
                                         ),
-                                        ..._Comment.repliesFor(widget.comments, c.id).map(
-                                          (reply) => Padding(
-                                            padding: const EdgeInsets.only(right: 34, top: 6),
-                                            child: _CommentTile(
-                                              comment: reply,
-                                              isDark: isDark,
-                                              onEdit: widget.onEdit,
-                                              onDelete: widget.onDelete,
-                                              onReply: (target) {
-                                                setState(() => _replyTarget = target);
-                                                _inputFocusNode.requestFocus();
-                                              },
-                                              isSupervisor: widget.isSupervisor,
-                                              compact: true,
-                                            ),
-                                          ),
-                                        ),
+                                        Builder(builder: (context) {
+                                          final replies = _Comment.repliesFor(widget.comments, c.id);
+                                          if (replies.isEmpty) return const SizedBox.shrink();
+                                          final expanded = _expandedReplyRoots.contains(c.id);
+                                          return Column(
+                                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                                            children: [
+                                              Align(
+                                                alignment: Alignment.centerRight,
+                                                child: TextButton(
+                                                  style: TextButton.styleFrom(
+                                                    padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                                                    minimumSize: const Size(0, 30),
+                                                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                                  ),
+                                                  onPressed: () => setState(() {
+                                                    expanded ? _expandedReplyRoots.remove(c.id) : _expandedReplyRoots.add(c.id);
+                                                  }),
+                                                  child: Row(
+                                                    mainAxisSize: MainAxisSize.min,
+                                                    textDirection: TextDirection.rtl,
+                                                    children: [
+                                                      Icon(expanded ? Icons.keyboard_arrow_up_rounded : Icons.keyboard_arrow_down_rounded, size: 18, color: const Color(0xFF2684FF)),
+                                                      const SizedBox(width: 3),
+                                                      Text(expanded ? 'إخفاء الردود' : 'إظهار الردود (${replies.length})', style: const TextStyle(color: Color(0xFF2684FF), fontSize: 12, fontWeight: FontWeight.w800)),
+                                                    ],
+                                                  ),
+                                                ),
+                                              ),
+                                              if (expanded)
+                                                Container(
+                                                  margin: const EdgeInsets.only(right: 28, top: 2),
+                                                  decoration: BoxDecoration(
+                                                    border: Border(
+                                                      top: BorderSide(color: isDark ? Colors.white.withOpacity(0.10) : Colors.black.withOpacity(0.10)),
+                                                      bottom: BorderSide(color: isDark ? Colors.white.withOpacity(0.10) : Colors.black.withOpacity(0.10)),
+                                                    ),
+                                                  ),
+                                                  child: Column(
+                                                    children: [
+                                                      for (int ri = 0; ri < replies.length; ri++) ...[
+                                                        Padding(
+                                                          padding: const EdgeInsets.symmetric(vertical: 5),
+                                                          child: _CommentTile(
+                                                            comment: replies[ri],
+                                                            isDark: isDark,
+                                                            onEdit: widget.onEdit,
+                                                            onDelete: widget.onDelete,
+                                                            onReply: (target) {
+                                                              setState(() => _replyTarget = target);
+                                                              _inputFocusNode.requestFocus();
+                                                            },
+                                                            isSupervisor: widget.isSupervisor,
+                                                            compact: true,
+                                                          ),
+                                                        ),
+                                                        if (ri != replies.length - 1)
+                                                          Divider(height: 1, thickness: 0.6, color: isDark ? Colors.white.withOpacity(0.08) : Colors.black.withOpacity(0.08)),
+                                                      ],
+                                                    ],
+                                                  ),
+                                                ),
+                                            ],
+                                          );
+                                        }),
                                       ],
                                     ),
                                   );
@@ -5053,6 +5101,12 @@ class _CommentTileState extends State<_CommentTile> {
                     decoration: const InputDecoration(contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 8), border: InputBorder.none),
                   ),
                 )
+              else if (_isEmojiOnlyComment(widget.comment.text))
+                _SoloEmojiGlowText(
+                  text: widget.comment.text,
+                  color: textPrimary,
+                  fontSize: widget.compact ? 34 : 42,
+                )
               else
                 Text(
                   widget.comment.text,
@@ -5082,11 +5136,10 @@ class _CommentTileState extends State<_CommentTile> {
                       child: Text('إلغاء', style: TextStyle(color: textSub, fontSize: 12)),
                     ),
                   ] else if (canReply)
-                    TextButton.icon(
-                      style: TextButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 5), minimumSize: const Size(0, 28), tapTargetSize: MaterialTapTargetSize.shrinkWrap),
+                    TextButton(
+                      style: TextButton.styleFrom(padding: EdgeInsets.zero, minimumSize: const Size(32, 28), tapTargetSize: MaterialTapTargetSize.shrinkWrap),
                       onPressed: () => widget.onReply?.call(widget.comment),
-                      icon: const Icon(Icons.reply_rounded, size: 15, color: Color(0xFF2684FF)),
-                      label: const Text('رد', style: TextStyle(color: Color(0xFF2684FF), fontSize: 12, fontWeight: FontWeight.w700)),
+                      child: const Text('رد', style: TextStyle(color: Color(0xFF2684FF), fontSize: 12, fontWeight: FontWeight.w800)),
                     ),
                 ],
               ),
