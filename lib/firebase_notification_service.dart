@@ -199,6 +199,19 @@ class FirebaseNotificationService {
 
     try {
       await _setupLocalNotifications();
+
+      // On iOS, FCM notifications are not shown while the app is in the
+      // foreground unless presentation options are explicitly enabled.
+      // This makes notification payloads appear as normal iOS system banners
+      // while the app is open.
+      if (!kIsWeb && defaultTargetPlatform == TargetPlatform.iOS) {
+        await _messaging.setForegroundNotificationPresentationOptions(
+          alert: true,
+          badge: true,
+          sound: true,
+        );
+      }
+
       await _captureLocalNotificationLaunch();
       _listenToForegroundMessages();
       await _listenToNotificationClicks();
@@ -517,7 +530,11 @@ static Future<void> _setupLocalNotifications() async {
         type == 'new_post_comment' ||
         type == 'new_post_like' ||
         type == 'new_registration') {
-      return _isSupervisorEmail(FirebaseAuth.instance.currentUser?.email);
+      // These messages are already targeted to the supervisor device/topic.
+      // Do not suppress them in foreground just because FirebaseAuth has not
+      // restored currentUser yet. That race was causing the same push to be
+      // visible in background but silently ignored while the app was open.
+      return true;
     }
 
     final values = await loadNotificationPreferences();
@@ -627,9 +644,16 @@ static Future<void> _setupLocalNotifications() async {
       final notificationId = message.messageId?.hashCode ??
           Object.hash(title, body, DateTime.now().millisecondsSinceEpoch);
 
-      // Always create a local foreground notification. iOS/Android do not
-      // consistently present a remote notification while the app is active.
+      // On iOS, notification payloads are now presented directly by FCM using
+      // setForegroundNotificationPresentationOptions above. Creating another
+      // local notification for those would cause duplicates. Data-only pushes
+      // still need a local notification, so keep this fallback for them.
       if (defaultTargetPlatform == TargetPlatform.iOS) {
+        if (notification != null) {
+          debugPrint('iOS foreground notification is presented by the system.');
+          return;
+        }
+
         final attachmentPath = await _downloadNotificationImageToTempFile(imageUrl);
         final iosDetails = DarwinNotificationDetails(
           presentAlert: true,
