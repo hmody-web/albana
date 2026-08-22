@@ -5546,6 +5546,7 @@ class _PostDetailPageState extends State<_PostDetailPage> {
   bool _sendingComment = false;
   final _commentCtrl = TextEditingController();
   _Comment? _replyTarget;
+  final Set<int> _expandedReplyRoots = <int>{};
   final _scrollCtrl = ScrollController();
   bool _liked = false;
   int _likesCount = 0;
