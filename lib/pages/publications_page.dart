@@ -7360,6 +7360,7 @@ overlayShape: _isDraggingSlider
 class _PostVideoPlayerState extends State<_PostVideoPlayer>
     with AutomaticKeepAliveClientMixin {
   static const gold = Color(0xFFD4A017);
+  static final Map<String, Uint8List> _thumbnailCache = <String, Uint8List>{};
 
   VideoPlayerController? _controller;
   VideoPlayerController? _creatingController;
@@ -7425,6 +7426,18 @@ class _PostVideoPlayerState extends State<_PostVideoPlayer>
 
     _GlobalVideoMute.muted.addListener(_globalMuteListener);
     _VisibleVideoCoordinator.activeVideoId.addListener(_activeVideoListener);
+
+    // اعرض صورة الفيديو بأسرع وقت ممكن، حتى قبل بدء تهيئة المشغل.
+    final cachedThumb = _thumbnailCache[widget.videoUrl];
+    if (cachedThumb != null && cachedThumb.isNotEmpty) {
+      _videoThumbBytes = cachedThumb;
+    } else {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && !_disposed) {
+          _generateVideoThumbnail();
+        }
+      });
+    }
   }
 
   void _safeSetState(VoidCallback fn) {
@@ -7534,12 +7547,6 @@ class _PostVideoPlayerState extends State<_PostVideoPlayer>
       _cancelVideoInit = false;
 
       try {
-        _generateVideoThumbnail();
-      } catch (e) {
-        debugPrint('Start thumbnail safe error: $e');
-      }
-
-      try {
         _initVideo();
       } catch (e) {
         debugPrint('Start video safe error: $e');
@@ -7548,6 +7555,14 @@ class _PostVideoPlayerState extends State<_PostVideoPlayer>
   }
 
   Future<void> _generateVideoThumbnail() async {
+    final cached = _thumbnailCache[widget.videoUrl];
+    if (cached != null && cached.isNotEmpty) {
+      if (mounted && !_disposed && _videoThumbBytes == null) {
+        _safeSetState(() => _videoThumbBytes = cached);
+      }
+      return;
+    }
+
     try {
       final bytes = await VideoThumbnail.thumbnailData(
         video: widget.videoUrl,
@@ -7557,9 +7572,10 @@ class _PostVideoPlayerState extends State<_PostVideoPlayer>
         timeMs: 120,
       ).timeout(const Duration(seconds: 8));
 
-      if (!mounted || _disposed || _cancelVideoInit) return;
+      if (!mounted || _disposed) return;
 
       if (bytes != null && bytes.isNotEmpty) {
+        _thumbnailCache[widget.videoUrl] = bytes;
         _safeSetState(() {
           _videoThumbBytes = bytes;
         });
@@ -7647,6 +7663,10 @@ class _PostVideoPlayerState extends State<_PostVideoPlayer>
 
       await ctrl.setLooping(true);
       await ctrl.setVolume(_GlobalVideoMute.volume);
+      // جهّز فريم حقيقي من بداية الفيديو قبل إخفاء صورة المعاينة.
+      try {
+        await ctrl.seekTo(const Duration(milliseconds: 120));
+      } catch (_) {}
       await ctrl.pause();
 
       if (!mounted || _disposed || _cancelVideoInit) {
