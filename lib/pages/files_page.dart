@@ -4117,7 +4117,7 @@ class _PdfCommentsSectionState extends State<_PdfCommentsSection> {
                     onTap: () async {
                       Navigator.pop(sheetContext);
                       try {
-                        final result = await AppAuthService.signInWithApple();
+                        final result = await AppAuthService.signInWithApple(context: context);
                         if (result == null) return;
                         if (mounted) setState(() {});
                       } catch (_) {

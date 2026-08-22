@@ -6080,10 +6080,10 @@ class _UserPopupCard extends StatelessWidget {
   }
 
   Future<void> _signInWithApple(BuildContext context) async {
-    onClose();
     final messenger = ScaffoldMessenger.of(context);
     try {
-      await AppAuthService.signInWithApple();
+      final result = await AppAuthService.signInWithApple(context: context);
+      if (result != null && context.mounted) onClose();
     } catch (e) {
       AppNotice.showSnackBar(context, 
         const SnackBar(content: Text('تعذر تسجيل الدخول. حاول مرة أخرى.')),

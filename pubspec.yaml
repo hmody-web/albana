@@ -1,7 +1,7 @@
 name: majidalbana
 description: "A new Flutter project."
 publish_to: 'none'
-version: 1.0.0+14
+version: 1.0.0+15
 
 environment:
   sdk: '>=3.0.0 <4.0.0'
@@ -28,6 +28,7 @@ dependencies:
   open_filex: ^4.7.0
   file_picker: ^10.3.2
   image_picker: ^1.1.2
+  image_cropper: ^8.0.2
   youtube_player_flutter: ^9.1.1
   cupertino_icons: ^1.0.6
   webview_flutter: ^4.10.0

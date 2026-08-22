@@ -4,9 +4,12 @@ import 'dart:math';
 import 'package:crypto/crypto.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sign_in_with_apple/sign_in_with_apple.dart';
+
+import 'apple_profile_service.dart';
 
 /// Centralized authentication helpers used throughout the app.
 class AppAuthService {
@@ -87,7 +90,7 @@ class AppAuthService {
         text.contains('canceled by user');
   }
 
-  static Future<UserCredential?> signInWithApple() async {
+  static Future<UserCredential?> signInWithApple({BuildContext? context}) async {
     if (!showAppleSignIn) {
       throw UnsupportedError('تسجيل الدخول بواسطة Apple متاح على أجهزة iOS فقط.');
     }
@@ -132,11 +135,9 @@ class AppAuthService {
 
         final prefs = await SharedPreferences.getInstance();
         final nameKey = 'apple_display_name_${user.uid}';
-        if (suppliedName.isNotEmpty) {
+        if (suppliedName.isNotEmpty && ((user.displayName ?? '').trim().isEmpty || (user.displayName ?? '').trim() == 'مستخدم')) {
           await prefs.setString(nameKey, suppliedName);
-          if ((user.displayName ?? '').trim() != suppliedName) {
-            await user.updateDisplayName(suppliedName);
-          }
+          await user.updateDisplayName(suppliedName);
         } else if ((user.displayName ?? '').trim().isEmpty) {
           final cachedName = prefs.getString(nameKey)?.trim() ?? '';
           if (cachedName.isNotEmpty) {
@@ -144,6 +145,14 @@ class AppAuthService {
           }
         }
         await user.reload();
+        if (context != null && context.mounted) {
+          final current = FirebaseAuth.instance.currentUser ?? user;
+          final completed = await AppleProfileService.ensureProfile(context, current);
+          if (!completed) {
+            await FirebaseAuth.instance.signOut();
+            return null;
+          }
+        }
       }
       return result;
     } catch (e) {

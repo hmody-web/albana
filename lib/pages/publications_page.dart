@@ -5082,7 +5082,7 @@ class _LoginSheetState extends State<_LoginSheet> {
   Future<void> _signInWithApple() async {
     setState(() { _loading = true; _error = null; });
     try {
-      final result = await AppAuthService.signInWithApple();
+      final result = await AppAuthService.signInWithApple(context: context);
       if (result == null) {
         if (mounted) setState(() => _loading = false);
         return;
