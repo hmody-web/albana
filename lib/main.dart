@@ -297,7 +297,7 @@ void _openFromNotificationData(Map<String, dynamic> data) {
     }
   }
 
-  if (type == 'new_post_comment') {
+  if (type == 'new_post_comment' || type == 'post_comment_reply') {
     final postId = int.tryParse('${data['post_id'] ?? data['postId'] ?? ''}');
     final commentId = int.tryParse('${data['comment_id'] ?? data['commentId'] ?? ''}');
     if (postId != null && postId > 0 && commentId != null && commentId > 0) {

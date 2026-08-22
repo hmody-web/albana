@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:firebase_core/firebase_core.dart';
+import 'package:crypto/crypto.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
@@ -55,6 +56,7 @@ class FirebaseNotificationService {
   static bool _initialized = false;
   static StreamSubscription<User?>? _authSubscription;
   static const String _supervisorsTopic = 'supervisors';
+  static const String _lastUserTopicKey = 'last_fcm_user_topic';
   static const String _allUsersTopic = 'all_users';
 
   static bool _isSupervisorEmail(String? email) {
@@ -200,10 +202,7 @@ class FirebaseNotificationService {
     try {
       await _setupLocalNotifications();
 
-      // On iOS, FCM notifications are not shown while the app is in the
-      // foreground unless presentation options are explicitly enabled.
-      // This makes notification payloads appear as normal iOS system banners
-      // while the app is open.
+      // On iOS, explicitly allow the system banner while the app is foreground.
       if (!kIsWeb && defaultTargetPlatform == TargetPlatform.iOS) {
         await _messaging.setForegroundNotificationPresentationOptions(
           alert: true,
@@ -249,6 +248,7 @@ static Future<void> _completeStartupNotificationWork() async {
 
     await applySavedNotificationSubscriptions();
     await _syncSupervisorTopic();
+    await _syncUserReplyTopic();
     await _printFcmToken();
   } catch (e) {
     debugPrint('FirebaseNotificationService startup error: $e');
@@ -482,6 +482,7 @@ static Future<void> _setupLocalNotifications() async {
     _authSubscription?.cancel();
     _authSubscription = FirebaseAuth.instance.authStateChanges().listen((_) {
       unawaited(_syncSupervisorTopic());
+      unawaited(_syncUserReplyTopic());
     });
   }
 
@@ -491,6 +492,35 @@ static Future<void> _setupLocalNotifications() async {
       await _subscribeToTopic(_supervisorsTopic);
     } else {
       await _unsubscribeFromTopic(_supervisorsTopic);
+    }
+  }
+
+  static String? _userTopicForEmail(String? email) {
+    final normalized = email?.trim().toLowerCase() ?? '';
+    if (normalized.isEmpty) return null;
+    return 'user_${sha256.convert(utf8.encode(normalized))}';
+  }
+
+  static Future<void> _syncUserReplyTopic() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final previous = prefs.getString(_lastUserTopicKey)?.trim() ?? '';
+      final next = _userTopicForEmail(FirebaseAuth.instance.currentUser?.email) ?? '';
+
+      if (previous.isNotEmpty && previous != next) {
+        await _unsubscribeFromTopic(previous);
+      }
+      if (next.isNotEmpty && next != previous) {
+        await _subscribeToTopic(next);
+      }
+
+      if (next.isEmpty) {
+        await prefs.remove(_lastUserTopicKey);
+      } else {
+        await prefs.setString(_lastUserTopicKey, next);
+      }
+    } catch (e) {
+      debugPrint('User reply topic sync error: $e');
     }
   }
 
@@ -530,10 +560,6 @@ static Future<void> _setupLocalNotifications() async {
         type == 'new_post_comment' ||
         type == 'new_post_like' ||
         type == 'new_registration') {
-      // These messages are already targeted to the supervisor device/topic.
-      // Do not suppress them in foreground just because FirebaseAuth has not
-      // restored currentUser yet. That race was causing the same push to be
-      // visible in background but silently ignored while the app was open.
       return true;
     }
 
@@ -615,6 +641,7 @@ static Future<void> _setupLocalNotifications() async {
         debugPrint('FCM TOKEN REFRESHED: $newToken');
         await applySavedNotificationSubscriptions();
         await _syncSupervisorTopic();
+        await _syncUserReplyTopic();
       });
     } catch (e) {
       debugPrint('FCM token error: $e');
@@ -644,10 +671,8 @@ static Future<void> _setupLocalNotifications() async {
       final notificationId = message.messageId?.hashCode ??
           Object.hash(title, body, DateTime.now().millisecondsSinceEpoch);
 
-      // On iOS, notification payloads are now presented directly by FCM using
-      // setForegroundNotificationPresentationOptions above. Creating another
-      // local notification for those would cause duplicates. Data-only pushes
-      // still need a local notification, so keep this fallback for them.
+      // Always create a local foreground notification. iOS/Android do not
+      // consistently present a remote notification while the app is active.
       if (defaultTargetPlatform == TargetPlatform.iOS) {
         if (notification != null) {
           debugPrint('iOS foreground notification is presented by the system.');
