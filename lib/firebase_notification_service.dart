@@ -249,6 +249,7 @@ static Future<void> _completeStartupNotificationWork() async {
     await applySavedNotificationSubscriptions();
     await _syncSupervisorTopic();
     await _syncUserReplyTopic();
+    await _syncDirectDeviceToken();
     await _printFcmToken();
   } catch (e) {
     debugPrint('FirebaseNotificationService startup error: $e');
@@ -483,6 +484,7 @@ static Future<void> _setupLocalNotifications() async {
     _authSubscription = FirebaseAuth.instance.authStateChanges().listen((_) {
       unawaited(_syncSupervisorTopic());
       unawaited(_syncUserReplyTopic());
+      unawaited(_syncDirectDeviceToken());
     });
   }
 
@@ -509,27 +511,46 @@ static Future<void> _setupLocalNotifications() async {
 
       if (previous.isNotEmpty && previous != next) {
         await _unsubscribeFromTopic(previous);
-      }
-      if (next.isNotEmpty && next != previous) {
-        await _subscribeToTopic(next);
+        await prefs.remove(_lastUserTopicKey);
       }
 
       if (next.isEmpty) {
         await prefs.remove(_lastUserTopicKey);
-      } else {
+        return;
+      }
+
+      // On iOS, topic subscription can fail until APNs has produced a token.
+      // Never mark the private user topic as subscribed unless FCM confirms it.
+      if (defaultTargetPlatform == TargetPlatform.iOS) {
+        final apnsReady = await _waitForApnsToken();
+        if (!apnsReady) {
+          debugPrint('User reply topic delayed: APNS token is not ready.');
+          await prefs.remove(_lastUserTopicKey);
+          return;
+        }
+      }
+
+      // Re-subscribe even when the saved topic matches. This repairs older
+      // installs that saved the topic name after a failed iOS subscription.
+      final subscribed = await _subscribeToTopic(next);
+      if (subscribed) {
         await prefs.setString(_lastUserTopicKey, next);
+      } else {
+        await prefs.remove(_lastUserTopicKey);
       }
     } catch (e) {
       debugPrint('User reply topic sync error: $e');
     }
   }
 
-  static Future<void> _subscribeToTopic(String topic) async {
+  static Future<bool> _subscribeToTopic(String topic) async {
     try {
       await _messaging.subscribeToTopic(topic);
       debugPrint('Subscribed to FCM topic: $topic');
+      return true;
     } catch (e) {
       debugPrint('Subscribe to $topic topic error: $e');
+      return false;
     }
   }
 
@@ -632,6 +653,30 @@ static Future<void> _setupLocalNotifications() async {
     return null;
   }
 
+  static Future<void> _syncDirectDeviceToken({String? tokenOverride}) async {
+    if (kIsWeb) return;
+    try {
+      if (defaultTargetPlatform == TargetPlatform.iOS && !await _waitForApnsToken()) return;
+      final token = tokenOverride ?? await _messaging.getToken();
+      if (token == null || token.trim().isEmpty) return;
+      final email = FirebaseAuth.instance.currentUser?.email?.trim().toLowerCase() ?? '';
+      final response = await http.post(
+        Uri.parse('https://majidalbana.com/admin/register_device_token.php'),
+        body: <String, String>{
+          'token': token,
+          'user_email': email,
+          'platform': defaultTargetPlatform.name,
+          'action': email.isEmpty ? 'unregister' : 'register',
+        },
+      ).timeout(const Duration(seconds: 15));
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        debugPrint('Direct FCM token sync HTTP ${response.statusCode}');
+      }
+    } catch (e) {
+      debugPrint('Direct FCM token sync error: $e');
+    }
+  }
+
   static Future<void> _printFcmToken() async {
     try {
       final token = await _messaging.getToken();
@@ -642,6 +687,7 @@ static Future<void> _setupLocalNotifications() async {
         await applySavedNotificationSubscriptions();
         await _syncSupervisorTopic();
         await _syncUserReplyTopic();
+        await _syncDirectDeviceToken(tokenOverride: newToken);
       });
     } catch (e) {
       debugPrint('FCM token error: $e');
