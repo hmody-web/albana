@@ -3954,6 +3954,10 @@ class _PdfFileComment {
   final String userEmail;
   final String text;
   final String createdAt;
+  final int parentId;
+  final int replyToCommentId;
+  final String replyToName;
+  final String replyToEmail;
 
   const _PdfFileComment({
     required this.id,
@@ -3963,6 +3967,10 @@ class _PdfFileComment {
     required this.userEmail,
     required this.text,
     required this.createdAt,
+    this.parentId = 0,
+    this.replyToCommentId = 0,
+    this.replyToName = '',
+    this.replyToEmail = '',
   });
 
   factory _PdfFileComment.fromJson(Map<String, dynamic> json) {
@@ -3974,8 +3982,13 @@ class _PdfFileComment {
       userEmail: '${json['user_email'] ?? ''}'.trim(),
       text: '${json['comment_text'] ?? ''}'.trim(),
       createdAt: '${json['created_at'] ?? ''}'.trim(),
+      parentId: int.tryParse('${json['parent_id'] ?? 0}') ?? 0,
+      replyToCommentId: int.tryParse('${json['reply_to_comment_id'] ?? 0}') ?? 0,
+      replyToName: '${json['reply_to_name'] ?? ''}'.trim(),
+      replyToEmail: '${json['reply_to_email'] ?? ''}'.trim(),
     );
   }
+  bool get isReply => parentId > 0;
 }
 
 class _PdfAuthButton extends StatelessWidget {
@@ -4049,6 +4062,8 @@ class _PdfCommentsSectionState extends State<_PdfCommentsSection> {
   bool _sending = false;
   String? _error;
   Timer? _pollTimer;
+  _PdfFileComment? _replyTarget;
+  final Set<int> _expandedReplyRoots = <int>{};
 
   @override
   void initState() {
@@ -4216,6 +4231,7 @@ class _PdfCommentsSectionState extends State<_PdfCommentsSection> {
           'user_avatar': (user.photoURL ?? '').trim(),
           'user_email': AppAuthService.userIdentity(user),
           'comment_text': text,
+          if (_replyTarget != null) 'reply_to_comment_id': '${_replyTarget!.id}',
         },
       ).timeout(const Duration(seconds: 15));
 
@@ -4225,6 +4241,7 @@ class _PdfCommentsSectionState extends State<_PdfCommentsSection> {
       }
 
       _commentCtrl.clear();
+      _replyTarget = null;
       _commentFocus.unfocus();
       await _loadComments(silent: true);
       if (!mounted) return;
@@ -4502,30 +4519,77 @@ class _PdfCommentsSectionState extends State<_PdfCommentsSection> {
                             subtitle: 'كن أول من يضيف تعليق.',
                             isDark: widget.isDark,
                           )
-                        : ListView.separated(
+                        : Column(
                             key: const ValueKey('comments_list'),
-                            controller: _commentsScroll,
-                            shrinkWrap: true,
-                            physics: const NeverScrollableScrollPhysics(),
-                            itemCount: _comments.length,
-                            separatorBuilder: (_, __) => const SizedBox(height: 10),
-                            itemBuilder: (context, index) {
-                              final comment = _comments[index];
-                              final currentUser = FirebaseAuth.instance.currentUser;
-                              final currentEmail = currentUser == null ? '' : AppAuthService.userIdentity(currentUser).trim().toLowerCase();
-                              final ownsComment = currentEmail.isNotEmpty && currentEmail == comment.userEmail.trim().toLowerCase();
-                              return _PdfCommentBubble(
-                                comment: comment,
-                                isDark: widget.isDark,
-                                canEdit: ownsComment,
-                                canDelete: ownsComment || _isSupervisor,
-                                onEdit: () => _editComment(comment),
-                                onDelete: () => _deleteComment(comment),
-                              );
-                            },
+                            children: [
+                              for (final comment in _comments.where((c) => !c.isReply)) ...[
+                                Builder(builder: (context) {
+                                  final currentUser = FirebaseAuth.instance.currentUser;
+                                  final currentEmail = currentUser == null ? '' : AppAuthService.userIdentity(currentUser).trim().toLowerCase();
+                                  final ownsComment = currentEmail.isNotEmpty && currentEmail == comment.userEmail.trim().toLowerCase();
+                                  final replies = _comments.where((r) => r.parentId == comment.id).toList();
+                                  final expanded = _expandedReplyRoots.contains(comment.id);
+                                  return Column(children: [
+                                    _PdfCommentBubble(
+                                      comment: comment, isDark: widget.isDark, canEdit: ownsComment, canDelete: ownsComment || _isSupervisor,
+                                      onEdit: () => _editComment(comment), onDelete: () => _deleteComment(comment),
+                                      onReply: () => setState(() { _replyTarget = comment; _commentFocus.requestFocus(); }),
+                                    ),
+                                    if (replies.isNotEmpty)
+                                      Align(alignment: Alignment.centerRight, child: TextButton(
+                                        onPressed: () => setState(() { expanded ? _expandedReplyRoots.remove(comment.id) : _expandedReplyRoots.add(comment.id); }),
+                                        child: Row(mainAxisSize: MainAxisSize.min, textDirection: TextDirection.rtl, children: [
+                                          Icon(expanded ? Icons.keyboard_arrow_up_rounded : Icons.keyboard_arrow_down_rounded, size: 17),
+                                          const SizedBox(width: 3),
+                                          Text(expanded ? 'إخفاء الردود' : 'إظهار الردود (${replies.length})'),
+                                        ]),
+                                      )),
+                                    if (expanded)
+                                      Container(
+                                        margin: const EdgeInsets.only(right: 28, bottom: 8),
+                                        decoration: BoxDecoration(border: Border(
+                                          top: BorderSide(color: widget.isDark ? Colors.white12 : Colors.black12),
+                                          bottom: BorderSide(color: widget.isDark ? Colors.white12 : Colors.black12),
+                                        )),
+                                        child: Column(children: [
+                                          for (int i=0; i<replies.length; i++) ...[
+                                            Builder(builder: (context) {
+                                              final r = replies[i];
+                                              final owns = currentEmail.isNotEmpty && currentEmail == r.userEmail.trim().toLowerCase();
+                                              return _PdfCommentBubble(
+                                                comment: r, isDark: widget.isDark, canEdit: owns, canDelete: owns || _isSupervisor,
+                                                onEdit: () => _editComment(r), onDelete: () => _deleteComment(r),
+                                                onReply: () => setState(() { _replyTarget = r; _commentFocus.requestFocus(); }),
+                                                compact: true,
+                                              );
+                                            }),
+                                            if (i != replies.length - 1) Divider(height: 1, color: widget.isDark ? Colors.white10 : Colors.black12),
+                                          ]
+                                        ]),
+                                      ),
+                                    const SizedBox(height: 10),
+                                  ]);
+                                }),
+                              ]
+                            ],
                           ),
           ),
           const SizedBox(height: 14),
+          if (_replyTarget != null) ...[
+            Align(
+              alignment: Alignment.centerRight,
+              child: Container(
+                margin: const EdgeInsets.only(bottom: 8),
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                decoration: BoxDecoration(color: const Color(0xFF2684FF).withOpacity(0.10), borderRadius: BorderRadius.circular(10)),
+                child: Row(mainAxisSize: MainAxisSize.min, textDirection: TextDirection.rtl, children: [
+                  Text('رد على @${_replyTarget!.userName}', style: const TextStyle(color: Color(0xFF2684FF), fontWeight: FontWeight.w800)),
+                  const SizedBox(width: 7),
+                  GestureDetector(onTap: () => setState(() => _replyTarget = null), child: const Icon(Icons.close_rounded, size: 17, color: Color(0xFF2684FF))),
+                ]),
+              ),
+            ),
+          ],
           Container(
             padding: const EdgeInsetsDirectional.fromSTEB(12, 8, 8, 8),
             decoration: BoxDecoration(
@@ -4638,6 +4702,8 @@ class _PdfCommentBubble extends StatefulWidget {
   final bool canDelete;
   final VoidCallback onEdit;
   final VoidCallback onDelete;
+  final VoidCallback onReply;
+  final bool compact;
 
   const _PdfCommentBubble({
     required this.comment,
@@ -4646,6 +4712,8 @@ class _PdfCommentBubble extends StatefulWidget {
     required this.canDelete,
     required this.onEdit,
     required this.onDelete,
+    required this.onReply,
+    this.compact = false,
   });
 
   @override
@@ -4804,10 +4872,25 @@ class _PdfCommentBubbleState extends State<_PdfCommentBubble> {
                     ],
                   ),
                   const SizedBox(height: 5),
+                  if (widget.comment.isReply && widget.comment.replyToName.isNotEmpty) ...[
+                    Container(
+                      alignment: Alignment.centerRight,
+                      margin: const EdgeInsets.only(bottom: 5),
+                      child: Text('رد على @${widget.comment.replyToName}', textAlign: TextAlign.right, style: const TextStyle(color: Color(0xFF2684FF), fontSize: 11.5, fontWeight: FontWeight.w900)),
+                    ),
+                  ],
                   Text(
                     widget.comment.text,
                     textAlign: TextAlign.right,
-                    style: TextStyle(color: widget.isDark ? Colors.white70 : Colors.black87, fontSize: 13.5, height: 1.65, fontWeight: FontWeight.w700),
+                    style: TextStyle(color: widget.isDark ? Colors.white70 : Colors.black87, fontSize: widget.compact ? 13 : 13.5, height: 1.65, fontWeight: FontWeight.w700),
+                  ),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: TextButton(
+                      style: TextButton.styleFrom(padding: EdgeInsets.zero, minimumSize: const Size(32, 26), tapTargetSize: MaterialTapTargetSize.shrinkWrap),
+                      onPressed: widget.onReply,
+                      child: const Text('رد', style: TextStyle(color: Color(0xFF2684FF), fontSize: 12, fontWeight: FontWeight.w900)),
+                    ),
                   ),
                 ],
               ),

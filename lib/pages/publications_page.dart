@@ -4234,6 +4234,7 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
   final ScrollController _commentsListController = ScrollController();
   bool _localSendingComment = false;
   _Comment? _replyTarget;
+  final Set<int> _expandedReplyRoots = <int>{};
 
 bool _commentsListSheetDragging = false;
 double _sheetDragDownOffset = 0;
@@ -6344,44 +6345,37 @@ if (p.videoUrl != null)
 
                 ..._Comment.rootComments(_comments)
                     .where((c) => c.text.isNotEmpty)
-                    .map((c) => Column(
-                          children: [
-                            _CommentBubble(
-                              key: _commentKeys.putIfAbsent(c.id, () => GlobalKey()),
-                              comment: c,
-                              isDark: isDark,
-                              onEdit: _editComment,
-                              onDelete: _deleteComment,
-                              onReply: (target) => setState(() => _replyTarget = target),
-                              isSupervisor: isSupervisor,
-                              highlighted: _highlightedCommentId == c.id,
-                            ),
-                            ..._Comment.repliesFor(_comments, c.id).map(
-                              (reply) => Padding(
-                                padding: const EdgeInsets.only(right: 34),
-                                child: _CommentBubble(
-                                  comment: reply,
-                                  isDark: isDark,
-                                  onEdit: _editComment,
-                                  onDelete: _deleteComment,
-                                  onReply: (target) => setState(() => _replyTarget = target),
-                                  isSupervisor: isSupervisor,
-                                  highlighted: _highlightedCommentId == reply.id,
-                                  compact: true,
-                                ),
-                              ),
-                            ),
-                            Divider(
-                              height: 1,
-                              thickness: 0.5,
-                              indent: 16,
-                              endIndent: 16,
-                              color: isDark
-                                  ? Colors.white.withOpacity(0.06)
-                                  : Colors.black.withOpacity(0.06),
-                            ),
-                          ],
-                        )),
+                    .map((c) {
+                      final replies = _Comment.repliesFor(_comments, c.id);
+                      final expanded = _expandedReplyRoots.contains(c.id);
+                      return Column(children: [
+                        _CommentBubble(key: _commentKeys.putIfAbsent(c.id, () => GlobalKey()), comment: c, isDark: isDark, onEdit: _editComment, onDelete: _deleteComment, onReply: (target) => setState(() => _replyTarget = target), isSupervisor: isSupervisor, highlighted: _highlightedCommentId == c.id),
+                        if (replies.isNotEmpty)
+                          Align(alignment: Alignment.centerRight, child: Padding(padding: const EdgeInsets.only(right: 54, bottom: 5), child: TextButton(
+                            style: TextButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2), minimumSize: const Size(0, 28), tapTargetSize: MaterialTapTargetSize.shrinkWrap),
+                            onPressed: () => setState(() { expanded ? _expandedReplyRoots.remove(c.id) : _expandedReplyRoots.add(c.id); }),
+                            child: Row(mainAxisSize: MainAxisSize.min, textDirection: TextDirection.rtl, children: [
+                              Icon(expanded ? Icons.keyboard_arrow_up_rounded : Icons.keyboard_arrow_down_rounded, size: 17, color: const Color(0xFF2684FF)),
+                              const SizedBox(width: 3),
+                              Text(expanded ? 'إخفاء الردود' : 'إظهار الردود (${replies.length})', style: const TextStyle(color: Color(0xFF2684FF), fontSize: 12, fontWeight: FontWeight.w800)),
+                            ]),
+                          ))),
+                        if (expanded)
+                          Padding(padding: const EdgeInsets.only(right: 30, left: 8, bottom: 5), child: Container(
+                            decoration: BoxDecoration(border: Border(
+                              top: BorderSide(color: isDark ? Colors.white.withOpacity(0.08) : Colors.black.withOpacity(0.08)),
+                              bottom: BorderSide(color: isDark ? Colors.white.withOpacity(0.08) : Colors.black.withOpacity(0.08)),
+                            )),
+                            child: Column(children: [
+                              for (int i = 0; i < replies.length; i++) ...[
+                                _CommentBubble(comment: replies[i], isDark: isDark, onEdit: _editComment, onDelete: _deleteComment, onReply: (target) => setState(() => _replyTarget = target), isSupervisor: isSupervisor, highlighted: _highlightedCommentId == replies[i].id, compact: true),
+                                if (i != replies.length - 1) Divider(height: 1, thickness: 0.5, color: isDark ? Colors.white.withOpacity(0.07) : Colors.black.withOpacity(0.07)),
+                              ]
+                            ]),
+                          )),
+                        Divider(height: 1, thickness: 0.5, indent: 16, endIndent: 16, color: isDark ? Colors.white.withOpacity(0.06) : Colors.black.withOpacity(0.06)),
+                      ]);
+                    }).toList(),
                         
               ],
             ),
@@ -6437,6 +6431,22 @@ if (p.videoUrl != null)
       ),
     );
   }
+}
+
+bool _isEmojiOnlyComment(String value) {
+  final text = value.trim();
+  if (text.isEmpty) return false;
+  var sawEmoji = false;
+  for (final rune in text.runes) {
+    if (rune == 0xFE0F || rune == 0x200D || rune == 0x20E3 ||
+        (rune >= 0x1F1E6 && rune <= 0x1F1FF) ||
+        (rune >= 0x1F300 && rune <= 0x1FAFF) ||
+        (rune >= 0x2600 && rune <= 0x27BF) ||
+        (rune >= 0x1F3FB && rune <= 0x1F3FF)) { sawEmoji = true; continue; }
+    if (rune == 0x20 || rune == 0x0A || rune == 0x09) continue;
+    return false;
+  }
+  return sawEmoji;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -6588,9 +6598,11 @@ class _CommentBubbleState extends State<_CommentBubble> {
                     style: TextStyle(color: textPrimary, fontSize: 13.5),
                     decoration: InputDecoration(filled: true, fillColor: isDark ? const Color(0xFF292929) : const Color(0xFFF5F1EA), border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide.none), contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8)),
                   )
+                else if (_isEmojiOnlyComment(widget.comment.text))
+                  _SoloEmojiGlowText(text: widget.comment.text, color: textPrimary, fontSize: widget.compact ? 34 : 42)
                 else
                   Text(widget.comment.text, textDirection: TextDirection.rtl, textAlign: TextAlign.right, style: TextStyle(color: textPrimary, fontSize: widget.compact ? 13 : 13.5, height: 1.55)),
-                const SizedBox(height: 4),
+                const SizedBox(height: 2),
                 Row(
                   mainAxisAlignment: MainAxisAlignment.end,
                   textDirection: TextDirection.rtl,
@@ -6599,11 +6611,10 @@ class _CommentBubbleState extends State<_CommentBubble> {
                       TextButton(onPressed: () async { final value = _editCtrl.text.trim(); if (value.isEmpty) return; await widget.onEdit?.call(widget.comment.id, value); if (mounted) setState(() => _editing = false); }, child: const Text('حفظ', style: TextStyle(color: gold, fontWeight: FontWeight.w800))),
                       TextButton(onPressed: () { _editCtrl.text = widget.comment.text; setState(() => _editing = false); }, child: Text('إلغاء', style: TextStyle(color: textSub))),
                     ] else if (canReply)
-                      TextButton.icon(
-                        style: TextButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 5), minimumSize: const Size(0, 28), tapTargetSize: MaterialTapTargetSize.shrinkWrap),
+                      TextButton(
+                        style: TextButton.styleFrom(padding: EdgeInsets.zero, minimumSize: const Size(32, 26), tapTargetSize: MaterialTapTargetSize.shrinkWrap),
                         onPressed: () => widget.onReply?.call(widget.comment),
-                        icon: const Icon(Icons.reply_rounded, size: 15, color: Color(0xFF2684FF)),
-                        label: const Text('رد', style: TextStyle(color: Color(0xFF2684FF), fontSize: 12, fontWeight: FontWeight.w700)),
+                        child: const Text('رد', style: TextStyle(color: Color(0xFF2684FF), fontSize: 12, fontWeight: FontWeight.w800)),
                       ),
                   ],
                 ),
