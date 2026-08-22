@@ -152,7 +152,7 @@ class _PostRealtimeBus {
 
   static String commentsFingerprint(List<_Comment> list) {
     return list
-        .map((c) => '${c.id}|${c.text}|${c.createdAt}|${c.userName}')
+        .map((c) => '${c.id}|${c.text}|${c.createdAt}|${c.userName}|${c.userAvatar}|${c.userEmail}')
         .join('::');
   }
 
@@ -3121,7 +3121,7 @@ void _stopCommentsPolling() {
 
 String _commentsFingerprint(List<_Comment> list) {
   return list
-      .map((c) => '${c.id}|${c.text}|${c.createdAt}')
+      .map((c) => '${c.id}|${c.text}|${c.createdAt}|${c.userName}|${c.userAvatar}|${c.userEmail}')
       .join('::');
 }
 
@@ -4770,15 +4770,20 @@ class _CommentTileState extends State<_CommentTile> {
   static const gold = Color(0xFFD4A017);
   bool _editing = false;
   late TextEditingController _editCtrl;
+  StreamSubscription<User?>? _profileSubscription;
 
   @override
   void initState() {
     super.initState();
     _editCtrl = TextEditingController(text: widget.comment.text);
+    _profileSubscription = FirebaseAuth.instance.userChanges().listen((_) {
+      if (mounted) setState(() {});
+    });
   }
 
   @override
   void dispose() {
+    _profileSubscription?.cancel();
     _editCtrl.dispose();
     super.dispose();
   }
@@ -4790,6 +4795,24 @@ class _CommentTileState extends State<_CommentTile> {
     final commentEmail = widget.comment.userEmail.trim().toLowerCase();
     if (commentEmail.isNotEmpty && identity == commentEmail) return true;
     return AppAuthService.displayNameFor(user).trim() == widget.comment.userName.trim();
+  }
+
+  String get _effectiveUserName {
+    final user = FirebaseAuth.instance.currentUser;
+    if (_isOwner && user != null) {
+      final currentName = AppAuthService.displayNameFor(user).trim();
+      if (currentName.isNotEmpty && currentName != 'مستخدم') return currentName;
+    }
+    return widget.comment.userName;
+  }
+
+  String get _effectiveUserAvatar {
+    final user = FirebaseAuth.instance.currentUser;
+    if (_isOwner && user != null) {
+      final currentPhoto = (user.photoURL ?? '').trim();
+      if (currentPhoto.isNotEmpty) return currentPhoto;
+    }
+    return widget.comment.userAvatar;
   }
 
   @override
@@ -4809,10 +4832,10 @@ class _CommentTileState extends State<_CommentTile> {
         CircleAvatar(
           radius: 18,
           backgroundColor: gold.withOpacity(0.18),
-          backgroundImage: widget.comment.userAvatar.isNotEmpty
-              ? NetworkImage(widget.comment.userAvatar)
+          backgroundImage: _effectiveUserAvatar.isNotEmpty
+              ? NetworkImage(_effectiveUserAvatar)
               : null,
-          child: widget.comment.userAvatar.isEmpty
+          child: _effectiveUserAvatar.isEmpty
               ? Icon(Icons.person_rounded, color: gold, size: 18)
               : null,
         ),
@@ -4828,7 +4851,7 @@ class _CommentTileState extends State<_CommentTile> {
                 textDirection: TextDirection.rtl,
                 children: [
                   Text(
-                    widget.comment.userName,
+                    _effectiveUserName,
                     textDirection: TextDirection.rtl,
                     style: TextStyle(
                       color: isDark
@@ -6384,15 +6407,20 @@ class _CommentBubbleState extends State<_CommentBubble> {
   static const gold = Color(0xFFD4A017);
   bool _editing = false;
   late TextEditingController _editCtrl;
+  StreamSubscription<User?>? _profileSubscription;
 
   @override
   void initState() {
     super.initState();
     _editCtrl = TextEditingController(text: widget.comment.text);
+    _profileSubscription = FirebaseAuth.instance.userChanges().listen((_) {
+      if (mounted) setState(() {});
+    });
   }
 
   @override
   void dispose() {
+    _profileSubscription?.cancel();
     _editCtrl.dispose();
     super.dispose();
   }
@@ -6404,6 +6432,24 @@ class _CommentBubbleState extends State<_CommentBubble> {
     final commentEmail = widget.comment.userEmail.trim().toLowerCase();
     if (commentEmail.isNotEmpty && identity == commentEmail) return true;
     return AppAuthService.displayNameFor(user).trim() == widget.comment.userName.trim();
+  }
+
+  String get _effectiveUserName {
+    final user = FirebaseAuth.instance.currentUser;
+    if (_isOwner && user != null) {
+      final currentName = AppAuthService.displayNameFor(user).trim();
+      if (currentName.isNotEmpty && currentName != 'مستخدم') return currentName;
+    }
+    return widget.comment.userName;
+  }
+
+  String get _effectiveUserAvatar {
+    final user = FirebaseAuth.instance.currentUser;
+    if (_isOwner && user != null) {
+      final currentPhoto = (user.photoURL ?? '').trim();
+      if (currentPhoto.isNotEmpty) return currentPhoto;
+    }
+    return widget.comment.userAvatar;
   }
 
   @override
@@ -6445,14 +6491,14 @@ class _CommentBubbleState extends State<_CommentBubble> {
           // Avatar (يمين)
           CircleAvatar(
             radius: 19,
-            backgroundImage: widget.comment.userAvatar.isNotEmpty
-                ? NetworkImage(widget.comment.userAvatar)
+            backgroundImage: _effectiveUserAvatar.isNotEmpty
+                ? NetworkImage(_effectiveUserAvatar)
                 : null,
             backgroundColor: gold.withOpacity(0.2),
-            child: widget.comment.userAvatar.isEmpty
+            child: _effectiveUserAvatar.isEmpty
                 ? Text(
-                    widget.comment.userName.isNotEmpty
-                        ? widget.comment.userName[0].toUpperCase()
+                    _effectiveUserName.isNotEmpty
+                        ? _effectiveUserName[0].toUpperCase()
                         : '?',
                     style: TextStyle(
                         color: gold,
@@ -6472,7 +6518,7 @@ class _CommentBubbleState extends State<_CommentBubble> {
                     crossAxisAlignment: CrossAxisAlignment.end,
                     children: [
                       Text(
-                        widget.comment.userName,
+                        _effectiveUserName,
                         textDirection: TextDirection.rtl,
                         style: TextStyle(
                           color: const Color.fromARGB(255, 82, 106, 143),

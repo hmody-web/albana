@@ -4631,7 +4631,7 @@ class _PdfCommentsSectionState extends State<_PdfCommentsSection> {
   }
 }
 
-class _PdfCommentBubble extends StatelessWidget {
+class _PdfCommentBubble extends StatefulWidget {
   final _PdfFileComment comment;
   final bool isDark;
   final bool canEdit;
@@ -4648,7 +4648,52 @@ class _PdfCommentBubble extends StatelessWidget {
     required this.onDelete,
   });
 
+  @override
+  State<_PdfCommentBubble> createState() => _PdfCommentBubbleState();
+}
+
+class _PdfCommentBubbleState extends State<_PdfCommentBubble> {
   static const gold = Color(0xFFD4A017);
+  StreamSubscription<User?>? _profileSubscription;
+
+  @override
+  void initState() {
+    super.initState();
+    _profileSubscription = FirebaseAuth.instance.userChanges().listen((_) {
+      if (mounted) setState(() {});
+    });
+  }
+
+  @override
+  void dispose() {
+    _profileSubscription?.cancel();
+    super.dispose();
+  }
+
+  bool get _isOwner {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return false;
+    final identity = AppAuthService.userIdentity(user).trim().toLowerCase();
+    return widget.comment.userEmail.trim().toLowerCase() == identity;
+  }
+
+  String get _effectiveName {
+    final user = FirebaseAuth.instance.currentUser;
+    if (_isOwner && user != null) {
+      final name = AppAuthService.displayNameFor(user).trim();
+      if (name.isNotEmpty && name != 'مستخدم') return name;
+    }
+    return widget.comment.userName;
+  }
+
+  String get _effectiveAvatar {
+    final user = FirebaseAuth.instance.currentUser;
+    if (_isOwner && user != null) {
+      final avatar = (user.photoURL ?? '').trim();
+      if (avatar.isNotEmpty) return avatar;
+    }
+    return widget.comment.userAvatar;
+  }
 
   DateTime? _parseCommentTime(String value) {
     final raw = value.trim();
@@ -4676,9 +4721,9 @@ class _PdfCommentBubble extends StatelessWidget {
   }
 
   String get _timeText {
-    if (comment.createdAt.isEmpty) return '';
-    final parsed = _parseCommentTime(comment.createdAt);
-    if (parsed == null) return comment.createdAt.split(' ').first;
+    if (widget.comment.createdAt.isEmpty) return '';
+    final parsed = _parseCommentTime(widget.comment.createdAt);
+    if (parsed == null) return widget.comment.createdAt.split(' ').first;
 
     final now = DateTime.now();
     final diff = now.difference(parsed);
@@ -4691,9 +4736,9 @@ class _PdfCommentBubble extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final textPrimary = isDark ? const Color(0xFFEDEDED) : const Color(0xFF17120A);
-    final textSub = isDark ? Colors.white60 : Colors.black45;
-    final bubble = isDark ? const Color(0xFF171717) : const Color(0xFFFFFCF5);
+    final textPrimary = widget.isDark ? const Color(0xFFEDEDED) : const Color(0xFF17120A);
+    final textSub = widget.isDark ? Colors.white60 : Colors.black45;
+    final bubble = widget.isDark ? const Color(0xFF171717) : const Color(0xFFFFFCF5);
 
     return TweenAnimationBuilder<double>(
       tween: Tween(begin: 0.96, end: 1),
@@ -4709,13 +4754,13 @@ class _PdfCommentBubble extends StatelessWidget {
         decoration: BoxDecoration(
           color: bubble,
           borderRadius: BorderRadius.circular(22),
-          border: Border.all(color: gold.withOpacity(isDark ? 0.16 : 0.20)),
+          border: Border.all(color: gold.withOpacity(widget.isDark ? 0.16 : 0.20)),
         ),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           textDirection: TextDirection.rtl,
           children: [
-            _CommentAvatar(url: comment.userAvatar, name: comment.userName, isDark: isDark),
+            _CommentAvatar(url: _effectiveAvatar, name: _effectiveName, isDark: widget.isDark),
             const SizedBox(width: 10),
             Expanded(
               child: Column(
@@ -4726,7 +4771,7 @@ class _PdfCommentBubble extends StatelessWidget {
                     children: [
                       Expanded(
                         child: Text(
-                          comment.userName.isEmpty ? 'مستخدم' : comment.userName,
+                          _effectiveName.isEmpty ? 'مستخدم' : _effectiveName,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           textAlign: TextAlign.right,
@@ -4737,21 +4782,21 @@ class _PdfCommentBubble extends StatelessWidget {
                         const SizedBox(width: 8),
                         Text(_timeText, style: TextStyle(color: textSub, fontSize: 11.5, fontWeight: FontWeight.w800)),
                       ],
-                      if (canEdit || canDelete) ...[
+                      if (widget.canEdit || widget.canDelete) ...[
                         const SizedBox(width: 2),
                         PopupMenuButton<String>(
                           padding: EdgeInsets.zero,
                           icon: Icon(Icons.more_horiz_rounded, color: textSub, size: 20),
-                          color: isDark ? const Color(0xFF191919) : Colors.white,
+                          color: widget.isDark ? const Color(0xFF191919) : Colors.white,
                           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
                           onSelected: (value) {
-                            if (value == 'edit') onEdit();
-                            if (value == 'delete') onDelete();
+                            if (value == 'edit') widget.onEdit();
+                            if (value == 'delete') widget.onDelete();
                           },
                           itemBuilder: (_) => [
-                            if (canEdit)
+                            if (widget.canEdit)
                               const PopupMenuItem(value: 'edit', child: Text('تعديل')),
-                            if (canDelete)
+                            if (widget.canDelete)
                               const PopupMenuItem(value: 'delete', child: Text('حذف')),
                           ],
                         ),
@@ -4760,9 +4805,9 @@ class _PdfCommentBubble extends StatelessWidget {
                   ),
                   const SizedBox(height: 5),
                   Text(
-                    comment.text,
+                    widget.comment.text,
                     textAlign: TextAlign.right,
-                    style: TextStyle(color: isDark ? Colors.white70 : Colors.black87, fontSize: 13.5, height: 1.65, fontWeight: FontWeight.w700),
+                    style: TextStyle(color: widget.isDark ? Colors.white70 : Colors.black87, fontSize: 13.5, height: 1.65, fontWeight: FontWeight.w700),
                   ),
                 ],
               ),

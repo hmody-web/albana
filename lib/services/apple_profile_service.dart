@@ -7,6 +7,7 @@ import 'package:http/http.dart' as http;
 import 'package:image_cropper/image_cropper.dart';
 import 'package:image_picker/image_picker.dart';
 
+
 class AppleProfileService {
   AppleProfileService._();
 
@@ -154,6 +155,24 @@ class _AppleProfilePageState extends State<_AppleProfilePage> {
     return url;
   }
 
+  Future<void> _syncHistoricalComments(User user, String name, String photoUrl) async {
+    final response = await http.post(
+      Uri.parse(AppleProfileService._uploadUrl),
+      body: {
+        'uid': user.uid,
+        'user_identity': ((user.email ?? '').trim().isNotEmpty ? user.email!.trim() : 'apple.${user.uid}@users.majidalbana.local'),
+        'display_name': name,
+        'avatar_url': photoUrl,
+      },
+    ).timeout(const Duration(seconds: 20));
+
+    Map<String, dynamic> data = {};
+    try { data = jsonDecode(response.body) as Map<String, dynamic>; } catch (_) {}
+    if (response.statusCode != 200 || data['success'] != true) {
+      throw Exception('profile_sync_failed');
+    }
+  }
+
   Future<void> _save() async {
     FocusScope.of(context).unfocus();
     if (!_canSave || _saving) return;
@@ -163,9 +182,12 @@ class _AppleProfilePageState extends State<_AppleProfilePage> {
       final user = FirebaseAuth.instance.currentUser ?? widget.user;
       String photoUrl = (user.photoURL ?? '').trim();
       if (_image != null) photoUrl = await _uploadPhoto(_image!);
-      await user.updateDisplayName(_nameController.text.trim());
+      final newName = _nameController.text.trim();
+      await user.updateDisplayName(newName);
       if (photoUrl.isNotEmpty) await user.updatePhotoURL(photoUrl);
       await user.reload();
+      final refreshedUser = FirebaseAuth.instance.currentUser ?? user;
+      await _syncHistoricalComments(refreshedUser, newName, photoUrl);
       if (!mounted) return;
       Navigator.pop(context, true);
     } catch (_) {
