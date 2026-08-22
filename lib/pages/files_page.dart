@@ -15,6 +15,24 @@ import 'package:http/http.dart' as http;
 import 'package:flutter/gestures.dart';
 import 'package:share_plus/share_plus.dart';
 
+
+Future<void> _trackContentView(String type, Object id) async {
+  try {
+    final user = FirebaseAuth.instance.currentUser;
+    await http.post(
+      Uri.parse('https://majidalbana.com/track_content_view.php'),
+      body: <String, String>{
+        'type': type,
+        'id': '$id',
+        'source': 'app',
+        'user_email': user?.email ?? '',
+        'user_name': user?.displayName ?? '',
+        'session_key': user?.email?.trim().toLowerCase() ?? '',
+      },
+    ).timeout(const Duration(seconds: 5));
+  } catch (_) {}
+}
+
 const List<String> kPdfDefaultCategories = [
   'المخططات الأنشائية',
   'الكتب',
@@ -1071,6 +1089,7 @@ bool _isSupervisor() {
   }
 
   void _openFileDetails(PdfFileItem file) {
+    unawaited(_trackContentView('pdf', file.id));
     Navigator.of(context).push(
       PageRouteBuilder(
         transitionDuration: const Duration(milliseconds: 420),
@@ -4547,11 +4566,10 @@ class _PdfCommentsSectionState extends State<_PdfCommentsSection> {
                                     if (expanded)
                                       Container(
                                         margin: const EdgeInsets.only(right: 28, bottom: 8),
-                                        decoration: BoxDecoration(
-                                          color: widget.isDark ? Colors.white.withOpacity(0.025) : const Color(0xFF2684FF).withOpacity(0.025),
-                                          borderRadius: BorderRadius.circular(14),
-                                          border: Border(right: BorderSide(color: const Color(0xFF2684FF).withOpacity(0.28), width: 2)),
-                                        ),
+                                        decoration: BoxDecoration(border: Border(
+                                          top: BorderSide(color: widget.isDark ? Colors.white12 : Colors.black12),
+                                          bottom: BorderSide(color: widget.isDark ? Colors.white12 : Colors.black12),
+                                        )),
                                         child: Column(children: [
                                           for (int i=0; i<replies.length; i++) ...[
                                             Builder(builder: (context) {
@@ -4564,7 +4582,7 @@ class _PdfCommentsSectionState extends State<_PdfCommentsSection> {
                                                 compact: true,
                                               );
                                             }),
-                                            if (i != replies.length - 1) Divider(height: 1, indent: 12, endIndent: 12, color: widget.isDark ? Colors.white.withOpacity(0.05) : Colors.black.withOpacity(0.05)),
+                                            if (i != replies.length - 1) Divider(height: 1, color: widget.isDark ? Colors.white10 : Colors.black12),
                                           ]
                                         ]),
                                       ),
@@ -4822,8 +4840,8 @@ class _PdfCommentBubbleState extends State<_PdfCommentBubble> {
         padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
           color: bubble,
-          borderRadius: BorderRadius.circular(18),
-          border: Border.all(color: widget.comment.isReply ? const Color(0xFF2684FF).withOpacity(0.16) : gold.withOpacity(widget.isDark ? 0.12 : 0.16)),
+          borderRadius: BorderRadius.circular(22),
+          border: Border.all(color: gold.withOpacity(widget.isDark ? 0.16 : 0.20)),
         ),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -4874,14 +4892,10 @@ class _PdfCommentBubbleState extends State<_PdfCommentBubble> {
                   ),
                   const SizedBox(height: 5),
                   if (widget.comment.isReply && widget.comment.replyToName.isNotEmpty) ...[
-                    Align(
+                    Container(
                       alignment: Alignment.centerRight,
-                      child: Container(
-                        margin: const EdgeInsets.only(bottom: 6),
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                        decoration: BoxDecoration(color: const Color(0xFF2684FF).withOpacity(0.10), borderRadius: BorderRadius.circular(9)),
-                        child: Text('رد على @${widget.comment.replyToName}', textAlign: TextAlign.right, textDirection: TextDirection.rtl, style: const TextStyle(color: Color(0xFF2684FF), fontSize: 11.5, fontWeight: FontWeight.w900)),
-                      ),
+                      margin: const EdgeInsets.only(bottom: 5),
+                      child: Text('رد على @${widget.comment.replyToName}', textAlign: TextAlign.right, style: const TextStyle(color: Color(0xFF2684FF), fontSize: 11.5, fontWeight: FontWeight.w900)),
                     ),
                   ],
                   Text(

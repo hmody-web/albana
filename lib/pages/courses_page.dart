@@ -16,6 +16,24 @@ import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 import '../widgets/shared_widgets.dart';
 
+
+Future<void> _trackContentView(String type, Object id) async {
+  try {
+    final user = FirebaseAuth.instance.currentUser;
+    await http.post(
+      Uri.parse('https://majidalbana.com/track_content_view.php'),
+      body: <String, String>{
+        'type': type,
+        'id': '$id',
+        'source': 'app',
+        'user_email': user?.email ?? '',
+        'user_name': user?.displayName ?? '',
+        'session_key': user?.email?.trim().toLowerCase() ?? '',
+      },
+    ).timeout(const Duration(seconds: 5));
+  } catch (_) {}
+}
+
 String _registrationPdfValue(Map<String, dynamic> row, List<String> keys) {
   for (final key in keys) {
     final value = row[key];
@@ -4676,6 +4694,7 @@ const _ScheduleTable({
   static const gold = Color(0xFFD4A017);
 
   void _openLocation(BuildContext context, _ScheduleItem item) {
+    unawaited(_trackContentView('schedule', item.id));
     _openLectureLocationUrl(context, item.urlLocation);
   }
   Future<void> _showEditDialog(

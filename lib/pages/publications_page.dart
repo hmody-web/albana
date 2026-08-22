@@ -22,6 +22,24 @@ import 'package:provider/provider.dart';
 import 'package:image_picker/image_picker.dart' show ImagePicker, ImageSource, XFile;
 import 'package:video_thumbnail/video_thumbnail.dart';
 
+
+Future<void> _trackContentView(String type, Object id) async {
+  try {
+    final user = FirebaseAuth.instance.currentUser;
+    await http.post(
+      Uri.parse('https://majidalbana.com/track_content_view.php'),
+      body: <String, String>{
+        'type': type,
+        'id': '$id',
+        'source': 'app',
+        'user_email': user?.email ?? '',
+        'user_name': user?.displayName ?? '',
+        'session_key': user?.email?.trim().toLowerCase() ?? '',
+      },
+    ).timeout(const Duration(seconds: 5));
+  } catch (_) {}
+}
+
 bool _isSupervisorEmail(String? email) {
   final cleanEmail = email?.trim().toLowerCase();
   return cleanEmail == 'hmode.qq@gmail.com' || cleanEmail == 'hmode.qu@gmail.com' || cleanEmail == 'info@majidalbana.com';
@@ -2938,6 +2956,7 @@ class _PostCardState extends State<_PostCard> with AutomaticKeepAliveClientMixin
   @override
   void initState() {
     super.initState();
+    unawaited(_trackContentView('post', widget.post.id));
 
 _realtimeBusListener = _onRealtimeUpdate;
 _PostRealtimeBus.tick.addListener(_realtimeBusListener!);
@@ -4740,9 +4759,10 @@ Listener(
                                                 Container(
                                                   margin: const EdgeInsets.only(right: 28, top: 2),
                                                   decoration: BoxDecoration(
-                                                    color: isDark ? Colors.white.withOpacity(0.025) : const Color(0xFF2684FF).withOpacity(0.025),
-                                                    borderRadius: BorderRadius.circular(14),
-                                                    border: Border(right: BorderSide(color: const Color(0xFF2684FF).withOpacity(0.28), width: 2)),
+                                                    border: Border(
+                                                      top: BorderSide(color: isDark ? Colors.white.withOpacity(0.10) : Colors.black.withOpacity(0.10)),
+                                                      bottom: BorderSide(color: isDark ? Colors.white.withOpacity(0.10) : Colors.black.withOpacity(0.10)),
+                                                    ),
                                                   ),
                                                   child: Column(
                                                     children: [
@@ -4763,7 +4783,7 @@ Listener(
                                                           ),
                                                         ),
                                                         if (ri != replies.length - 1)
-                                                          Divider(height: 1, indent: 12, endIndent: 12, thickness: 0.5, color: isDark ? Colors.white.withOpacity(0.05) : Colors.black.withOpacity(0.05)),
+                                                          Divider(height: 1, thickness: 0.6, color: isDark ? Colors.white.withOpacity(0.08) : Colors.black.withOpacity(0.08)),
                                                       ],
                                                     ],
                                                   ),
@@ -5114,10 +5134,11 @@ class _CommentTileState extends State<_CommentTile> {
                   style: TextStyle(color: textPrimary, fontSize: widget.compact ? 13 : 13.5, height: 1.55),
                 ),
               const SizedBox(height: 5),
-              if (_editing)
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.end,
-                  children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                textDirection: TextDirection.rtl,
+                children: [
+                  if (_editing) ...[
                     TextButton(
                       style: TextButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 7), minimumSize: const Size(0, 28), tapTargetSize: MaterialTapTargetSize.shrinkWrap),
                       onPressed: () async {
@@ -5133,17 +5154,14 @@ class _CommentTileState extends State<_CommentTile> {
                       onPressed: () { _editCtrl.text = widget.comment.text; setState(() => _editing = false); },
                       child: Text('إلغاء', style: TextStyle(color: textSub, fontSize: 12)),
                     ),
-                  ],
-                )
-              else if (canReply)
-                Align(
-                  alignment: Alignment.centerRight,
-                  child: TextButton(
-                    style: TextButton.styleFrom(padding: EdgeInsets.zero, minimumSize: const Size(32, 28), tapTargetSize: MaterialTapTargetSize.shrinkWrap),
-                    onPressed: () => widget.onReply?.call(widget.comment),
-                    child: const Text('رد', textAlign: TextAlign.right, style: TextStyle(color: Color(0xFF2684FF), fontSize: 12, fontWeight: FontWeight.w900)),
-                  ),
-                ),
+                  ] else if (canReply)
+                    TextButton(
+                      style: TextButton.styleFrom(padding: EdgeInsets.zero, minimumSize: const Size(32, 28), tapTargetSize: MaterialTapTargetSize.shrinkWrap),
+                      onPressed: () => widget.onReply?.call(widget.comment),
+                      child: const Text('رد', style: TextStyle(color: Color(0xFF2684FF), fontSize: 12, fontWeight: FontWeight.w800)),
+                    ),
+                ],
+              ),
             ],
           ),
         ),
@@ -6417,11 +6435,10 @@ if (p.videoUrl != null)
                           ))),
                         if (expanded)
                           Padding(padding: const EdgeInsets.only(right: 30, left: 8, bottom: 5), child: Container(
-                            decoration: BoxDecoration(
-                              color: isDark ? Colors.white.withOpacity(0.025) : const Color(0xFF2684FF).withOpacity(0.025),
-                              borderRadius: BorderRadius.circular(14),
-                              border: Border(right: BorderSide(color: const Color(0xFF2684FF).withOpacity(0.28), width: 2)),
-                            ),
+                            decoration: BoxDecoration(border: Border(
+                              top: BorderSide(color: isDark ? Colors.white.withOpacity(0.08) : Colors.black.withOpacity(0.08)),
+                              bottom: BorderSide(color: isDark ? Colors.white.withOpacity(0.08) : Colors.black.withOpacity(0.08)),
+                            )),
                             child: Column(children: [
                               for (int i = 0; i < replies.length; i++) ...[
                                 _CommentBubble(comment: replies[i], isDark: isDark, onEdit: _editComment, onDelete: _deleteComment, onReply: (target) => setState(() => _replyTarget = target), isSupervisor: isSupervisor, highlighted: _highlightedCommentId == replies[i].id, compact: true),
@@ -6659,20 +6676,21 @@ class _CommentBubbleState extends State<_CommentBubble> {
                 else
                   Text(widget.comment.text, textDirection: TextDirection.rtl, textAlign: TextAlign.right, style: TextStyle(color: textPrimary, fontSize: widget.compact ? 13 : 13.5, height: 1.55)),
                 const SizedBox(height: 2),
-                if (_editing)
-                  Row(mainAxisAlignment: MainAxisAlignment.end, children: [
-                    TextButton(onPressed: () async { final value = _editCtrl.text.trim(); if (value.isEmpty) return; await widget.onEdit?.call(widget.comment.id, value); if (mounted) setState(() => _editing = false); }, child: const Text('حفظ', style: TextStyle(color: gold, fontWeight: FontWeight.w800))),
-                    TextButton(onPressed: () { _editCtrl.text = widget.comment.text; setState(() => _editing = false); }, child: Text('إلغاء', style: TextStyle(color: textSub))),
-                  ])
-                else if (canReply)
-                  Align(
-                    alignment: Alignment.centerRight,
-                    child: TextButton(
-                      style: TextButton.styleFrom(padding: EdgeInsets.zero, minimumSize: const Size(32, 26), tapTargetSize: MaterialTapTargetSize.shrinkWrap),
-                      onPressed: () => widget.onReply?.call(widget.comment),
-                      child: const Text('رد', textAlign: TextAlign.right, style: TextStyle(color: Color(0xFF2684FF), fontSize: 12, fontWeight: FontWeight.w900)),
-                    ),
-                  ),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  textDirection: TextDirection.rtl,
+                  children: [
+                    if (_editing) ...[
+                      TextButton(onPressed: () async { final value = _editCtrl.text.trim(); if (value.isEmpty) return; await widget.onEdit?.call(widget.comment.id, value); if (mounted) setState(() => _editing = false); }, child: const Text('حفظ', style: TextStyle(color: gold, fontWeight: FontWeight.w800))),
+                      TextButton(onPressed: () { _editCtrl.text = widget.comment.text; setState(() => _editing = false); }, child: Text('إلغاء', style: TextStyle(color: textSub))),
+                    ] else if (canReply)
+                      TextButton(
+                        style: TextButton.styleFrom(padding: EdgeInsets.zero, minimumSize: const Size(32, 26), tapTargetSize: MaterialTapTargetSize.shrinkWrap),
+                        onPressed: () => widget.onReply?.call(widget.comment),
+                        child: const Text('رد', style: TextStyle(color: Color(0xFF2684FF), fontSize: 12, fontWeight: FontWeight.w800)),
+                      ),
+                  ],
+                ),
               ],
             ),
           ),

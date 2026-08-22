@@ -23,6 +23,26 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   );
 
   debugPrint('FCM Background Message: ${message.messageId}');
+  try {
+    final rawId = message.data['notification_id']?.toString() ?? '';
+    final id = int.tryParse(rawId) ?? 0;
+    if (id > 0) {
+      final user = FirebaseAuth.instance.currentUser;
+      final token = await FirebaseMessaging.instance.getToken() ?? '';
+      await http.post(
+        Uri.parse('https://majidalbana.com/admin/notifications/receipt.php'),
+        body: <String, String>{
+          'notification_id': '$id',
+          'user_email': user?.email ?? '',
+          'user_name': user?.displayName ?? '',
+          'device_token': token,
+          'opened': '0',
+        },
+      ).timeout(const Duration(seconds: 6));
+    }
+  } catch (e) {
+    debugPrint('Background notification receipt error: $e');
+  }
 }
 
 class FirebaseNotificationService {
@@ -183,6 +203,28 @@ class FirebaseNotificationService {
     _notificationClickController.add(data);
   }
 
+  static Future<void> _ackAdminNotification(RemoteMessage message, {bool opened = false}) async {
+    try {
+      final rawId = message.data['notification_id']?.toString() ?? '';
+      final id = int.tryParse(rawId) ?? 0;
+      if (id <= 0) return;
+      final user = FirebaseAuth.instance.currentUser;
+      final token = await _messaging.getToken() ?? '';
+      await http.post(
+        Uri.parse('https://majidalbana.com/admin/notifications/receipt.php'),
+        body: <String, String>{
+          'notification_id': '$id',
+          'user_email': user?.email ?? '',
+          'user_name': user?.displayName ?? '',
+          'device_token': token,
+          'opened': opened ? '1' : '0',
+        },
+      ).timeout(const Duration(seconds: 6));
+    } catch (e) {
+      debugPrint('Notification receipt ack error: $e');
+    }
+  }
+
   static final FirebaseMessaging _messaging = FirebaseMessaging.instance;
   static final FlutterLocalNotificationsPlugin _localNotifications =
       FlutterLocalNotificationsPlugin();
@@ -249,7 +291,6 @@ static Future<void> _completeStartupNotificationWork() async {
     await applySavedNotificationSubscriptions();
     await _syncSupervisorTopic();
     await _syncUserReplyTopic();
-    await _syncDirectDeviceToken();
     await _printFcmToken();
   } catch (e) {
     debugPrint('FirebaseNotificationService startup error: $e');
@@ -484,7 +525,6 @@ static Future<void> _setupLocalNotifications() async {
     _authSubscription = FirebaseAuth.instance.authStateChanges().listen((_) {
       unawaited(_syncSupervisorTopic());
       unawaited(_syncUserReplyTopic());
-      unawaited(_syncDirectDeviceToken());
     });
   }
 
@@ -511,46 +551,27 @@ static Future<void> _setupLocalNotifications() async {
 
       if (previous.isNotEmpty && previous != next) {
         await _unsubscribeFromTopic(previous);
-        await prefs.remove(_lastUserTopicKey);
+      }
+      if (next.isNotEmpty && next != previous) {
+        await _subscribeToTopic(next);
       }
 
       if (next.isEmpty) {
         await prefs.remove(_lastUserTopicKey);
-        return;
-      }
-
-      // On iOS, topic subscription can fail until APNs has produced a token.
-      // Never mark the private user topic as subscribed unless FCM confirms it.
-      if (defaultTargetPlatform == TargetPlatform.iOS) {
-        final apnsReady = await _waitForApnsToken();
-        if (!apnsReady) {
-          debugPrint('User reply topic delayed: APNS token is not ready.');
-          await prefs.remove(_lastUserTopicKey);
-          return;
-        }
-      }
-
-      // Re-subscribe even when the saved topic matches. This repairs older
-      // installs that saved the topic name after a failed iOS subscription.
-      final subscribed = await _subscribeToTopic(next);
-      if (subscribed) {
-        await prefs.setString(_lastUserTopicKey, next);
       } else {
-        await prefs.remove(_lastUserTopicKey);
+        await prefs.setString(_lastUserTopicKey, next);
       }
     } catch (e) {
       debugPrint('User reply topic sync error: $e');
     }
   }
 
-  static Future<bool> _subscribeToTopic(String topic) async {
+  static Future<void> _subscribeToTopic(String topic) async {
     try {
       await _messaging.subscribeToTopic(topic);
       debugPrint('Subscribed to FCM topic: $topic');
-      return true;
     } catch (e) {
       debugPrint('Subscribe to $topic topic error: $e');
-      return false;
     }
   }
 
@@ -653,30 +674,6 @@ static Future<void> _setupLocalNotifications() async {
     return null;
   }
 
-  static Future<void> _syncDirectDeviceToken({String? tokenOverride}) async {
-    if (kIsWeb) return;
-    try {
-      if (defaultTargetPlatform == TargetPlatform.iOS && !await _waitForApnsToken()) return;
-      final token = tokenOverride ?? await _messaging.getToken();
-      if (token == null || token.trim().isEmpty) return;
-      final email = FirebaseAuth.instance.currentUser?.email?.trim().toLowerCase() ?? '';
-      final response = await http.post(
-        Uri.parse('https://majidalbana.com/admin/register_device_token.php'),
-        body: <String, String>{
-          'token': token,
-          'user_email': email,
-          'platform': defaultTargetPlatform.name,
-          'action': email.isEmpty ? 'unregister' : 'register',
-        },
-      ).timeout(const Duration(seconds: 15));
-      if (response.statusCode < 200 || response.statusCode >= 300) {
-        debugPrint('Direct FCM token sync HTTP ${response.statusCode}');
-      }
-    } catch (e) {
-      debugPrint('Direct FCM token sync error: $e');
-    }
-  }
-
   static Future<void> _printFcmToken() async {
     try {
       final token = await _messaging.getToken();
@@ -687,7 +684,6 @@ static Future<void> _setupLocalNotifications() async {
         await applySavedNotificationSubscriptions();
         await _syncSupervisorTopic();
         await _syncUserReplyTopic();
-        await _syncDirectDeviceToken(tokenOverride: newToken);
       });
     } catch (e) {
       debugPrint('FCM token error: $e');
@@ -698,6 +694,7 @@ static Future<void> _setupLocalNotifications() async {
     FirebaseMessaging.onMessage.listen((RemoteMessage message) async {
       debugPrint('FCM Foreground Message: ${message.messageId}');
       debugPrint('FCM Data: ${message.data}');
+      unawaited(_ackAdminNotification(message));
 
       if (!await _canShowForegroundMessage(message)) {
         debugPrint('Foreground notification muted by user preferences.');
@@ -861,6 +858,7 @@ static Future<void> _setupLocalNotifications() async {
       debugPrint('Notification opened from background');
       debugPrint('Message data: ${message.data}');
 
+      unawaited(_ackAdminNotification(message, opened: true));
       _handleNotificationClick(message.data);
     });
 
@@ -870,6 +868,7 @@ static Future<void> _setupLocalNotifications() async {
       debugPrint('Notification opened from terminated state');
       debugPrint('Initial message data: ${initialMessage.data}');
 
+      unawaited(_ackAdminNotification(initialMessage, opened: true));
       _initialNotificationData ??= initialMessage.data;
     }
   }
