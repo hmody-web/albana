@@ -2708,7 +2708,7 @@ Future<void> _sharePublicationPost(
   BuildContext context,
   _PublicationPost post,
 ) async {
-  final url = 'https://majidalbana.com/post/index.php?id=${post.id}';
+  final url = 'https://majidalbana.com/post/${post.id}';
 
   Rect? shareOrigin;
   try {
@@ -4850,8 +4850,9 @@ Listener(
                                                         ),
                                                       ),
                                                       if (ri != replies.length - 1)
+                                                        const SizedBox(height: 10),
                                                         Transform.translate(
-                                                          offset: const Offset(0, -7),
+                                                          offset: const Offset(0, 0),
                                                           child: Divider(
                                                             height: 1,
                                                             thickness: 0.6,
@@ -6636,6 +6637,7 @@ if (p.videoUrl != null)
                                         ),
                                       ),
                                       if (i != replies.length - 1)
+                                        const SizedBox(height: 10),
                                         Divider(
                                           height: 1,
                                           thickness: 0.5,
