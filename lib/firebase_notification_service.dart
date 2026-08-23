@@ -15,6 +15,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'firebase_options.dart';
+import 'services/app_auth_service.dart';
 
 @pragma('vm:entry-point')
 Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
@@ -33,8 +34,8 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
         Uri.parse('https://majidalbana.com/admin/notifications/receipt.php'),
         body: <String, String>{
           'notification_id': '$id',
-          'user_email': user?.email ?? '',
-          'user_name': user?.displayName ?? '',
+          'user_email': user == null ? '' : AppAuthService.userIdentity(user),
+          'user_name': AppAuthService.displayNameFor(user),
           'device_token': token,
           'opened': '0',
         },
@@ -75,6 +76,7 @@ class FirebaseNotificationService {
 
   static bool _initialized = false;
   static StreamSubscription<User?>? _authSubscription;
+  static StreamSubscription<String>? _tokenRefreshSubscription;
   static const String _supervisorsTopic = 'supervisors';
   static const String _lastUserTopicKey = 'last_fcm_user_topic';
   static const String _allUsersTopic = 'all_users';
@@ -214,8 +216,8 @@ class FirebaseNotificationService {
         Uri.parse('https://majidalbana.com/admin/notifications/receipt.php'),
         body: <String, String>{
           'notification_id': '$id',
-          'user_email': user?.email ?? '',
-          'user_name': user?.displayName ?? '',
+          'user_email': user == null ? '' : AppAuthService.userIdentity(user),
+          'user_name': AppAuthService.displayNameFor(user),
           'device_token': token,
           'opened': opened ? '1' : '0',
         },
@@ -257,6 +259,7 @@ class FirebaseNotificationService {
       _listenToForegroundMessages();
       await _listenToNotificationClicks();
       _listenToAuthChangesForSupervisorTopic();
+      _listenToTokenRefresh();
       unawaited(_completeStartupNotificationWork());
     } catch (e) {
       debugPrint('FirebaseNotificationService initialize error: $e');
@@ -537,8 +540,8 @@ static Future<void> _setupLocalNotifications() async {
     }
   }
 
-  static String? _userTopicForEmail(String? email) {
-    final normalized = email?.trim().toLowerCase() ?? '';
+  static String? _userTopicForIdentity(String? identity) {
+    final normalized = identity?.trim().toLowerCase() ?? '';
     if (normalized.isEmpty) return null;
     return 'user_${sha256.convert(utf8.encode(normalized))}';
   }
@@ -547,31 +550,41 @@ static Future<void> _setupLocalNotifications() async {
     try {
       final prefs = await SharedPreferences.getInstance();
       final previous = prefs.getString(_lastUserTopicKey)?.trim() ?? '';
-      final next = _userTopicForEmail(FirebaseAuth.instance.currentUser?.email) ?? '';
+      final user = FirebaseAuth.instance.currentUser;
+      final identity = user == null ? '' : AppAuthService.userIdentity(user);
+      final next = _userTopicForIdentity(identity) ?? '';
 
       if (previous.isNotEmpty && previous != next) {
         await _unsubscribeFromTopic(previous);
       }
-      if (next.isNotEmpty && next != previous) {
-        await _subscribeToTopic(next);
-      }
 
       if (next.isEmpty) {
         await prefs.remove(_lastUserTopicKey);
-      } else {
+        return;
+      }
+
+      // Topic subscription is idempotent. Subscribe every time we sync so an
+      // early iOS attempt that happened before APNs became ready is retried.
+      final subscribed = await _subscribeToTopic(next);
+      if (subscribed) {
         await prefs.setString(_lastUserTopicKey, next);
+      } else if (previous == next) {
+        // Do not leave a stale "subscribed" marker after a failed iOS attempt.
+        await prefs.remove(_lastUserTopicKey);
       }
     } catch (e) {
       debugPrint('User reply topic sync error: $e');
     }
   }
 
-  static Future<void> _subscribeToTopic(String topic) async {
+  static Future<bool> _subscribeToTopic(String topic) async {
     try {
       await _messaging.subscribeToTopic(topic);
       debugPrint('Subscribed to FCM topic: $topic');
+      return true;
     } catch (e) {
       debugPrint('Subscribe to $topic topic error: $e');
+      return false;
     }
   }
 
@@ -600,6 +613,7 @@ static Future<void> _setupLocalNotifications() async {
     final topic = '${message.data['notification_topic'] ?? message.data['topic'] ?? ''}'.toLowerCase().trim();
     if (topic == _supervisorsTopic ||
         type == 'new_post_comment' ||
+        type == 'post_comment_reply' ||
         type == 'new_post_like' ||
         type == 'new_registration') {
       return true;
@@ -674,17 +688,20 @@ static Future<void> _setupLocalNotifications() async {
     return null;
   }
 
+  static void _listenToTokenRefresh() {
+    _tokenRefreshSubscription?.cancel();
+    _tokenRefreshSubscription = _messaging.onTokenRefresh.listen((newToken) async {
+      debugPrint('FCM TOKEN REFRESHED: $newToken');
+      await applySavedNotificationSubscriptions();
+      await _syncSupervisorTopic();
+      await _syncUserReplyTopic();
+    });
+  }
+
   static Future<void> _printFcmToken() async {
     try {
       final token = await _messaging.getToken();
       debugPrint('FCM TOKEN: $token');
-
-      FirebaseMessaging.instance.onTokenRefresh.listen((newToken) async {
-        debugPrint('FCM TOKEN REFRESHED: $newToken');
-        await applySavedNotificationSubscriptions();
-        await _syncSupervisorTopic();
-        await _syncUserReplyTopic();
-      });
     } catch (e) {
       debugPrint('FCM token error: $e');
     }

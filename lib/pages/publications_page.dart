@@ -3282,6 +3282,8 @@ Future<void> _loadComments() async {
           'comment_text': text,
           'user_email': AppAuthService.userIdentity(user),
           if (replyTo != null) 'reply_to_comment_id': '${replyTo.id}',
+          if (replyTo != null) 'reply_to_name': replyTo.userName,
+          if (replyTo != null) 'reply_to_email': replyTo.userEmail,
         },
       ).timeout(const Duration(seconds: 15));
 
@@ -3884,6 +3886,61 @@ void _openCommentsSheet({bool autoFocus = false}) {
           ],
         ),
       ),
+      ),
+    );
+  }
+}
+
+class _ReplyContextChip extends StatelessWidget {
+  final String name;
+  final bool isDark;
+
+  const _ReplyContextChip({
+    required this.name,
+    required this.isDark,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    const blue = Color(0xFF2684FF);
+    final safeName = name.trim().isEmpty ? 'المستخدم' : name.trim();
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+      decoration: BoxDecoration(
+        color: blue.withOpacity(isDark ? 0.18 : 0.09),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: blue.withOpacity(isDark ? 0.34 : 0.20)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        textDirection: TextDirection.rtl,
+        children: [
+          Container(
+            width: 22,
+            height: 22,
+            decoration: BoxDecoration(
+              color: blue.withOpacity(isDark ? 0.22 : 0.12),
+              shape: BoxShape.circle,
+            ),
+            child: const Icon(Icons.subdirectory_arrow_left_rounded, color: blue, size: 14),
+          ),
+          const SizedBox(width: 6),
+          const Text(
+            'رد على',
+            textDirection: TextDirection.rtl,
+            style: TextStyle(color: blue, fontSize: 11, fontWeight: FontWeight.w700),
+          ),
+          const SizedBox(width: 4),
+          Flexible(
+            child: Text(
+              '@$safeName',
+              textDirection: TextDirection.rtl,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(color: blue, fontSize: 11.5, fontWeight: FontWeight.w900),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -5031,7 +5088,25 @@ class _CommentTileState extends State<_CommentTile> {
     final canReply = FirebaseAuth.instance.currentUser != null && widget.onReply != null;
     final avatarSize = widget.compact ? 15.0 : 18.0;
 
-    return Row(
+    return Container(
+      margin: widget.comment.isReply
+          ? const EdgeInsets.symmetric(vertical: 2)
+          : EdgeInsets.zero,
+      padding: widget.comment.isReply
+          ? const EdgeInsets.fromLTRB(10, 9, 10, 7)
+          : EdgeInsets.zero,
+      decoration: BoxDecoration(
+        color: widget.comment.isReply
+            ? const Color(0xFF2684FF).withOpacity(isDark ? 0.075 : 0.045)
+            : Colors.transparent,
+        borderRadius: BorderRadius.circular(14),
+        border: widget.comment.isReply
+            ? Border.all(
+                color: const Color(0xFF2684FF).withOpacity(isDark ? 0.22 : 0.13),
+              )
+            : null,
+      ),
+      child: Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       textDirection: TextDirection.rtl,
       children: [
@@ -5088,21 +5163,13 @@ class _CommentTileState extends State<_CommentTile> {
                   ],
                 ],
               ),
-              if (widget.comment.isReply && widget.comment.replyToName.trim().isNotEmpty) ...[
-                const SizedBox(height: 4),
+              if (widget.comment.isReply) ...[
+                const SizedBox(height: 5),
                 Align(
                   alignment: Alignment.centerRight,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF2684FF).withOpacity(isDark ? 0.16 : 0.10),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Text(
-                      'رد على @${widget.comment.replyToName}',
-                      textDirection: TextDirection.rtl,
-                      style: const TextStyle(color: Color(0xFF2684FF), fontSize: 11.5, fontWeight: FontWeight.w800),
-                    ),
+                  child: _ReplyContextChip(
+                    name: widget.comment.replyToName,
+                    isDark: isDark,
                   ),
                 ),
               ],
@@ -5166,6 +5233,7 @@ class _CommentTileState extends State<_CommentTile> {
           ),
         ),
       ],
+      ),
     );
   }
 }
@@ -6606,9 +6674,20 @@ class _CommentBubbleState extends State<_CommentBubble> {
       margin: EdgeInsets.fromLTRB(10, widget.compact ? 2 : 4, 10, widget.compact ? 2 : 4),
       padding: const EdgeInsets.all(6),
       decoration: BoxDecoration(
-        color: widget.highlighted ? gold.withOpacity(isDark ? 0.16 : 0.12) : Colors.transparent,
+        color: widget.highlighted
+            ? gold.withOpacity(isDark ? 0.16 : 0.12)
+            : widget.comment.isReply
+                ? const Color(0xFF2684FF).withOpacity(isDark ? 0.075 : 0.045)
+                : Colors.transparent,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: widget.highlighted ? gold.withOpacity(0.85) : Colors.transparent, width: 1.3),
+        border: Border.all(
+          color: widget.highlighted
+              ? gold.withOpacity(0.85)
+              : widget.comment.isReply
+                  ? const Color(0xFF2684FF).withOpacity(isDark ? 0.24 : 0.14)
+                  : Colors.transparent,
+          width: widget.highlighted ? 1.3 : 1.0,
+        ),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -6652,12 +6731,14 @@ class _CommentBubbleState extends State<_CommentBubble> {
                     ],
                   ],
                 ),
-                if (widget.comment.isReply && widget.comment.replyToName.trim().isNotEmpty) ...[
-                  const SizedBox(height: 4),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                    decoration: BoxDecoration(color: const Color(0xFF2684FF).withOpacity(isDark ? 0.16 : 0.10), borderRadius: BorderRadius.circular(8)),
-                    child: Text('رد على @${widget.comment.replyToName}', textDirection: TextDirection.rtl, style: const TextStyle(color: Color(0xFF2684FF), fontSize: 11.5, fontWeight: FontWeight.w800)),
+                if (widget.comment.isReply) ...[
+                  const SizedBox(height: 5),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: _ReplyContextChip(
+                      name: widget.comment.replyToName,
+                      isDark: isDark,
+                    ),
                   ),
                 ],
                 const SizedBox(height: 5),
