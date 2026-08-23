@@ -14,6 +14,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:path_provider/path_provider.dart';
 import '../widgets/shared_widgets.dart';
+import '../widgets/comment_interactions.dart';
 import '../services/app_auth_service.dart';
 import '../services/app_notice.dart';
 import 'package:flutter_svg/flutter_svg.dart';
@@ -3902,34 +3903,34 @@ class _ReplyContextChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    const blue = Color(0xFF2684FF);
+    const blue = ui.Color(0xFF7997BE);
     final safeName = name.trim().isEmpty ? 'المستخدم' : name.trim();
 
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 2),
       decoration: BoxDecoration(
-        color: blue.withOpacity(isDark ? 0.18 : 0.09),
+        color: blue.withOpacity(isDark ? 0.06 : 0.06),
         borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: blue.withOpacity(isDark ? 0.34 : 0.20)),
+        border: Border.all(color: blue.withOpacity(isDark ? 0 : 0)),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         textDirection: TextDirection.rtl,
         children: [
           Container(
-            width: 22,
-            height: 22,
+            width: 12,
+            height: 14,
             decoration: BoxDecoration(
-              color: blue.withOpacity(isDark ? 0.22 : 0.12),
+              color: blue.withOpacity(isDark ? 0 : 0),
               shape: BoxShape.circle,
             ),
             child: const Icon(Icons.subdirectory_arrow_left_rounded, color: blue, size: 14),
           ),
-          const SizedBox(width: 6),
+          const SizedBox(width: 4),
           const Text(
             'رد على',
             textDirection: TextDirection.rtl,
-            style: TextStyle(color: blue, fontSize: 11, fontWeight: FontWeight.w700),
+            style: TextStyle(color: ui.Color(0xFF7997BE), fontSize: 10, fontWeight: FontWeight.w700),
           ),
           const SizedBox(width: 4),
           Flexible(
@@ -3937,7 +3938,7 @@ class _ReplyContextChip extends StatelessWidget {
               '@$safeName',
               textDirection: TextDirection.rtl,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(color: blue, fontSize: 11.5, fontWeight: FontWeight.w900),
+              style: const TextStyle(color: blue, fontSize: 10, fontWeight: FontWeight.w900),
             ),
           ),
         ],
@@ -3964,9 +3965,9 @@ class _ReplyTargetBanner extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
       decoration: BoxDecoration(
-        color: blue.withOpacity(isDark ? 0.14 : 0.09),
+        color: blue.withOpacity(isDark ? 0.06 : 0.06),
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: blue.withOpacity(0.20)),
+        border: Border.all(color: blue.withOpacity(0)),
       ),
       child: Row(
         textDirection: TextDirection.rtl,
@@ -4313,6 +4314,7 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
   final Set<int> _expandedReplyRoots = <int>{};
 
 bool _commentsListSheetDragging = false;
+bool _commentReplySwipeActive = false;
 double _sheetDragDownOffset = 0;
 
 int? _newAnimatedCommentId;
@@ -4417,11 +4419,10 @@ void _beginCommentsListSheetDrag() {
 }
 
 void _dragCommentsListSheetByDelta(double deltaDy) {
-  if (!mounted) return;
-
-  if (deltaDy <= 0) return;
+  if (!mounted || _commentReplySwipeActive) return;
 
   if (!_commentsListSheetDragging) {
+    if (deltaDy <= 0) return;
     _beginCommentsListSheetDrag();
   }
 
@@ -4577,6 +4578,7 @@ Listener(
   behavior: HitTestBehavior.opaque,
   onPointerDown: (_) => _beginHeaderSheetDrag(),
   onPointerMove: (event) {
+    if (_commentReplySwipeActive) return;
     if (_commentsListSheetDragging || event.delta.dy > 0) {
       _dragCommentsListSheetByDelta(event.delta.dy);
     } else {
@@ -4653,6 +4655,7 @@ Listener(
     ? Listener(
         behavior: HitTestBehavior.translucent,
         onPointerMove: (event) {
+          if (_commentReplySwipeActive) return;
           if (_commentsListSheetDragging || event.delta.dy > 0) {
             _dragCommentsListSheetByDelta(event.delta.dy);
           }
@@ -4694,6 +4697,7 @@ Listener(
 : Listener(
     behavior: HitTestBehavior.translucent,
     onPointerMove: (event) {
+      if (_commentReplySwipeActive) return;
       if (_commentsListSheetDragging ||
           (event.delta.dy > 0 && _commentsListIsAtTop())) {
         _dragCommentsListSheetByDelta(event.delta.dy);
@@ -4770,85 +4774,99 @@ Listener(
                                         ),
                                       );
                                     },
-                                    child: Column(
-                                      children: [
-                                        _CommentTile(
-                                          comment: c,
-                                          isDark: isDark,
-                                          onEdit: widget.onEdit,
-                                          onDelete: widget.onDelete,
-                                          onReply: (target) {
-                                            setState(() => _replyTarget = target);
-                                            _inputFocusNode.requestFocus();
-                                          },
-                                          isSupervisor: widget.isSupervisor,
-                                        ),
-                                        Builder(builder: (context) {
-                                          final replies = _Comment.repliesFor(widget.comments, c.id);
-                                          if (replies.isEmpty) return const SizedBox.shrink();
-                                          final expanded = _expandedReplyRoots.contains(c.id);
-                                          return Column(
-                                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                                            children: [
+                                    child: Builder(
+                                      builder: (context) {
+                                        final replies = _Comment.repliesFor(widget.comments, c.id);
+                                        final expanded = _expandedReplyRoots.contains(c.id);
+
+                                        void replyTo(_Comment target) {
+                                          setState(() => _replyTarget = target);
+                                          _inputFocusNode.requestFocus();
+                                        }
+
+                                        return Column(
+                                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                                          children: [
+                                            CommentSwipeReply(
+                                              isDark: isDark,
+                                              onReply: () => replyTo(c),
+                                              child: _CommentTile(
+                                                comment: c,
+                                                isDark: isDark,
+                                                onEdit: widget.onEdit,
+                                                onDelete: widget.onDelete,
+                                                onReply: replyTo,
+                                                isSupervisor: widget.isSupervisor,
+                                                showReplyAction: replies.isEmpty,
+                                              ),
+                                            ),
+                                            if (replies.isNotEmpty)
                                               Align(
                                                 alignment: Alignment.centerRight,
-                                                child: TextButton(
-                                                  style: TextButton.styleFrom(
-                                                    padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-                                                    minimumSize: const Size(0, 30),
-                                                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                                                  ),
-                                                  onPressed: () => setState(() {
-                                                    expanded ? _expandedReplyRoots.remove(c.id) : _expandedReplyRoots.add(c.id);
+                                                child: CommentThreadActions(
+                                                  expanded: expanded,
+                                                  repliesCount: replies.length,
+                                                  isDark: isDark,
+                                                  translateY: 0,
+                                                  onToggle: () => setState(() {
+                                                    expanded
+                                                        ? _expandedReplyRoots.remove(c.id)
+                                                        : _expandedReplyRoots.add(c.id);
                                                   }),
-                                                  child: Row(
-                                                    mainAxisSize: MainAxisSize.min,
-                                                    textDirection: TextDirection.rtl,
-                                                    children: [
-                                                      Icon(expanded ? Icons.keyboard_arrow_up_rounded : Icons.keyboard_arrow_down_rounded, size: 18, color: const Color(0xFF2684FF)),
-                                                      const SizedBox(width: 3),
-                                                      Text(expanded ? 'إخفاء الردود' : 'إظهار الردود (${replies.length})', style: const TextStyle(color: Color(0xFF2684FF), fontSize: 12, fontWeight: FontWeight.w800)),
-                                                    ],
-                                                  ),
+                                                  onReply: () => replyTo(c),
                                                 ),
                                               ),
-                                              if (expanded)
-                                                Container(
-                                                  margin: const EdgeInsets.only(right: 28, top: 2),
-                                                  decoration: BoxDecoration(
-                                                    border: Border(
-                                                      top: BorderSide(color: isDark ? Colors.white.withOpacity(0.10) : Colors.black.withOpacity(0.10)),
-                                                      bottom: BorderSide(color: isDark ? Colors.white.withOpacity(0.10) : Colors.black.withOpacity(0.10)),
+                                            if (expanded)
+                                              Container(
+                                                margin: const EdgeInsets.only(right: 12, top: 0),
+                                                padding: const EdgeInsets.only(right: 12),
+                                                decoration: BoxDecoration(
+                                                  border: Border(
+                                                    right: BorderSide(
+                                                      color: isDark
+                                                          ? Colors.white.withOpacity(0.18)
+                                                          : Colors.black.withOpacity(0.18),
+                                                      width: 2,
                                                     ),
                                                   ),
-                                                  child: Column(
-                                                    children: [
-                                                      for (int ri = 0; ri < replies.length; ri++) ...[
-                                                        Padding(
-                                                          padding: const EdgeInsets.symmetric(vertical: 5),
+                                                ),
+                                                child: Column(
+                                                  children: [
+                                                    for (int ri = 0; ri < replies.length; ri++) ...[
+                                                      CommentSwipeReply(
+                                                        isDark: isDark,
+                                                        onReply: () => replyTo(replies[ri]),
+                                                        child: Padding(
+                                                          padding: EdgeInsets.zero,
                                                           child: _CommentTile(
                                                             comment: replies[ri],
                                                             isDark: isDark,
                                                             onEdit: widget.onEdit,
                                                             onDelete: widget.onDelete,
-                                                            onReply: (target) {
-                                                              setState(() => _replyTarget = target);
-                                                              _inputFocusNode.requestFocus();
-                                                            },
+                                                            onReply: replyTo,
                                                             isSupervisor: widget.isSupervisor,
                                                             compact: true,
                                                           ),
                                                         ),
-                                                        if (ri != replies.length - 1)
-                                                          Divider(height: 1, thickness: 0.6, color: isDark ? Colors.white.withOpacity(0.08) : Colors.black.withOpacity(0.08)),
-                                                      ],
+                                                      ),
+                                                      if (ri != replies.length - 1)
+                                                        Transform.translate(
+                                                          offset: const Offset(0, -7),
+                                                          child: Divider(
+                                                            height: 1,
+                                                            thickness: 0.6,
+                                                            color: isDark
+                                                                ? Colors.white.withOpacity(0.08)
+                                                                : Colors.black.withOpacity(0.08),
+                                                          ),
+                                                        ),
                                                     ],
-                                                  ),
+                                                  ],
                                                 ),
-                                            ],
-                                          );
-                                        }),
-                                      ],
+                                              ),
+                                          ],
+                                        );
+                                      },
                                     ),
                                   );
                                 },
@@ -5008,6 +5026,7 @@ class _CommentTile extends StatefulWidget {
   final ValueChanged<_Comment>? onReply;
   final bool isSupervisor;
   final bool compact;
+  final bool showReplyAction;
 
   const _CommentTile({
     required this.comment,
@@ -5017,6 +5036,7 @@ class _CommentTile extends StatefulWidget {
     this.onReply,
     this.isSupervisor = false,
     this.compact = false,
+    this.showReplyAction = true,
   });
 
   @override
@@ -5077,6 +5097,17 @@ class _CommentTileState extends State<_CommentTile> {
     if (confirm == true) await widget.onDelete?.call(widget.comment.id);
   }
 
+  void _openProfile() {
+    showCommentUserProfile(
+      context: context,
+      isDark: widget.isDark,
+      userName: widget.comment.userName,
+      userAvatar: widget.comment.userAvatar,
+      userEmail: widget.comment.userEmail,
+      fallbackJoinedAt: widget.comment.parsedCreatedAt,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final isDark = widget.isDark;
@@ -5087,52 +5118,54 @@ class _CommentTileState extends State<_CommentTile> {
     final canDelete = _isOwner || widget.isSupervisor;
     final canReply = FirebaseAuth.instance.currentUser != null && widget.onReply != null;
     final avatarSize = widget.compact ? 15.0 : 18.0;
-
-    return Container(
-      margin: widget.comment.isReply
-          ? const EdgeInsets.symmetric(vertical: 2)
-          : EdgeInsets.zero,
-      padding: widget.comment.isReply
-          ? const EdgeInsets.fromLTRB(10, 9, 10, 7)
-          : EdgeInsets.zero,
-      decoration: BoxDecoration(
-        color: widget.comment.isReply
-            ? const Color(0xFF2684FF).withOpacity(isDark ? 0.075 : 0.045)
-            : Colors.transparent,
-        borderRadius: BorderRadius.circular(14),
-        border: widget.comment.isReply
-            ? Border.all(
-                color: const Color(0xFF2684FF).withOpacity(isDark ? 0.22 : 0.13),
-              )
-            : null,
-      ),
-      child: Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      textDirection: TextDirection.rtl,
-      children: [
-        CircleAvatar(
-          radius: avatarSize,
-          backgroundColor: gold.withOpacity(0.16),
-          backgroundImage: widget.comment.userAvatar.trim().isNotEmpty ? NetworkImage(widget.comment.userAvatar) : null,
-          child: widget.comment.userAvatar.trim().isEmpty
-              ? Text(
-                  widget.comment.userName.trim().isNotEmpty ? widget.comment.userName.trim()[0] : '؟',
-                  style: TextStyle(color: gold, fontWeight: FontWeight.w800, fontSize: widget.compact ? 11 : 13),
-                )
-              : null,
-        ),
-        const SizedBox(width: 9),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              Row(
-                textDirection: TextDirection.rtl,
+return Container(
+  margin: widget.comment.isReply
+      ? const EdgeInsets.symmetric(vertical: 0)
+      : EdgeInsets.zero,
+  padding: widget.comment.isReply
+      ? const EdgeInsets.fromLTRB(10, 5, 10, 0)
+      : EdgeInsets.zero,
+  decoration: const BoxDecoration(
+    color: Colors.transparent,
+  ),
+  child: Stack(
+    clipBehavior: Clip.none,
+    children: [
+      Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        textDirection: TextDirection.rtl,
+        children: [
+          GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: _openProfile,
+            child: CircleAvatar(
+              radius: avatarSize,
+              backgroundColor: gold.withOpacity(0.16),
+              backgroundImage: widget.comment.userAvatar.trim().isNotEmpty ? NetworkImage(widget.comment.userAvatar) : null,
+              child: widget.comment.userAvatar.trim().isEmpty
+                  ? Text(
+                      widget.comment.userName.trim().isNotEmpty ? String.fromCharCode(widget.comment.userName.trim().runes.first) : '؟',
+                      style: TextStyle(color: gold, fontWeight: FontWeight.w800, fontSize: widget.compact ? 11 : 13),
+                    )
+                  : null,
+            ),
+          ),
+          const SizedBox(width: 9),
+          Expanded(
+            child: Padding(
+              padding: EdgeInsets.only(
+                left: (widget.comment.timeAgo.isNotEmpty || canEdit || canDelete) ? 46 : 0,
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
-                  Expanded(
+                  GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTap: _openProfile,
                     child: Text(
                       widget.comment.userName,
                       textDirection: TextDirection.rtl,
+                      textAlign: TextAlign.right,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
                         color: isDark ? const Color(0xFFB9B39F) : const Color(0xFF755000),
@@ -5141,11 +5174,114 @@ class _CommentTileState extends State<_CommentTile> {
                       ),
                     ),
                   ),
-                  if (widget.comment.timeAgo.isNotEmpty)
-                    Text(widget.comment.timeAgo, style: TextStyle(color: textSub, fontSize: 10.5)),
-                  if (canEdit || canDelete) ...[
-                    const SizedBox(width: 3),
-                    PopupMenuButton<String>(
+                  if (widget.comment.isReply) ...[
+                    const SizedBox(height: 2),
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: _ReplyContextChip(
+                        name: widget.comment.replyToName,
+                        isDark: isDark,
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: 4),
+                  if (_editing)
+                    Container(
+                      decoration: BoxDecoration(color: fieldBg, borderRadius: BorderRadius.circular(11), border: Border.all(color: gold.withOpacity(0.3))),
+                      child: TextField(
+                        controller: _editCtrl,
+                        textDirection: TextDirection.rtl,
+                        textAlign: TextAlign.right,
+                        minLines: 1,
+                        maxLines: 5,
+                        style: TextStyle(color: textPrimary, fontSize: 13.5),
+                        decoration: const InputDecoration(contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 8), border: InputBorder.none),
+                      ),
+                    )
+                  else if (_isEmojiOnlyComment(widget.comment.text))
+                    _SoloEmojiGlowText(
+                      text: widget.comment.text,
+                      color: textPrimary,
+                      fontSize: widget.compact ? 34 : 42,
+                    )
+                  else
+                    Text(
+                      widget.comment.text,
+                      textDirection: TextDirection.rtl,
+                      textAlign: TextAlign.right,
+                      style: TextStyle(color: textPrimary, fontSize: widget.compact ? 13 : 13.5, height: 1.55),
+                    ),
+                  const SizedBox(height: 5),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.start,
+                    textDirection: TextDirection.rtl,
+                    children: [
+                      if (_editing) ...[
+                        TextButton(
+                          style: TextButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 7), minimumSize: const Size(0, 28), tapTargetSize: MaterialTapTargetSize.shrinkWrap),
+                          onPressed: () async {
+                            final value = _editCtrl.text.trim();
+                            if (value.isEmpty) return;
+                            await widget.onEdit?.call(widget.comment.id, value);
+                            if (mounted) setState(() => _editing = false);
+                          },
+                          child: const Text('حفظ', style: TextStyle(color: gold, fontSize: 12, fontWeight: FontWeight.w800)),
+                        ),
+                        TextButton(
+                          style: TextButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 7), minimumSize: const Size(0, 28), tapTargetSize: MaterialTapTargetSize.shrinkWrap),
+                          onPressed: () { _editCtrl.text = widget.comment.text; setState(() => _editing = false); },
+                          child: Text('إلغاء', style: TextStyle(color: textSub, fontSize: 12)),
+                        ),
+                      ] else if (canReply && widget.showReplyAction)
+                        Transform.translate(
+                          offset: const Offset(10, 0),
+                          child: TextButton(
+                            style: TextButton.styleFrom(
+                              padding: EdgeInsets.zero,
+                              minimumSize: const Size(32, 0),
+                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                            ),
+                            onPressed: () => widget.onReply?.call(widget.comment),
+                            child: const Text(
+                              'رد',
+                              style: TextStyle(
+                                color: ui.Color.fromARGB(255, 117, 117, 117),
+                                fontSize: 12,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+      if (widget.comment.timeAgo.isNotEmpty || canEdit || canDelete)
+        Positioned(
+          left: 0,
+          top: 2,
+          width: 38,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              if (widget.comment.timeAgo.isNotEmpty)
+                Text(
+                  widget.comment.timeAgo,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: textSub, fontSize: 10.5),
+                ),
+              if (canEdit || canDelete)
+                Transform.translate(
+                  offset: const Offset(0, -1),
+                  child: SizedBox(
+                    width: 30,
+                    height: 20,
+                    child: PopupMenuButton<String>(
                       tooltip: 'خيارات',
                       padding: EdgeInsets.zero,
                       iconSize: 19,
@@ -5160,81 +5296,14 @@ class _CommentTileState extends State<_CommentTile> {
                         if (canDelete) const PopupMenuItem(value: 'delete', child: Row(textDirection: TextDirection.rtl, children: [Icon(Icons.delete_outline_rounded, size: 18, color: Colors.red), SizedBox(width: 8), Text('حذف', style: TextStyle(color: Colors.red))])),
                       ],
                     ),
-                  ],
-                ],
-              ),
-              if (widget.comment.isReply) ...[
-                const SizedBox(height: 5),
-                Align(
-                  alignment: Alignment.centerRight,
-                  child: _ReplyContextChip(
-                    name: widget.comment.replyToName,
-                    isDark: isDark,
                   ),
                 ),
-              ],
-              const SizedBox(height: 4),
-              if (_editing)
-                Container(
-                  decoration: BoxDecoration(color: fieldBg, borderRadius: BorderRadius.circular(11), border: Border.all(color: gold.withOpacity(0.3))),
-                  child: TextField(
-                    controller: _editCtrl,
-                    textDirection: TextDirection.rtl,
-                    textAlign: TextAlign.right,
-                    minLines: 1,
-                    maxLines: 5,
-                    style: TextStyle(color: textPrimary, fontSize: 13.5),
-                    decoration: const InputDecoration(contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 8), border: InputBorder.none),
-                  ),
-                )
-              else if (_isEmojiOnlyComment(widget.comment.text))
-                _SoloEmojiGlowText(
-                  text: widget.comment.text,
-                  color: textPrimary,
-                  fontSize: widget.compact ? 34 : 42,
-                )
-              else
-                Text(
-                  widget.comment.text,
-                  textDirection: TextDirection.rtl,
-                  textAlign: TextAlign.right,
-                  style: TextStyle(color: textPrimary, fontSize: widget.compact ? 13 : 13.5, height: 1.55),
-                ),
-              const SizedBox(height: 5),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.end,
-                textDirection: TextDirection.rtl,
-                children: [
-                  if (_editing) ...[
-                    TextButton(
-                      style: TextButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 7), minimumSize: const Size(0, 28), tapTargetSize: MaterialTapTargetSize.shrinkWrap),
-                      onPressed: () async {
-                        final value = _editCtrl.text.trim();
-                        if (value.isEmpty) return;
-                        await widget.onEdit?.call(widget.comment.id, value);
-                        if (mounted) setState(() => _editing = false);
-                      },
-                      child: const Text('حفظ', style: TextStyle(color: gold, fontSize: 12, fontWeight: FontWeight.w800)),
-                    ),
-                    TextButton(
-                      style: TextButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 7), minimumSize: const Size(0, 28), tapTargetSize: MaterialTapTargetSize.shrinkWrap),
-                      onPressed: () { _editCtrl.text = widget.comment.text; setState(() => _editing = false); },
-                      child: Text('إلغاء', style: TextStyle(color: textSub, fontSize: 12)),
-                    ),
-                  ] else if (canReply)
-                    TextButton(
-                      style: TextButton.styleFrom(padding: EdgeInsets.zero, minimumSize: const Size(32, 28), tapTargetSize: MaterialTapTargetSize.shrinkWrap),
-                      onPressed: () => widget.onReply?.call(widget.comment),
-                      child: const Text('رد', style: TextStyle(color: Color(0xFF2684FF), fontSize: 12, fontWeight: FontWeight.w800)),
-                    ),
-                ],
-              ),
             ],
           ),
         ),
-      ],
-      ),
-    );
+    ],
+  ),
+);
   }
 }
 
@@ -5685,6 +5754,7 @@ class _PostDetailPageState extends State<_PostDetailPage> {
   bool _commentsLoaded = false;
   bool _sendingComment = false;
   final _commentCtrl = TextEditingController();
+  final FocusNode _commentFocusNode = FocusNode();
   _Comment? _replyTarget;
   final Set<int> _expandedReplyRoots = <int>{};
   final _scrollCtrl = ScrollController();
@@ -6069,6 +6139,7 @@ if (listener != null) {
   _PostRealtimeBus.tick.removeListener(listener);
 }
     _commentCtrl.dispose();
+    _commentFocusNode.dispose();
     _scrollCtrl.dispose();
     if (_videoOwned) _videoController?.dispose();
     super.dispose();
@@ -6109,6 +6180,8 @@ Future<void> _sendComment({_Comment? replyTo}) async {
           'comment_text': text,
           'user_email': AppAuthService.userIdentity(user),
           if (replyTo != null) 'reply_to_comment_id': '${replyTo.id}',
+          if (replyTo != null) 'reply_to_name': replyTo.userName,
+          if (replyTo != null) 'reply_to_email': replyTo.userEmail,
         },
       ).timeout(const Duration(seconds: 15));
 
@@ -6489,33 +6562,103 @@ if (p.videoUrl != null)
                     .map((c) {
                       final replies = _Comment.repliesFor(_comments, c.id);
                       final expanded = _expandedReplyRoots.contains(c.id);
-                      return Column(children: [
-                        _CommentBubble(key: _commentKeys.putIfAbsent(c.id, () => GlobalKey()), comment: c, isDark: isDark, onEdit: _editComment, onDelete: _deleteComment, onReply: (target) => setState(() => _replyTarget = target), isSupervisor: isSupervisor, highlighted: _highlightedCommentId == c.id),
-                        if (replies.isNotEmpty)
-                          Align(alignment: Alignment.centerRight, child: Padding(padding: const EdgeInsets.only(right: 54, bottom: 5), child: TextButton(
-                            style: TextButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2), minimumSize: const Size(0, 28), tapTargetSize: MaterialTapTargetSize.shrinkWrap),
-                            onPressed: () => setState(() { expanded ? _expandedReplyRoots.remove(c.id) : _expandedReplyRoots.add(c.id); }),
-                            child: Row(mainAxisSize: MainAxisSize.min, textDirection: TextDirection.rtl, children: [
-                              Icon(expanded ? Icons.keyboard_arrow_up_rounded : Icons.keyboard_arrow_down_rounded, size: 17, color: const Color(0xFF2684FF)),
-                              const SizedBox(width: 3),
-                              Text(expanded ? 'إخفاء الردود' : 'إظهار الردود (${replies.length})', style: const TextStyle(color: Color(0xFF2684FF), fontSize: 12, fontWeight: FontWeight.w800)),
-                            ]),
-                          ))),
-                        if (expanded)
-                          Padding(padding: const EdgeInsets.only(right: 30, left: 8, bottom: 5), child: Container(
-                            decoration: BoxDecoration(border: Border(
-                              top: BorderSide(color: isDark ? Colors.white.withOpacity(0.08) : Colors.black.withOpacity(0.08)),
-                              bottom: BorderSide(color: isDark ? Colors.white.withOpacity(0.08) : Colors.black.withOpacity(0.08)),
-                            )),
-                            child: Column(children: [
-                              for (int i = 0; i < replies.length; i++) ...[
-                                _CommentBubble(comment: replies[i], isDark: isDark, onEdit: _editComment, onDelete: _deleteComment, onReply: (target) => setState(() => _replyTarget = target), isSupervisor: isSupervisor, highlighted: _highlightedCommentId == replies[i].id, compact: true),
-                                if (i != replies.length - 1) Divider(height: 1, thickness: 0.5, color: isDark ? Colors.white.withOpacity(0.07) : Colors.black.withOpacity(0.07)),
-                              ]
-                            ]),
-                          )),
-                        Divider(height: 1, thickness: 0.5, indent: 16, endIndent: 16, color: isDark ? Colors.white.withOpacity(0.06) : Colors.black.withOpacity(0.06)),
-                      ]);
+                      void replyTo(_Comment target) {
+                        setState(() => _replyTarget = target);
+                        _commentFocusNode.requestFocus();
+                      }
+
+                      return Column(
+                        children: [
+                          CommentSwipeReply(
+                            isDark: isDark,
+                            onReply: () => replyTo(c),
+                            child: _CommentBubble(
+                              key: _commentKeys.putIfAbsent(c.id, () => GlobalKey()),
+                              comment: c,
+                              isDark: isDark,
+                              onEdit: _editComment,
+                              onDelete: _deleteComment,
+                              onReply: replyTo,
+                              isSupervisor: isSupervisor,
+                              highlighted: _highlightedCommentId == c.id,
+                              showReplyAction: replies.isEmpty,
+                            ),
+                          ),
+                          if (replies.isNotEmpty)
+                            Align(
+                              alignment: Alignment.centerRight,
+                              child: Padding(
+                                padding: const EdgeInsets.only(right: 54),
+                                child: CommentThreadActions(
+                                  expanded: expanded,
+                                  repliesCount: replies.length,
+                                  isDark: isDark,
+                                  translateY: -6,
+                                  onToggle: () => setState(() {
+                                    expanded
+                                        ? _expandedReplyRoots.remove(c.id)
+                                        : _expandedReplyRoots.add(c.id);
+                                  }),
+                                  onReply: () => replyTo(c),
+                                ),
+                              ),
+                            ),
+                          if (expanded)
+                            Padding(
+                              padding: const EdgeInsets.only(right: 30, left: 8, bottom: 5),
+                              child: Container(
+                                padding: const EdgeInsets.only(right: 12),
+                                decoration: BoxDecoration(
+                                  border: Border(
+                                    right: BorderSide(
+                                      color: isDark
+                                          ? Colors.white.withOpacity(0.18)
+                                          : Colors.black.withOpacity(0.18),
+                                      width: 2,
+                                    ),
+                                  ),
+                                ),
+                                child: Column(
+                                  children: [
+                                    for (int i = 0; i < replies.length; i++) ...[
+                                      CommentSwipeReply(
+                                        isDark: isDark,
+                                        onReply: () => replyTo(replies[i]),
+                                        child: _CommentBubble(
+                                          comment: replies[i],
+                                          isDark: isDark,
+                                          onEdit: _editComment,
+                                          onDelete: _deleteComment,
+                                          onReply: replyTo,
+                                          isSupervisor: isSupervisor,
+                                          highlighted: _highlightedCommentId == replies[i].id,
+                                          compact: true,
+                                        ),
+                                      ),
+                                      if (i != replies.length - 1)
+                                        Divider(
+                                          height: 1,
+                                          thickness: 0.5,
+                                          color: isDark
+                                              ? Colors.white.withOpacity(0.07)
+                                              : Colors.black.withOpacity(0.07),
+                                        ),
+                                    ],
+                                  ],
+                                ),
+                              ),
+                            ),
+                          Divider(
+                            height: 12,
+                            thickness: 0.5,
+                            indent: 16,
+                            endIndent: 16,
+                            color: isDark
+                                ? Colors.white.withOpacity(0.06)
+                                : Colors.black.withOpacity(0.06),
+                          ),
+                        ],
+                      );
                     }).toList(),
                         
               ],
@@ -6553,6 +6696,7 @@ if (p.videoUrl != null)
                         isDark: isDark,
                         user: currentUser,
                         controller: _commentCtrl,
+                        focusNode: _commentFocusNode,
                         sending: _sendingComment,
                         onSend: () async {
                           final target = _replyTarget;
@@ -6594,7 +6738,7 @@ bool _isEmojiOnlyComment(String value) {
 // Comment Bubble
 // ─────────────────────────────────────────────────────────────────────────────
 
-class _CommentBubble extends StatefulWidget {
+class _CommentBubble extends StatelessWidget {
   final _Comment comment;
   final bool isDark;
   final Future<void> Function(int, String)? onEdit;
@@ -6603,6 +6747,7 @@ class _CommentBubble extends StatefulWidget {
   final bool isSupervisor;
   final bool highlighted;
   final bool compact;
+  final bool showReplyAction;
 
   const _CommentBubble({
     super.key,
@@ -6614,168 +6759,43 @@ class _CommentBubble extends StatefulWidget {
     this.isSupervisor = false,
     this.highlighted = false,
     this.compact = false,
+    this.showReplyAction = true,
   });
 
-  @override
-  State<_CommentBubble> createState() => _CommentBubbleState();
-}
-
-class _CommentBubbleState extends State<_CommentBubble> {
   static const gold = Color(0xFFD4A017);
-  bool _editing = false;
-  late TextEditingController _editCtrl;
-
-  @override
-  void initState() {
-    super.initState();
-    _editCtrl = TextEditingController(text: widget.comment.text);
-  }
-
-  @override
-  void dispose() {
-    _editCtrl.dispose();
-    super.dispose();
-  }
-
-  bool get _isOwner {
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null) return false;
-    return AppAuthService.userIdentity(user).trim().toLowerCase() == widget.comment.userEmail.trim().toLowerCase();
-  }
-
-  Future<void> _delete() async {
-    final textPrimary = widget.isDark ? Colors.white : const Color(0xFF1A1000);
-    final textSub = widget.isDark ? Colors.white60 : Colors.black54;
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (_) => AlertDialog(
-        backgroundColor: widget.isDark ? const Color(0xFF222222) : Colors.white,
-        title: Text('حذف التعليق', textDirection: TextDirection.rtl, style: TextStyle(color: textPrimary)),
-        content: Text(widget.comment.isReply ? 'هل تريد حذف هذا الرد؟' : 'سيتم حذف التعليق وردوده أيضاً.', textDirection: TextDirection.rtl, style: TextStyle(color: textSub)),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: Text('إلغاء', style: TextStyle(color: textSub))),
-          TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('حذف', style: TextStyle(color: Colors.red))),
-        ],
-      ),
-    );
-    if (ok == true) await widget.onDelete?.call(widget.comment.id);
-  }
 
   @override
   Widget build(BuildContext context) {
-    final isDark = widget.isDark;
-    final textPrimary = isDark ? Colors.white : const Color(0xFF1A1000);
-    final textSub = isDark ? Colors.white54 : Colors.black45;
-    final canManage = _isOwner || widget.isSupervisor;
-    final canReply = FirebaseAuth.instance.currentUser != null && widget.onReply != null;
-
     return AnimatedContainer(
       duration: const Duration(milliseconds: 280),
-      margin: EdgeInsets.fromLTRB(10, widget.compact ? 2 : 4, 10, widget.compact ? 2 : 4),
-      padding: const EdgeInsets.all(6),
-      decoration: BoxDecoration(
-        color: widget.highlighted
-            ? gold.withOpacity(isDark ? 0.16 : 0.12)
-            : widget.comment.isReply
-                ? const Color(0xFF2684FF).withOpacity(isDark ? 0.075 : 0.045)
-                : Colors.transparent,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-          color: widget.highlighted
-              ? gold.withOpacity(0.85)
-              : widget.comment.isReply
-                  ? const Color(0xFF2684FF).withOpacity(isDark ? 0.24 : 0.14)
-                  : Colors.transparent,
-          width: widget.highlighted ? 1.3 : 1.0,
-        ),
+      margin: EdgeInsets.fromLTRB(
+        10,
+        compact ? 2 : 4,
+        10,
+        compact ? 2 : 4,
       ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        textDirection: TextDirection.rtl,
-        children: [
-          CircleAvatar(
-            radius: widget.compact ? 15 : 19,
-            backgroundColor: gold.withOpacity(0.18),
-            backgroundImage: widget.comment.userAvatar.trim().isNotEmpty ? NetworkImage(widget.comment.userAvatar) : null,
-            child: widget.comment.userAvatar.trim().isEmpty
-                ? Text(widget.comment.userName.trim().isNotEmpty ? widget.comment.userName.trim()[0] : '؟', style: TextStyle(color: gold, fontWeight: FontWeight.w800, fontSize: widget.compact ? 11 : 14))
-                : null,
-          ),
-          const SizedBox(width: 9),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                Row(
-                  textDirection: TextDirection.rtl,
-                  children: [
-                    Expanded(child: Text(widget.comment.userName, textDirection: TextDirection.rtl, style: const TextStyle(color: Color(0xFF526A8F), fontSize: 12.5, fontWeight: FontWeight.w800))),
-                    Text(widget.comment.timeAgo, style: TextStyle(color: textSub, fontSize: 10.5)),
-                    if (canManage) ...[
-                      const SizedBox(width: 3),
-                      PopupMenuButton<String>(
-                        tooltip: 'خيارات',
-                        padding: EdgeInsets.zero,
-                        iconSize: 19,
-                        icon: Icon(Icons.more_horiz_rounded, color: textSub),
-                        color: isDark ? const Color(0xFF2A2A2A) : Colors.white,
-                        onSelected: (value) {
-                          if (value == 'edit') setState(() => _editing = true);
-                          if (value == 'delete') _delete();
-                        },
-                        itemBuilder: (_) => const [
-                          PopupMenuItem(value: 'edit', child: Row(textDirection: TextDirection.rtl, children: [Icon(Icons.edit_outlined, size: 18), SizedBox(width: 8), Text('تعديل')])),
-                          PopupMenuItem(value: 'delete', child: Row(textDirection: TextDirection.rtl, children: [Icon(Icons.delete_outline_rounded, size: 18, color: Colors.red), SizedBox(width: 8), Text('حذف', style: TextStyle(color: Colors.red))])),
-                        ],
-                      ),
-                    ],
-                  ],
-                ),
-                if (widget.comment.isReply) ...[
-                  const SizedBox(height: 5),
-                  Align(
-                    alignment: Alignment.centerRight,
-                    child: _ReplyContextChip(
-                      name: widget.comment.replyToName,
-                      isDark: isDark,
-                    ),
-                  ),
-                ],
-                const SizedBox(height: 5),
-                if (_editing)
-                  TextField(
-                    controller: _editCtrl,
-                    textDirection: TextDirection.rtl,
-                    textAlign: TextAlign.right,
-                    minLines: 1,
-                    maxLines: 5,
-                    style: TextStyle(color: textPrimary, fontSize: 13.5),
-                    decoration: InputDecoration(filled: true, fillColor: isDark ? const Color(0xFF292929) : const Color(0xFFF5F1EA), border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide.none), contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8)),
-                  )
-                else if (_isEmojiOnlyComment(widget.comment.text))
-                  _SoloEmojiGlowText(text: widget.comment.text, color: textPrimary, fontSize: widget.compact ? 34 : 42)
-                else
-                  Text(widget.comment.text, textDirection: TextDirection.rtl, textAlign: TextAlign.right, style: TextStyle(color: textPrimary, fontSize: widget.compact ? 13 : 13.5, height: 1.55)),
-                const SizedBox(height: 2),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.end,
-                  textDirection: TextDirection.rtl,
-                  children: [
-                    if (_editing) ...[
-                      TextButton(onPressed: () async { final value = _editCtrl.text.trim(); if (value.isEmpty) return; await widget.onEdit?.call(widget.comment.id, value); if (mounted) setState(() => _editing = false); }, child: const Text('حفظ', style: TextStyle(color: gold, fontWeight: FontWeight.w800))),
-                      TextButton(onPressed: () { _editCtrl.text = widget.comment.text; setState(() => _editing = false); }, child: Text('إلغاء', style: TextStyle(color: textSub))),
-                    ] else if (canReply)
-                      TextButton(
-                        style: TextButton.styleFrom(padding: EdgeInsets.zero, minimumSize: const Size(32, 26), tapTargetSize: MaterialTapTargetSize.shrinkWrap),
-                        onPressed: () => widget.onReply?.call(widget.comment),
-                        child: const Text('رد', style: TextStyle(color: Color(0xFF2684FF), fontSize: 12, fontWeight: FontWeight.w800)),
-                      ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-        ],
+      padding: highlighted ? const EdgeInsets.all(6) : EdgeInsets.zero,
+      decoration: BoxDecoration(
+        color: highlighted
+            ? gold.withOpacity(isDark ? 0.16 : 0.12)
+            : Colors.transparent,
+        borderRadius: BorderRadius.circular(16),
+        border: highlighted
+            ? Border.all(
+                color: gold.withOpacity(0.85),
+                width: 1.3,
+              )
+            : null,
+      ),
+      child: _CommentTile(
+        comment: comment,
+        isDark: isDark,
+        onEdit: onEdit,
+        onDelete: onDelete,
+        onReply: onReply,
+        isSupervisor: isSupervisor,
+        compact: compact,
+        showReplyAction: showReplyAction,
       ),
     );
   }

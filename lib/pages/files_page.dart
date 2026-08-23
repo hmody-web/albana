@@ -9,6 +9,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:flutter_pdfview/flutter_pdfview.dart';
 import 'package:file_picker/file_picker.dart';
 import '../widgets/shared_widgets.dart';
+import '../widgets/comment_interactions.dart';
 import '../services/app_auth_service.dart';
 import '../services/app_notice.dart';
 import 'package:http/http.dart' as http;
@@ -4251,6 +4252,8 @@ class _PdfCommentsSectionState extends State<_PdfCommentsSection> {
           'user_email': AppAuthService.userIdentity(user),
           'comment_text': text,
           if (_replyTarget != null) 'reply_to_comment_id': '${_replyTarget!.id}',
+          if (_replyTarget != null) 'reply_to_name': _replyTarget!.userName,
+          if (_replyTarget != null) 'reply_to_email': _replyTarget!.userEmail,
         },
       ).timeout(const Duration(seconds: 15));
 
@@ -4544,50 +4547,107 @@ class _PdfCommentsSectionState extends State<_PdfCommentsSection> {
                               for (final comment in _comments.where((c) => !c.isReply)) ...[
                                 Builder(builder: (context) {
                                   final currentUser = FirebaseAuth.instance.currentUser;
-                                  final currentEmail = currentUser == null ? '' : AppAuthService.userIdentity(currentUser).trim().toLowerCase();
-                                  final ownsComment = currentEmail.isNotEmpty && currentEmail == comment.userEmail.trim().toLowerCase();
+                                  final currentEmail = currentUser == null
+                                      ? ''
+                                      : AppAuthService.userIdentity(currentUser).trim().toLowerCase();
+                                  final ownsComment = currentEmail.isNotEmpty &&
+                                      currentEmail == comment.userEmail.trim().toLowerCase();
                                   final replies = _comments.where((r) => r.parentId == comment.id).toList();
                                   final expanded = _expandedReplyRoots.contains(comment.id);
-                                  return Column(children: [
-                                    _PdfCommentBubble(
-                                      comment: comment, isDark: widget.isDark, canEdit: ownsComment, canDelete: ownsComment || _isSupervisor,
-                                      onEdit: () => _editComment(comment), onDelete: () => _deleteComment(comment),
-                                      onReply: () => setState(() { _replyTarget = comment; _commentFocus.requestFocus(); }),
-                                    ),
-                                    if (replies.isNotEmpty)
-                                      Align(alignment: Alignment.centerRight, child: TextButton(
-                                        onPressed: () => setState(() { expanded ? _expandedReplyRoots.remove(comment.id) : _expandedReplyRoots.add(comment.id); }),
-                                        child: Row(mainAxisSize: MainAxisSize.min, textDirection: TextDirection.rtl, children: [
-                                          Icon(expanded ? Icons.keyboard_arrow_up_rounded : Icons.keyboard_arrow_down_rounded, size: 17),
-                                          const SizedBox(width: 3),
-                                          Text(expanded ? 'إخفاء الردود' : 'إظهار الردود (${replies.length})'),
-                                        ]),
-                                      )),
-                                    if (expanded)
-                                      Container(
-                                        margin: const EdgeInsets.only(right: 28, bottom: 8),
-                                        decoration: BoxDecoration(border: Border(
-                                          top: BorderSide(color: widget.isDark ? Colors.white12 : Colors.black12),
-                                          bottom: BorderSide(color: widget.isDark ? Colors.white12 : Colors.black12),
-                                        )),
-                                        child: Column(children: [
-                                          for (int i=0; i<replies.length; i++) ...[
-                                            Builder(builder: (context) {
-                                              final r = replies[i];
-                                              final owns = currentEmail.isNotEmpty && currentEmail == r.userEmail.trim().toLowerCase();
-                                              return _PdfCommentBubble(
-                                                comment: r, isDark: widget.isDark, canEdit: owns, canDelete: owns || _isSupervisor,
-                                                onEdit: () => _editComment(r), onDelete: () => _deleteComment(r),
-                                                onReply: () => setState(() { _replyTarget = r; _commentFocus.requestFocus(); }),
-                                                compact: true,
-                                              );
-                                            }),
-                                            if (i != replies.length - 1) Divider(height: 1, color: widget.isDark ? Colors.white10 : Colors.black12),
-                                          ]
-                                        ]),
+
+                                  void replyTo(_PdfFileComment target) {
+                                    setState(() {
+                                      _replyTarget = target;
+                                      _commentFocus.requestFocus();
+                                    });
+                                  }
+
+                                  return Column(
+                                    children: [
+                                      CommentSwipeReply(
+                                        isDark: widget.isDark,
+                                        onReply: () => replyTo(comment),
+                                        child: _PdfCommentBubble(
+                                          comment: comment,
+                                          isDark: widget.isDark,
+                                          canEdit: ownsComment,
+                                          canDelete: ownsComment || _isSupervisor,
+                                          onEdit: () => _editComment(comment),
+                                          onDelete: () => _deleteComment(comment),
+                                          onReply: () => replyTo(comment),
+                                          showReplyAction: replies.isEmpty,
+                                        ),
                                       ),
-                                    const SizedBox(height: 10),
-                                  ]);
+                                      if (replies.isNotEmpty)
+                                        Align(
+                                          alignment: Alignment.centerRight,
+                                          child: CommentThreadActions(
+                                            expanded: expanded,
+                                            repliesCount: replies.length,
+                                            isDark: widget.isDark,
+                                            translateY: -9,
+                                            onToggle: () => setState(() {
+                                              expanded
+                                                  ? _expandedReplyRoots.remove(comment.id)
+                                                  : _expandedReplyRoots.add(comment.id);
+                                            }),
+                                            onReply: () => replyTo(comment),
+                                          ),
+                                        ),
+                                      if (expanded)
+                                        Container(
+                                          margin: const EdgeInsets.only(right: 12, bottom: 8),
+                                          padding: const EdgeInsets.only(right: 12),
+                                          decoration: BoxDecoration(
+                                            border: Border(
+                                              right: BorderSide(
+                                                color: widget.isDark
+                                                    ? Colors.white.withOpacity(0.18)
+                                                    : Colors.black.withOpacity(0.18),
+                                                width: 2,
+                                              ),
+                                            ),
+                                          ),
+                                          child: Column(
+                                            children: [
+                                              for (int i = 0; i < replies.length; i++) ...[
+                                                Builder(builder: (context) {
+                                                  final r = replies[i];
+                                                  final owns = currentEmail.isNotEmpty &&
+                                                      currentEmail == r.userEmail.trim().toLowerCase();
+                                                  return CommentSwipeReply(
+                                                    isDark: widget.isDark,
+                                                    onReply: () => replyTo(r),
+                                                    child: _PdfCommentBubble(
+                                                      comment: r,
+                                                      isDark: widget.isDark,
+                                                      canEdit: owns,
+                                                      canDelete: owns || _isSupervisor,
+                                                      onEdit: () => _editComment(r),
+                                                      onDelete: () => _deleteComment(r),
+                                                      onReply: () => replyTo(r),
+                                                      compact: true,
+                                                    ),
+                                                  );
+                                                }),
+                                                if (i != replies.length - 1)
+                                                  Transform.translate(
+                                                    offset: const Offset(0, -7),
+                                                    child: Divider(
+                                                      height: 1,
+                                                      thickness: 0.6,
+                                                      color: widget.isDark
+                                                          ? Colors.white.withOpacity(0.08)
+                                                          : Colors.black.withOpacity(0.08),
+                                                    ),
+                                                  ),
+                                              ],
+                                            ],
+                                          ),
+                                        ),
+                                      const SizedBox(height: 10),
+                                    ],
+                                  );
                                 }),
                               ]
                             ],
@@ -4723,6 +4783,7 @@ class _PdfCommentBubble extends StatefulWidget {
   final VoidCallback onDelete;
   final VoidCallback onReply;
   final bool compact;
+  final bool showReplyAction;
 
   const _PdfCommentBubble({
     required this.comment,
@@ -4733,6 +4794,7 @@ class _PdfCommentBubble extends StatefulWidget {
     required this.onDelete,
     required this.onReply,
     this.compact = false,
+    this.showReplyAction = true,
   });
 
   @override
@@ -4770,7 +4832,7 @@ class _PdfCommentBubbleState extends State<_PdfCommentBubble> {
       final name = AppAuthService.displayNameFor(user).trim();
       if (name.isNotEmpty && name != 'مستخدم') return name;
     }
-    return widget.comment.userName;
+    return widget.comment.userName.trim().isEmpty ? 'مستخدم' : widget.comment.userName.trim();
   }
 
   String get _effectiveAvatar {
@@ -4785,51 +4847,53 @@ class _PdfCommentBubbleState extends State<_PdfCommentBubble> {
   DateTime? _parseCommentTime(String value) {
     final raw = value.trim();
     if (raw.isEmpty) return null;
-
-    final normalized = raw.replaceFirst(' ', 'T');
-    final hasExplicitZone = RegExp(r'(Z|[+-]\d{2}:?\d{2})$').hasMatch(normalized);
-    final parsed = DateTime.tryParse(normalized);
-    if (parsed == null) return null;
-
-    if (hasExplicitZone) return parsed.toLocal();
-
-    // تواريخ الخادم للتعليقات تصل غالباً بدون منطقة زمنية لكنها محفوظة كـ UTC.
-    // تحويلها كـ UTC يمنع ظهور التعليق الجديد وكأنه مرّت عليه 3 ساعات، لأن حتى الوقت قرر يسوي دراما.
-    return DateTime.utc(
-      parsed.year,
-      parsed.month,
-      parsed.day,
-      parsed.hour,
-      parsed.minute,
-      parsed.second,
-      parsed.millisecond,
-      parsed.microsecond,
-    ).toLocal();
+    try {
+      final normalized = raw.contains('T') ? raw : raw.replaceFirst(' ', 'T');
+      final hasExplicitZone = RegExp(r'(Z|[+-]\d{2}:?\d{2})$').hasMatch(normalized);
+      return DateTime.parse(hasExplicitZone ? normalized : '${normalized}Z').toLocal();
+    } catch (_) {
+      return DateTime.tryParse(raw)?.toLocal();
+    }
   }
 
   String get _timeText {
-    if (widget.comment.createdAt.isEmpty) return '';
     final parsed = _parseCommentTime(widget.comment.createdAt);
-    if (parsed == null) return widget.comment.createdAt.split(' ').first;
+    if (parsed == null) return widget.comment.createdAt.isEmpty ? '' : widget.comment.createdAt.split(' ').first;
+    var diff = DateTime.now().difference(parsed);
+    if (diff.isNegative) diff = Duration.zero;
+    if (diff.inSeconds < 10) return 'الآن';
+    if (diff.inSeconds < 60) return '${diff.inSeconds}s';
+    if (diff.inMinutes < 60) return '${diff.inMinutes}m';
+    if (diff.inHours < 24) return '${diff.inHours}h';
+    if (diff.inDays < 7) return '${diff.inDays}d';
+    if (diff.inDays < 30) return '${(diff.inDays / 7).floor()}w';
+    if (diff.inDays < 365) return '${(diff.inDays / 30).floor()}mo';
+    return '${(diff.inDays / 365).floor()}y';
+  }
 
-    final now = DateTime.now();
-    final diff = now.difference(parsed);
-    if (diff.isNegative || diff.inMinutes < 1) return 'الآن';
-    if (diff.inMinutes < 60) return 'قبل ${diff.inMinutes} د';
-    if (diff.inHours < 24) return 'قبل ${diff.inHours} س';
-    if (diff.inDays < 7) return 'قبل ${diff.inDays} ي';
-    return '${parsed.year}-${parsed.month.toString().padLeft(2, '0')}-${parsed.day.toString().padLeft(2, '0')}';
+  void _openProfile() {
+    showCommentUserProfile(
+      context: context,
+      isDark: widget.isDark,
+      userName: _effectiveName,
+      userAvatar: _effectiveAvatar,
+      userEmail: widget.comment.userEmail,
+      fallbackJoinedAt: _parseCommentTime(widget.comment.createdAt),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
-    final textPrimary = widget.isDark ? const Color(0xFFEDEDED) : const Color(0xFF17120A);
-    final textSub = widget.isDark ? Colors.white60 : Colors.black45;
-    final bubble = widget.isDark ? const Color(0xFF171717) : const Color(0xFFFFFCF5);
+    final textPrimary = widget.isDark ? Colors.white : const Color(0xFF1A1000);
+    final textSub = widget.isDark ? Colors.white54 : Colors.black45;
+    final avatarSize = widget.compact ? 15.0 : 18.0;
+    final avatar = _effectiveAvatar.trim();
+    final name = _effectiveName;
+    final initial = name.runes.isEmpty ? '؟' : String.fromCharCode(name.runes.first);
 
     return TweenAnimationBuilder<double>(
-      tween: Tween(begin: 0.96, end: 1),
-      duration: const Duration(milliseconds: 260),
+      tween: Tween(begin: 0.97, end: 1),
+      duration: const Duration(milliseconds: 240),
       curve: Curves.easeOutCubic,
       builder: (context, value, child) => Transform.scale(
         scale: value,
@@ -4837,83 +4901,176 @@ class _PdfCommentBubbleState extends State<_PdfCommentBubble> {
         child: child,
       ),
       child: Container(
-        padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-          color: bubble,
-          borderRadius: BorderRadius.circular(22),
-          border: Border.all(color: gold.withOpacity(widget.isDark ? 0.16 : 0.20)),
-        ),
+        margin: widget.comment.isReply
+            ? const EdgeInsets.symmetric(vertical: 2)
+            : EdgeInsets.zero,
+        padding: widget.comment.isReply
+            ? const EdgeInsets.fromLTRB(10, 9, 10, 0)
+            : EdgeInsets.zero,
+        decoration: const BoxDecoration(color: Colors.transparent),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           textDirection: TextDirection.rtl,
           children: [
-            _CommentAvatar(url: _effectiveAvatar, name: _effectiveName, isDark: widget.isDark),
-            const SizedBox(width: 10),
+            GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: _openProfile,
+              child: CircleAvatar(
+                radius: avatarSize,
+                backgroundColor: gold.withOpacity(0.16),
+                backgroundImage: avatar.isNotEmpty ? NetworkImage(avatar) : null,
+                child: avatar.isEmpty
+                    ? Text(
+                        initial,
+                        style: TextStyle(
+                          color: gold,
+                          fontWeight: FontWeight.w800,
+                          fontSize: widget.compact ? 11 : 13,
+                        ),
+                      )
+                    : null,
+              ),
+            ),
+            const SizedBox(width: 9),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  Row(
-                    textDirection: TextDirection.rtl,
-                    children: [
-                      Expanded(
-                        child: Text(
-                          _effectiveName.isEmpty ? 'مستخدم' : _effectiveName,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          textAlign: TextAlign.right,
-                          style: TextStyle(color: textPrimary, fontSize: 13.5, fontWeight: FontWeight.w900),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onTap: _openProfile,
+                      child: Text(
+                        name,
+                        textDirection: TextDirection.rtl,
+                        textAlign: TextAlign.right,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: widget.isDark ? const Color(0xFFB9B39F) : const Color(0xFF755000),
+                          fontSize: widget.compact ? 12 : 13,
+                          fontWeight: FontWeight.w800,
                         ),
                       ),
-                      if (_timeText.isNotEmpty) ...[
-                        const SizedBox(width: 8),
-                        Text(_timeText, style: TextStyle(color: textSub, fontSize: 11.5, fontWeight: FontWeight.w800)),
+                    ),
+                  ),
+                  if (widget.comment.isReply) ...[
+                    const SizedBox(height: 2),
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: CommentReplyContextChip(
+                        name: widget.comment.replyToName,
+                        isDark: widget.isDark,
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: 4),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: SizedBox(
+                      width: double.infinity,
+                      child: Text(
+                        widget.comment.text,
+                        textDirection: TextDirection.rtl,
+                        textAlign: TextAlign.right,
+                        style: TextStyle(
+                          color: textPrimary,
+                          fontSize: widget.compact ? 13 : 13.5,
+                          height: 1.55,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  if (widget.showReplyAction)
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.end,
+                      textDirection: TextDirection.rtl,
+                      children: [
+                        Transform.translate(
+                          offset: const Offset(10, -10),
+                          child: TextButton(
+                            style: TextButton.styleFrom(
+                              padding: EdgeInsets.zero,
+                              minimumSize: const Size(32, 28),
+                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                            ),
+                            onPressed: widget.onReply,
+                            child: const Text(
+                              'رد',
+                              style: TextStyle(
+                                color: Color(0xFF757575),
+                                fontSize: 12,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                          ),
+                        ),
                       ],
-                      if (widget.canEdit || widget.canDelete) ...[
-                        const SizedBox(width: 2),
-                        PopupMenuButton<String>(
+                    ),
+                ],
+              ),
+            ),
+            if (_timeText.isNotEmpty || widget.canEdit || widget.canDelete) ...[
+              const SizedBox(width: 8),
+              SizedBox(
+                width: 38,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    if (_timeText.isNotEmpty)
+                      Text(
+                        _timeText,
+                        textAlign: TextAlign.center,
+                        style: TextStyle(color: textSub, fontSize: 10.5),
+                      ),
+                    if (widget.canEdit || widget.canDelete)
+                      SizedBox(
+                        width: 30,
+                        height: 24,
+                        child: PopupMenuButton<String>(
+                          tooltip: 'خيارات',
                           padding: EdgeInsets.zero,
-                          icon: Icon(Icons.more_horiz_rounded, color: textSub, size: 20),
-                          color: widget.isDark ? const Color(0xFF191919) : Colors.white,
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                          iconSize: 19,
+                          icon: Icon(Icons.more_horiz_rounded, color: textSub),
+                          color: widget.isDark ? const Color(0xFF2A2A2A) : Colors.white,
                           onSelected: (value) {
                             if (value == 'edit') widget.onEdit();
                             if (value == 'delete') widget.onDelete();
                           },
                           itemBuilder: (_) => [
                             if (widget.canEdit)
-                              const PopupMenuItem(value: 'edit', child: Text('تعديل')),
+                              const PopupMenuItem(
+                                value: 'edit',
+                                child: Row(
+                                  textDirection: TextDirection.rtl,
+                                  children: [
+                                    Icon(Icons.edit_outlined, size: 18),
+                                    SizedBox(width: 8),
+                                    Text('تعديل'),
+                                  ],
+                                ),
+                              ),
                             if (widget.canDelete)
-                              const PopupMenuItem(value: 'delete', child: Text('حذف')),
+                              const PopupMenuItem(
+                                value: 'delete',
+                                child: Row(
+                                  textDirection: TextDirection.rtl,
+                                  children: [
+                                    Icon(Icons.delete_outline_rounded, size: 18, color: Colors.red),
+                                    SizedBox(width: 8),
+                                    Text('حذف', style: TextStyle(color: Colors.red)),
+                                  ],
+                                ),
+                              ),
                           ],
                         ),
-                      ],
-                    ],
-                  ),
-                  const SizedBox(height: 5),
-                  if (widget.comment.isReply && widget.comment.replyToName.isNotEmpty) ...[
-                    Container(
-                      alignment: Alignment.centerRight,
-                      margin: const EdgeInsets.only(bottom: 5),
-                      child: Text('رد على @${widget.comment.replyToName}', textAlign: TextAlign.right, style: const TextStyle(color: Color(0xFF2684FF), fontSize: 11.5, fontWeight: FontWeight.w900)),
-                    ),
+                      ),
                   ],
-                  Text(
-                    widget.comment.text,
-                    textAlign: TextAlign.right,
-                    style: TextStyle(color: widget.isDark ? Colors.white70 : Colors.black87, fontSize: widget.compact ? 13 : 13.5, height: 1.65, fontWeight: FontWeight.w700),
-                  ),
-                  Align(
-                    alignment: Alignment.centerRight,
-                    child: TextButton(
-                      style: TextButton.styleFrom(padding: EdgeInsets.zero, minimumSize: const Size(32, 26), tapTargetSize: MaterialTapTargetSize.shrinkWrap),
-                      onPressed: widget.onReply,
-                      child: const Text('رد', style: TextStyle(color: Color(0xFF2684FF), fontSize: 12, fontWeight: FontWeight.w900)),
-                    ),
-                  ),
-                ],
+                ),
               ),
-            ),
+            ],
           ],
         ),
       ),

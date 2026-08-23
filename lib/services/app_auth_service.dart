@@ -1,7 +1,3 @@
-import 'dart:convert';
-import 'dart:math';
-
-import 'package:crypto/crypto.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -62,14 +58,6 @@ class AppAuthService {
     return result;
   }
 
-  static String _randomNonce([int length = 32]) {
-    const charset = '0123456789ABCDEFGHIJKLMNOPQRSTUVXYZabcdefghijklmnopqrstuvwxyz-._';
-    final random = Random.secure();
-    return List.generate(length, (_) => charset[random.nextInt(charset.length)]).join();
-  }
-
-  static String _sha256(String input) =>
-      sha256.convert(utf8.encode(input)).toString();
 
   static bool isCancelledError(Object error) {
     if (error is SignInWithAppleAuthorizationException) {
@@ -96,54 +84,13 @@ class AppAuthService {
     }
 
     try {
-      final rawNonce = _randomNonce();
-      final appleCredential = await SignInWithApple.getAppleIDCredential(
-        scopes: const [
-          AppleIDAuthorizationScopes.email,
-          AppleIDAuthorizationScopes.fullName,
-        ],
-        nonce: _sha256(rawNonce),
-      );
-
-      final idToken = appleCredential.identityToken;
-      if (idToken == null || idToken.isEmpty) {
-        throw FirebaseAuthException(
-          code: 'missing-apple-id-token',
-          message: 'Apple did not return an identity token.',
-        );
-      }
-
-      final fullName = AppleFullPersonName(
-        givenName: appleCredential.givenName,
-        familyName: appleCredential.familyName,
-      );
-      final oauthCredential = AppleAuthProvider.credentialWithIDToken(
-        idToken,
-        rawNonce,
-        fullName,
-      );
-      final result = await FirebaseAuth.instance.signInWithCredential(oauthCredential);
+      // استخدم مسار Firebase الأصلي على iOS. هذا يتجنب فشل تبديل Apple ID token
+      // الذي كان يظهر أحياناً كخطأ شبكة رغم أن اتصال الجهاز سليم.
+      final provider = AppleAuthProvider();
+      final result = await FirebaseAuth.instance.signInWithProvider(provider);
 
       final user = result.user;
       if (user != null) {
-        final suppliedName = [appleCredential.givenName, appleCredential.familyName]
-            .whereType<String>()
-            .map((v) => v.trim())
-            .where((v) => v.isNotEmpty)
-            .join(' ')
-            .trim();
-
-        final prefs = await SharedPreferences.getInstance();
-        final nameKey = 'apple_display_name_${user.uid}';
-        if (suppliedName.isNotEmpty && ((user.displayName ?? '').trim().isEmpty || (user.displayName ?? '').trim() == 'مستخدم')) {
-          await prefs.setString(nameKey, suppliedName);
-          await user.updateDisplayName(suppliedName);
-        } else if ((user.displayName ?? '').trim().isEmpty) {
-          final cachedName = prefs.getString(nameKey)?.trim() ?? '';
-          if (cachedName.isNotEmpty) {
-            await user.updateDisplayName(cachedName);
-          }
-        }
         await user.reload();
         if (context != null && context.mounted) {
           final current = FirebaseAuth.instance.currentUser ?? user;
@@ -154,6 +101,7 @@ class AppAuthService {
           }
         }
       }
+
       return result;
     } catch (e) {
       if (isCancelledError(e)) return null;

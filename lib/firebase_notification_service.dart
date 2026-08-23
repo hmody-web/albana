@@ -546,8 +546,19 @@ static Future<void> _setupLocalNotifications() async {
     return 'user_${sha256.convert(utf8.encode(normalized))}';
   }
 
+  static Future<void> syncSignedInUserNotifications() async {
+    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.iOS) {
+      await _waitForApnsToken();
+    }
+    await _syncUserReplyTopic();
+  }
+
   static Future<void> _syncUserReplyTopic() async {
     try {
+      if (!kIsWeb && defaultTargetPlatform == TargetPlatform.iOS) {
+        final ready = await _waitForApnsToken();
+        if (!ready) return;
+      }
       final prefs = await SharedPreferences.getInstance();
       final previous = prefs.getString(_lastUserTopicKey)?.trim() ?? '';
       final user = FirebaseAuth.instance.currentUser;

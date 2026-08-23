@@ -13,6 +13,7 @@ import '../services/app_auth_service.dart';
 import '../services/apple_profile_service.dart';
 import '../services/app_notice.dart';
 import '../widgets/shared_widgets.dart';
+import 'account_profile_page.dart';
 
 SystemUiOverlayStyle settingsSystemUiOverlayStyle(bool isDark) {
   return SystemUiOverlayStyle(
@@ -698,6 +699,19 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
     });
   }
 
+  void _openProfile(User user) {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => AccountProfilePage(
+          isDark: widget.isDark,
+          user: user,
+          deletingAccount: _deletingAccount,
+          onDeleteAccount: _deleteAccountCompletely,
+        ),
+      ),
+    );
+  }
+
   void _openAboutPage() {
     Navigator.of(context).push(
       MaterialPageRoute<void>(
@@ -736,6 +750,7 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
                         onGoogleLogin: () => _signInWithGoogle(context),
                         onAppleLogin: () => _signInWithApple(context),
                         showAppleLogin: AppAuthService.showAppleSignIn,
+                        onViewProfile: user == null ? null : () => _openProfile(user),
                       );
                     },
                   ),
@@ -817,21 +832,6 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
                         isDark: widget.isDark,
                         title: 'الحساب',
                         children: [
-                          _SettingsActionTile(
-                            isDark: widget.isDark,
-                            icon: Icons.delete_forever_outlined,
-                            title: _deletingAccount ? 'جاري مسح بيانات الحساب...' : 'مسح بيانات الحساب',
-                            danger: true,
-                            enabled: loggedIn && !_deletingAccount,
-                            trailing: _deletingAccount
-                                ? const SizedBox(
-                                    width: 18,
-                                    height: 18,
-                                    child: CircularProgressIndicator(strokeWidth: 2),
-                                  )
-                                : null,
-                            onTap: _deleteAccountCompletely,
-                          ),
                           _SettingsActionTile(
                             isDark: widget.isDark,
                             icon: loggedIn ? Icons.logout_rounded : Icons.login_rounded,
@@ -1225,6 +1225,7 @@ class _ModernLoginCard extends StatelessWidget {
   final VoidCallback onGoogleLogin;
   final VoidCallback onAppleLogin;
   final bool showAppleLogin;
+  final VoidCallback? onViewProfile;
 
   const _ModernLoginCard({
     required this.isDark,
@@ -1233,6 +1234,7 @@ class _ModernLoginCard extends StatelessWidget {
     required this.onGoogleLogin,
     required this.onAppleLogin,
     required this.showAppleLogin,
+    this.onViewProfile,
   });
 
   static const gold = Color(0xFFD4A017);
@@ -1392,6 +1394,14 @@ class _ModernLoginCard extends StatelessWidget {
                     ),
                   ),
                   const Spacer(),
+                  if (loggedIn && onViewProfile != null) ...[
+                    _SmallGoldButton(
+                      label: 'عرض الملف الشخصي',
+                      icon: Icons.person_search_rounded,
+                      onTap: onViewProfile!,
+                    ),
+                    if (isApple) const SizedBox(width: 8),
+                  ],
                   if (loggedIn && isApple)
                     _SmallGoldButton(
                       label: 'تعديل الملف',
