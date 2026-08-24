@@ -5138,19 +5138,44 @@ return Container(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
-                  GestureDetector(
-                    behavior: HitTestBehavior.opaque,
-                    onTap: _openProfile,
-                    child: Text(
-                      widget.comment.userName,
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
                       textDirection: TextDirection.rtl,
-                      textAlign: TextAlign.right,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: isDark ? const Color(0xFFB9B39F) : const Color(0xFF755000),
-                        fontSize: widget.compact ? 12 : 13,
-                        fontWeight: FontWeight.w800,
-                      ),
+                      children: [
+                        Flexible(
+                          child: GestureDetector(
+                            behavior: HitTestBehavior.opaque,
+                            onTap: _openProfile,
+                            child: Text(
+                              widget.comment.userName,
+                              textDirection: TextDirection.rtl,
+                              textAlign: TextAlign.right,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: isDark ? const Color(0xFFB9B39F) : const Color(0xFF755000),
+                                fontSize: widget.compact ? 12 : 13,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                          ),
+                        ),
+                        if (PlatformUserService.isSupervisorEmail(widget.comment.userEmail)) ...[
+                          const SizedBox(width: 4),
+                          Tooltip(
+                            message: 'مشرف',
+                            triggerMode: TooltipTriggerMode.tap,
+                            showDuration: const Duration(milliseconds: 1500),
+                            preferBelow: false,
+                            child: Icon(
+                              Icons.verified,
+                              size: widget.compact ? 15 : 16,
+                              color: const Color(0xFF1689F7),
+                            ),
+                          ),
+                        ],
+                      ],
                     ),
                   ),
                   if (widget.comment.isReply) ...[

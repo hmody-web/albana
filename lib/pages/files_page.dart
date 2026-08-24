@@ -5067,20 +5067,42 @@ class _PdfCommentBubbleState extends State<_PdfCommentBubble> {
                 children: [
                   Align(
                     alignment: Alignment.centerRight,
-                    child: GestureDetector(
-                      behavior: HitTestBehavior.opaque,
-                      onTap: _openProfile,
-                      child: Text(
-                        name,
-                        textDirection: TextDirection.rtl,
-                        textAlign: TextAlign.right,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: widget.isDark ? const Color(0xFFB9B39F) : const Color(0xFF755000),
-                          fontSize: widget.compact ? 12 : 13,
-                          fontWeight: FontWeight.w800,
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      textDirection: TextDirection.rtl,
+                      children: [
+                        Flexible(
+                          child: GestureDetector(
+                            behavior: HitTestBehavior.opaque,
+                            onTap: _openProfile,
+                            child: Text(
+                              name,
+                              textDirection: TextDirection.rtl,
+                              textAlign: TextAlign.right,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: widget.isDark ? const Color(0xFFB9B39F) : const Color(0xFF755000),
+                                fontSize: widget.compact ? 12 : 13,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                          ),
                         ),
-                      ),
+                        if (PlatformUserService.isSupervisorEmail(widget.comment.userEmail)) ...[
+                          const SizedBox(width: 4),
+                          Tooltip(
+                            message: 'مشرف',
+                            triggerMode: TooltipTriggerMode.tap,
+                            showDuration: const Duration(milliseconds: 1500),
+                            preferBelow: false,
+                            child: Icon(
+                              Icons.verified,
+                              size: widget.compact ? 15 : 16,
+                              color: const Color(0xFF1689F7),
+                            ),
+                          ),
+                        ],
+                      ],
                     ),
                   ),
                   if (widget.comment.isReply) ...[
