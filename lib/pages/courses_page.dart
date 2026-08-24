@@ -15,7 +15,7 @@ import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 import '../widgets/shared_widgets.dart';
-
+import '../services/platform_user_service.dart';
 
 Future<void> _trackContentView(String type, Object id) async {
   try {
@@ -362,8 +362,7 @@ class _CoursesPageState extends State<CoursesPage>
   }
 
   bool _isSupervisor(User? user) {
-    final email = user?.email?.trim().toLowerCase();
-    return email == 'hmode.qq@gmail.com' || email == 'hmode.qu@gmail.com' || email == 'info@majidalbana.com';
+    return PlatformUserService.isSupervisorEmail(user?.email);
   }
 
   @override
@@ -6763,10 +6762,7 @@ class _RegistrationNotificationDetailPageState
   Color get _sub => widget.isDark ? Colors.white70 : Colors.black54;
 
   bool get _isSupervisor {
-    final email = FirebaseAuth.instance.currentUser?.email?.trim().toLowerCase();
-    return email == 'hmode.qq@gmail.com' ||
-        email == 'hmode.qu@gmail.com' ||
-        email == 'info@majidalbana.com';
+    return PlatformUserService.isSupervisorEmail(FirebaseAuth.instance.currentUser?.email);
   }
 
   @override

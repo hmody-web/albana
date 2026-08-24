@@ -3,6 +3,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import '../services/app_auth_service.dart';
+import '../services/apple_profile_service.dart';
 
 class AccountProfilePage extends StatefulWidget {
   final bool isDark;
@@ -55,7 +56,12 @@ class _AccountProfilePageState extends State<AccountProfilePage> {
       _card(fg,[
         _row(Icons.chat_bubble_rounded,'التعليقات والمساهمات','${d['comments']??0}',fg),
         _row(Icons.favorite_rounded,'الإعجابات','${d['likes']??0}',fg),
-      ]), const SizedBox(height:20),
+      ]), const SizedBox(height:14),
+      SizedBox(width:double.infinity,height:52,child:FilledButton.icon(
+        onPressed:() async { final ok=await AppleProfileService.ensureProfile(context,FirebaseAuth.instance.currentUser??u,forceEdit:true); if(ok&&mounted){setState((){_future=_load();});}},
+        icon:const Icon(Icons.edit_rounded),label:const Text('تعديل الملف الشخصي'),
+        style:FilledButton.styleFrom(backgroundColor:gold,foregroundColor:Colors.white,shape:RoundedRectangleBorder(borderRadius:BorderRadius.circular(16)))
+      )), const SizedBox(height:12),
       OutlinedButton.icon(onPressed:widget.deletingAccount?null:() async {await widget.onDeleteAccount(); if(mounted && FirebaseAuth.instance.currentUser==null) Navigator.of(context).pop();},icon:widget.deletingAccount?const SizedBox(width:18,height:18,child:CircularProgressIndicator(strokeWidth:2)):const Icon(Icons.delete_forever_rounded),label:Text(widget.deletingAccount?'جاري مسح بيانات الحساب...':'مسح بيانات الحساب'),style:OutlinedButton.styleFrom(foregroundColor:Colors.red,padding:const EdgeInsets.symmetric(vertical:14),side:BorderSide(color:Colors.red.withOpacity(.35)),shape:RoundedRectangleBorder(borderRadius:BorderRadius.circular(16))))
     ]);}))); }
   Widget _card(Color fg,List<Widget> children)=>Container(padding:const EdgeInsets.all(16),decoration:BoxDecoration(color:widget.isDark?const Color(0xFF151515):Colors.white,borderRadius:BorderRadius.circular(22),border:Border.all(color:gold.withOpacity(.18))),child:Column(children:children));

@@ -10,6 +10,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../firebase_notification_service.dart';
 import '../services/app_auth_service.dart';
+import '../services/platform_user_service.dart';
 import '../services/apple_profile_service.dart';
 import '../services/app_notice.dart';
 import '../widgets/shared_widgets.dart';
@@ -62,12 +63,18 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    PlatformUserService.supervisorRevisionNotifier.addListener(_onSupervisorRoleChanged);
     applySettingsSystemUiOverlayStyle(widget.isDark);
     _loadNotificationSettings();
   }
 
+  void _onSupervisorRoleChanged() {
+    if (mounted) setState(() {});
+  }
+
   @override
   void dispose() {
+    PlatformUserService.supervisorRevisionNotifier.removeListener(_onSupervisorRoleChanged);
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
@@ -88,14 +95,13 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
   }
 
   bool _isSupervisor(User? user) {
-    final email = user?.email?.trim().toLowerCase();
-    return email == 'hmode.qq@gmail.com' || email == 'hmode.qu@gmail.com' || email == 'info@majidalbana.com';
+    return PlatformUserService.isSupervisorEmail(user?.email);
   }
 
   Future<void> _signInWithGoogle(BuildContext context) async {
     final messenger = ScaffoldMessenger.of(context);
     try {
-      await AppAuthService.signInWithGoogle();
+      await AppAuthService.signInWithGoogle(context: context);
     } catch (e) {
       AppNotice.showSnackBar(context, const SnackBar(content: Text('تعذر تسجيل الدخول. حاول مرة أخرى.')));
     }
@@ -1400,16 +1406,8 @@ class _ModernLoginCard extends StatelessWidget {
                       icon: Icons.person_search_rounded,
                       onTap: onViewProfile!,
                     ),
-                    if (isApple) const SizedBox(width: 8),
+                    const SizedBox(width: 8),
                   ],
-                  if (loggedIn && isApple)
-                    _SmallGoldButton(
-                      label: 'تعديل الملف',
-                      icon: Icons.edit_rounded,
-                      onTap: () async {
-                        await AppleProfileService.ensureProfile(context, user!, forceEdit: true);
-                      },
-                    ),
                   if (!loggedIn)
                     Row(
                       mainAxisSize: MainAxisSize.min,
@@ -1710,12 +1708,18 @@ class _NotificationsSettingsPageState extends State<_NotificationsSettingsPage>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    PlatformUserService.supervisorRevisionNotifier.addListener(_onSupervisorRoleChanged);
     applySettingsSystemUiOverlayStyle(widget.isDark);
     _load();
   }
 
+  void _onSupervisorRoleChanged() {
+    if (mounted) setState(() {});
+  }
+
   @override
   void dispose() {
+    PlatformUserService.supervisorRevisionNotifier.removeListener(_onSupervisorRoleChanged);
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }

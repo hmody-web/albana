@@ -20,7 +20,7 @@ class AppleProfileService {
     return name.isNotEmpty && name != 'مستخدم' && photo.isNotEmpty;
   }
 
-  static Future<bool> ensureProfile(BuildContext context, User user, {bool forceEdit = false}) async {
+  static Future<bool> ensureProfile(BuildContext context, User user, {bool forceEdit = false, bool requireConfirmation = false}) async {
     await user.reload();
     final current = FirebaseAuth.instance.currentUser ?? user;
     if (!forceEdit && isComplete(current)) return true;
@@ -28,7 +28,7 @@ class AppleProfileService {
     final saved = await Navigator.of(context).push<bool>(
       MaterialPageRoute(
         fullscreenDialog: true,
-        builder: (_) => _AppleProfilePage(user: current, forceEdit: forceEdit),
+        builder: (_) => _AppleProfilePage(user: current, forceEdit: forceEdit, requireConfirmation: requireConfirmation),
       ),
     );
     return saved == true;
@@ -38,7 +38,8 @@ class AppleProfileService {
 class _AppleProfilePage extends StatefulWidget {
   final User user;
   final bool forceEdit;
-  const _AppleProfilePage({required this.user, required this.forceEdit});
+  final bool requireConfirmation;
+  const _AppleProfilePage({required this.user, required this.forceEdit, required this.requireConfirmation});
 
   @override
   State<_AppleProfilePage> createState() => _AppleProfilePageState();
@@ -51,7 +52,7 @@ class _AppleProfilePageState extends State<_AppleProfilePage> {
   bool _saving = false;
   String? _error;
 
-  bool get _firstSetup => !AppleProfileService.isComplete(widget.user);
+  bool get _firstSetup => widget.requireConfirmation || !AppleProfileService.isComplete(widget.user);
   bool get _hasRemotePhoto => (widget.user.photoURL ?? '').trim().isNotEmpty;
   bool get _canSave => _nameController.text.trim().length >= 2 && (_image != null || _hasRemotePhoto);
 
@@ -208,7 +209,7 @@ class _AppleProfilePageState extends State<_AppleProfilePage> {
           backgroundColor: bg,
           appBar: AppBar(
             automaticallyImplyLeading: !_firstSetup,
-            title: Text(widget.forceEdit ? 'تعديل الملف الشخصي' : 'أكمل ملفك الشخصي'),
+            title: Text(widget.forceEdit ? 'تعديل الملف الشخصي' : 'تأكيد الملف الشخصي'),
             centerTitle: true,
             backgroundColor: Colors.transparent,
             elevation: 0,

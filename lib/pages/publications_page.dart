@@ -16,6 +16,7 @@ import 'package:path_provider/path_provider.dart';
 import '../widgets/shared_widgets.dart';
 import '../widgets/comment_interactions.dart';
 import '../services/app_auth_service.dart';
+import '../services/platform_user_service.dart';
 import '../services/app_notice.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:visibility_detector/visibility_detector.dart';
@@ -42,8 +43,7 @@ Future<void> _trackContentView(String type, Object id) async {
 }
 
 bool _isSupervisorEmail(String? email) {
-  final cleanEmail = email?.trim().toLowerCase();
-  return cleanEmail == 'hmode.qq@gmail.com' || cleanEmail == 'hmode.qu@gmail.com' || cleanEmail == 'info@majidalbana.com';
+  return PlatformUserService.isSupervisorEmail(email);
 }
 
 bool _isCurrentUserSupervisor() {
@@ -231,12 +231,14 @@ class PublicationDirectPage extends StatefulWidget {
   final int postId;
   final bool isDark;
   final int? targetCommentId;
+  final bool targetIsReply;
 
   const PublicationDirectPage({
     super.key,
     required this.postId,
     required this.isDark,
     this.targetCommentId,
+    this.targetIsReply = false,
   });
 
   @override
@@ -326,6 +328,7 @@ class _PublicationDirectPageState extends State<PublicationDirectPage> {
           isDark: widget.isDark,
           isSupervisor: _isCurrentUserSupervisor(),
           targetCommentId: widget.targetCommentId,
+          targetIsReply: widget.targetIsReply,
         );
       },
     );
@@ -3163,7 +3166,7 @@ if (listener != null) {
 void _startCommentsPolling() {
   _commentsPollingTimer?.cancel();
 
-  _commentsPollingTimer = Timer.periodic(const Duration(seconds: 5), (_) {
+  _commentsPollingTimer = Timer.periodic(const Duration(seconds: 2), (_) {
     _silentReloadLikes();
     _silentReloadComments();
   });
@@ -3271,6 +3274,8 @@ Future<void> _loadComments() async {
     if (text.isEmpty) return;
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) return;
+    final banned = await PlatformUserService.refreshCurrentUserStatus();
+    if (banned) return;
 
     setState(() => _sendingComment = true);
     try {
@@ -4058,7 +4063,8 @@ class _CommentInputBox extends StatelessWidget {
             child: ValueListenableBuilder<TextEditingValue>(
               valueListenable: controller,
               builder: (context, value, _) {
-                final canShowSend =
+                final banned = PlatformUserService.bannedCommentsNotifier.value;
+                final canShowSend = !banned &&
                     showSendButton && (value.text.trim().isNotEmpty || sending);
 
                 return Row(
@@ -4147,9 +4153,13 @@ AnimatedSwitcher(
 
                     // Text field
                     Expanded(
-                      child: TextField(
+                      child: ValueListenableBuilder<bool>(
+                        valueListenable: PlatformUserService.bannedCommentsNotifier,
+                        builder: (context, banned, _) => TextField(
                         controller: controller,
                         focusNode: focusNode,
+                        enabled: !banned,
+                        readOnly: banned,
                         textDirection: TextDirection.rtl,
                         textAlign: TextAlign.right,
                         maxLines: 4,
@@ -4160,7 +4170,7 @@ AnimatedSwitcher(
                           height: 1.5,
                         ),
                         decoration: InputDecoration(
-                          hintText: 'اكتب تعليقاً...',
+                          hintText: banned ? 'لقد تم منعك من قبل المشرفون' : 'اكتب تعليقاً...',
                           hintTextDirection: TextDirection.rtl,
                           hintStyle: TextStyle(
                             color: hintColor,
@@ -4173,6 +4183,7 @@ AnimatedSwitcher(
                           ),
                           border: InputBorder.none,
                         ),
+                      ),
                       ),
                     ),
                   ],
@@ -5326,7 +5337,7 @@ class _LoginSheetState extends State<_LoginSheet> {
   Future<void> _signInWithGoogle() async {
     setState(() { _loading = true; _error = null; });
     try {
-      final result = await AppAuthService.signInWithGoogle();
+      final result = await AppAuthService.signInWithGoogle(context: context);
       if (result == null) {
         if (mounted) setState(() => _loading = false);
         return;
@@ -5543,6 +5554,7 @@ class _PostDetailPage extends StatefulWidget {
   final VideoPlayerController? existingController;
   final bool? isSupervisor;
   final int? targetCommentId;
+  final bool targetIsReply;
 
   const _PostDetailPage({
     required this.post,
@@ -5550,6 +5562,7 @@ class _PostDetailPage extends StatefulWidget {
     this.existingController,
     this.isSupervisor,
     this.targetCommentId,
+    this.targetIsReply = false,
   });
 
   @override
@@ -5759,6 +5772,7 @@ class _PostDetailPageState extends State<_PostDetailPage> {
   _Comment? _replyTarget;
   final Set<int> _expandedReplyRoots = <int>{};
   final _scrollCtrl = ScrollController();
+  final GlobalKey _commentsSectionKey = GlobalKey();
   bool _liked = false;
   int _likesCount = 0;
   bool _likeLoading = false;
@@ -5776,6 +5790,7 @@ class _PostDetailPageState extends State<_PostDetailPage> {
   @override
   void initState() {
     super.initState();
+    unawaited(_trackContentView('post', widget.post.id));
 
 _realtimeBusListener = _onRealtimeUpdate;
 _PostRealtimeBus.tick.addListener(_realtimeBusListener!);
@@ -5980,50 +5995,142 @@ _onRealtimeUpdate();
 
 
   void _focusTargetCommentIfNeeded() {
-    final targetId = widget.targetCommentId;
-    if (_targetCommentFocused || targetId == null || targetId <= 0) return;
-    if (!_comments.any((comment) => comment.id == targetId)) return;
+    final requestedId = widget.targetCommentId;
+    if (_targetCommentFocused || requestedId == null || requestedId <= 0) return;
 
-    // Cold-starts can restore cached comments before the comment widgets have
-    // actually been laid out. Retry until the target GlobalKey has a context;
-    // only then mark the navigation as completed.
+    _Comment? target;
+    for (final comment in _comments) {
+      if (comment.id == requestedId) {
+        target = comment;
+        break;
+      }
+    }
+    if (target == null) return;
+
+    // الإصدارات القديمة من الإشعارات كانت ترسل ID التعليق الأصلي حتى عند الرد.
+    // إذا كان الإشعار "رد" ولم يصل reply_id صريحاً، ننتقل لأحدث رد داخل نفس السلسلة.
+    if (widget.targetIsReply && !target.isReply) {
+      final rootId = target.id;
+      final replies = _comments
+          .where((c) => c.isReply && (c.parentId == rootId || c.replyToCommentId == rootId))
+          .toList();
+      if (replies.isNotEmpty) {
+        replies.sort((a, b) => b.id.compareTo(a.id));
+        target = replies.first;
+      }
+    }
+
+    final resolved = target;
+    if (resolved == null) return;
+
+    if (resolved.isReply) {
+      final rootId = resolved.parentId > 0 ? resolved.parentId : resolved.replyToCommentId;
+      if (rootId > 0 && !_expandedReplyRoots.contains(rootId)) {
+        setState(() => _expandedReplyRoots.add(rootId));
+      }
+    }
+
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      unawaited(_tryFocusTargetComment(targetId, 0));
+      unawaited(_tryFocusTargetComment(resolved!.id, 0));
     });
   }
 
   Future<void> _tryFocusTargetComment(int targetId, int attempt) async {
     if (!mounted || _targetCommentFocused) return;
 
-    final targetContext = _commentKeys[targetId]?.currentContext;
-    if (targetContext == null) {
-      if (attempt >= 12) return;
-      await Future<void>.delayed(Duration(milliseconds: 90 + (attempt * 35)));
+    // عند فتح الصفحة من الإشعار يكون انتقال الـ route والـ layout أحياناً لم يكتمل بعد.
+    // ننتظر عدة frames فعلياً بدل الاعتماد على أول حركة Scroll من المستخدم.
+    if (attempt == 0) {
+      await Future<void>.delayed(const Duration(milliseconds: 360));
       if (!mounted) return;
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        unawaited(_tryFocusTargetComment(targetId, attempt + 1));
-      });
-      return;
+      await WidgetsBinding.instance.endOfFrame;
     }
 
-    _targetCommentFocused = true;
-    if (_highlightedCommentId != targetId) {
-      setState(() => _highlightedCommentId = targetId);
-    }
-
-    await Scrollable.ensureVisible(
-      targetContext,
-      duration: const Duration(milliseconds: 650),
-      curve: Curves.easeOutCubic,
-      alignment: 0.28,
-    );
-
-    _commentHighlightTimer?.cancel();
-    _commentHighlightTimer = Timer(const Duration(seconds: 2), () {
-      if (mounted && _highlightedCommentId == targetId) {
-        setState(() => _highlightedCommentId = null);
+    try {
+      // مهم: عند الفتح من الإشعار ننفذ حركة فعلية فوراً قبل البحث عن Context
+      // الخاص بالتعليق/الرد. هذا يمنع الحالة التي كان السكرول ينتظر أول حركة يدويّة.
+      if (attempt == 0 && _scrollCtrl.hasClients) {
+        await _scrollCtrl.animateTo(
+          _scrollCtrl.position.maxScrollExtent,
+          duration: const Duration(milliseconds: 650),
+          curve: Curves.easeOutCubic,
+        );
+        await WidgetsBinding.instance.endOfFrame;
       }
-    });
+      final commentsContext = _commentsSectionKey.currentContext;
+      if (commentsContext != null) {
+        await Scrollable.ensureVisible(
+          commentsContext,
+          duration: const Duration(milliseconds: 520),
+          curve: Curves.easeOutCubic,
+          alignment: 0.08,
+          alignmentPolicy: ScrollPositionAlignmentPolicy.explicit,
+        );
+      }
+
+      await WidgetsBinding.instance.endOfFrame;
+      await Future<void>.delayed(const Duration(milliseconds: 110));
+      if (!mounted) return;
+
+      final targetContext = _commentKeys[targetId]?.currentContext;
+      if (targetContext == null) {
+        if (attempt >= 24) return;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          unawaited(_tryFocusTargetComment(targetId, attempt + 1));
+        });
+        return;
+      }
+
+      final refreshedContext = _commentKeys[targetId]?.currentContext;
+      if (refreshedContext == null) {
+        if (attempt < 24) {
+          _targetCommentFocused = false;
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            unawaited(_tryFocusTargetComment(targetId, attempt + 1));
+          });
+        }
+        return;
+      }
+
+      await Scrollable.ensureVisible(
+        refreshedContext,
+        duration: const Duration(milliseconds: 720),
+        curve: Curves.easeInOutCubic,
+        alignment: 0.28,
+        alignmentPolicy: ScrollPositionAlignmentPolicy.explicit,
+      );
+      await WidgetsBinding.instance.endOfFrame;
+      if (!mounted) return;
+
+      // نثبت الموضع مرة ثانية بعد تمدد الردود/تحميل الصور حتى لا يتحرك الهدف.
+      final finalContext = _commentKeys[targetId]?.currentContext;
+      if (finalContext != null) {
+        await Scrollable.ensureVisible(
+          finalContext,
+          duration: const Duration(milliseconds: 260),
+          curve: Curves.easeOutCubic,
+          alignment: 0.28,
+          alignmentPolicy: ScrollPositionAlignmentPolicy.explicit,
+        );
+      }
+
+      if (!mounted) return;
+      _targetCommentFocused = true;
+      setState(() => _highlightedCommentId = targetId);
+      _commentHighlightTimer?.cancel();
+      _commentHighlightTimer = Timer(const Duration(milliseconds: 3200), () {
+        if (mounted && _highlightedCommentId == targetId) {
+          setState(() => _highlightedCommentId = null);
+        }
+      });
+    } catch (_) {
+      if (attempt < 24 && mounted) {
+        await Future<void>.delayed(const Duration(milliseconds: 140));
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          unawaited(_tryFocusTargetComment(targetId, attempt + 1));
+        });
+      }
+    }
   }
 
   Future<void> _loadLikes() async {
@@ -6504,6 +6611,7 @@ if (p.videoUrl != null)
 
                 // ── Comments Section ──────────────────────────────────────
                 Padding(
+                  key: _commentsSectionKey,
                   padding: const EdgeInsets.fromLTRB(16, 20, 16, 12),
                   child: Row(
                     textDirection: TextDirection.rtl,
@@ -6626,6 +6734,7 @@ if (p.videoUrl != null)
                                         isDark: isDark,
                                         onReply: () => replyTo(replies[i]),
                                         child: _CommentBubble(
+                                          key: _commentKeys.putIfAbsent(replies[i].id, () => GlobalKey()),
                                           comment: replies[i],
                                           isDark: isDark,
                                           onEdit: _editComment,
@@ -6768,28 +6877,16 @@ class _CommentBubble extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return AnimatedContainer(
-      duration: const Duration(milliseconds: 280),
-      margin: EdgeInsets.fromLTRB(
-        10,
-        compact ? 2 : 4,
-        10,
-        compact ? 2 : 4,
-      ),
-      padding: highlighted ? const EdgeInsets.all(6) : EdgeInsets.zero,
-      decoration: BoxDecoration(
-        color: highlighted
-            ? gold.withOpacity(isDark ? 0.16 : 0.12)
-            : Colors.transparent,
-        borderRadius: BorderRadius.circular(16),
-        border: highlighted
-            ? Border.all(
-                color: gold.withOpacity(0.85),
-                width: 1.3,
-              )
-            : null,
-      ),
-      child: _CommentTile(
+    return CommentNotificationFlash(
+      active: highlighted,
+      child: Container(
+        margin: EdgeInsets.fromLTRB(
+          10,
+          compact ? 2 : 4,
+          10,
+          compact ? 2 : 4,
+        ),
+        child: _CommentTile(
         comment: comment,
         isDark: isDark,
         onEdit: onEdit,
@@ -6798,6 +6895,7 @@ class _CommentBubble extends StatelessWidget {
         isSupervisor: isSupervisor,
         compact: compact,
         showReplyAction: showReplyAction,
+        ),
       ),
     );
   }

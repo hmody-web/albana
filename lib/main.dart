@@ -299,7 +299,10 @@ void _openFromNotificationData(Map<String, dynamic> data) {
 
   if (type == 'new_post_comment' || type == 'post_comment_reply') {
     final postId = int.tryParse('${data['post_id'] ?? data['postId'] ?? ''}');
-    final commentId = int.tryParse('${data['comment_id'] ?? data['commentId'] ?? ''}');
+    final isReplyNotification = type == 'post_comment_reply';
+    final commentId = int.tryParse(
+      '${data['reply_id'] ?? data['replyId'] ?? data['reply_comment_id'] ?? data['replyCommentId'] ?? data['target_reply_id'] ?? data['comment_id'] ?? data['commentId'] ?? ''}',
+    );
     if (postId != null && postId > 0 && commentId != null && commentId > 0) {
       Navigator.of(context).push(
         MaterialPageRoute(
@@ -307,6 +310,7 @@ void _openFromNotificationData(Map<String, dynamic> data) {
             postId: postId,
             isDark: widget.isDark,
             targetCommentId: commentId,
+            targetIsReply: isReplyNotification,
           ),
         ),
       );
@@ -356,9 +360,17 @@ void _openFromNotificationData(Map<String, dynamic> data) {
 
   final rawFileId = data['file_id'] ?? data['fileId'] ?? data['pdf_id'] ?? data['pdfId'];
   final fileId = int.tryParse('$rawFileId');
+  final fileTargetCommentId = int.tryParse(
+    '${data['reply_id'] ?? data['replyId'] ?? data['reply_comment_id'] ?? data['replyCommentId'] ?? data['target_reply_id'] ?? data['comment_id'] ?? data['commentId'] ?? ''}',
+  );
+  final fileTargetIsReply = type.contains('reply');
 
   if (fileId != null && fileId > 0) {
-    _openSharedFile(fileId);
+    _openSharedFile(
+      fileId,
+      targetCommentId: fileTargetCommentId,
+      targetIsReply: fileTargetIsReply,
+    );
     return;
   }
 
@@ -529,7 +541,7 @@ void _openCoursesPageFromNotification() {
     });
   }
 
-void _openSharedFile(int fileId) {
+void _openSharedFile(int fileId, {int? targetCommentId, bool targetIsReply = false}) {
   if (!mounted || fileId <= 0) return;
 
   Navigator.of(context).push(
@@ -537,6 +549,8 @@ void _openSharedFile(int fileId) {
       builder: (_) => FileDirectPage(
         fileId: fileId,
         isDark: widget.isDark,
+        targetCommentId: targetCommentId,
+        targetIsReply: targetIsReply,
       ),
     ),
   );
@@ -6071,7 +6085,7 @@ class _UserPopupCard extends StatelessWidget {
     onClose();
     final messenger = ScaffoldMessenger.of(context);
     try {
-      await AppAuthService.signInWithGoogle();
+      await AppAuthService.signInWithGoogle(context: context);
     } catch (e) {
       AppNotice.showSnackBar(context, 
         const SnackBar(content: Text('تعذر تسجيل الدخول. حاول مرة أخرى.')),

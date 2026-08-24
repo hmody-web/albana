@@ -43,7 +43,7 @@ class AppAuthService {
     return 'مستخدم';
   }
 
-  static Future<UserCredential?> signInWithGoogle() async {
+  static Future<UserCredential?> signInWithGoogle({BuildContext? context}) async {
     final googleUser = await GoogleSignIn().signIn();
     if (googleUser == null) return null;
 
@@ -55,6 +55,19 @@ class AppAuthService {
 
     final result = await FirebaseAuth.instance.signInWithCredential(credential);
     await result.user?.reload();
+    final user = FirebaseAuth.instance.currentUser ?? result.user;
+    if (user != null && context != null && context.mounted && result.additionalUserInfo?.isNewUser == true) {
+      final completed = await AppleProfileService.ensureProfile(
+        context,
+        user,
+        forceEdit: true,
+        requireConfirmation: true,
+      );
+      if (!completed) {
+        await FirebaseAuth.instance.signOut();
+        return null;
+      }
+    }
     return result;
   }
 

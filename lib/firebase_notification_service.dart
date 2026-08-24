@@ -16,6 +16,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'firebase_options.dart';
 import 'services/app_auth_service.dart';
+import 'services/platform_user_service.dart';
 
 @pragma('vm:entry-point')
 Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
@@ -77,15 +78,14 @@ class FirebaseNotificationService {
   static bool _initialized = false;
   static StreamSubscription<User?>? _authSubscription;
   static StreamSubscription<String>? _tokenRefreshSubscription;
+  static Timer? _userHeartbeatTimer;
+  static bool _supervisorRevisionListenerAttached = false;
   static const String _supervisorsTopic = 'supervisors';
   static const String _lastUserTopicKey = 'last_fcm_user_topic';
   static const String _allUsersTopic = 'all_users';
 
   static bool _isSupervisorEmail(String? email) {
-    final clean = email?.trim().toLowerCase();
-    return clean == 'hmode.qq@gmail.com' ||
-        clean == 'hmode.qu@gmail.com' ||
-        clean == 'info@majidalbana.com';
+    return PlatformUserService.isSupervisorEmail(email);
   }
 
   static const String generalNotificationsKey = 'general';
@@ -245,6 +245,7 @@ class FirebaseNotificationService {
 
     try {
       await _setupLocalNotifications();
+      await PlatformUserService.initialize();
 
       // On iOS, explicitly allow the system banner while the app is foreground.
       if (!kIsWeb && defaultTargetPlatform == TargetPlatform.iOS) {
@@ -524,10 +525,29 @@ static Future<void> _setupLocalNotifications() async {
 }
 
   static void _listenToAuthChangesForSupervisorTopic() {
+    if (!_supervisorRevisionListenerAttached) {
+      _supervisorRevisionListenerAttached = true;
+      PlatformUserService.supervisorRevisionNotifier.addListener(() {
+        unawaited(_syncSupervisorTopic());
+      });
+    }
     _authSubscription?.cancel();
-    _authSubscription = FirebaseAuth.instance.authStateChanges().listen((_) {
+    _authSubscription = FirebaseAuth.instance.authStateChanges().listen((user) {
+      unawaited(PlatformUserService.refreshSupervisors());
+      if (user != null) unawaited(PlatformUserService.syncUser(user));
       unawaited(_syncSupervisorTopic());
       unawaited(_syncUserReplyTopic());
+    });
+    _userHeartbeatTimer?.cancel();
+    _userHeartbeatTimer = Timer.periodic(const Duration(seconds: 60), (_) {
+      final user = FirebaseAuth.instance.currentUser;
+      if (user != null) {
+        unawaited(PlatformUserService.syncUser(user));
+        unawaited(() async {
+          await PlatformUserService.refreshSupervisors();
+          await _syncSupervisorTopic();
+        }());
+      }
     });
   }
 

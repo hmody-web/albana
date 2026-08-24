@@ -11,6 +11,7 @@ import 'package:file_picker/file_picker.dart';
 import '../widgets/shared_widgets.dart';
 import '../widgets/comment_interactions.dart';
 import '../services/app_auth_service.dart';
+import '../services/platform_user_service.dart';
 import '../services/app_notice.dart';
 import 'package:http/http.dart' as http;
 import 'package:flutter/gestures.dart';
@@ -214,11 +215,15 @@ class FilesPageDeepLinkBus {
 class FileDirectPage extends StatefulWidget {
   final int fileId;
   final bool isDark;
+  final int? targetCommentId;
+  final bool targetIsReply;
 
   const FileDirectPage({
     super.key,
     required this.fileId,
     required this.isDark,
+    this.targetCommentId,
+    this.targetIsReply = false,
   });
 
   @override
@@ -430,6 +435,8 @@ class _FileDirectPageState extends State<FileDirectPage> {
           onView: () => _openFile(file),
           onDownload: () => _downloadFile(file),
           onShare: (shareContext) => _shareFile(shareContext, file),
+          targetCommentId: widget.targetCommentId,
+          targetIsReply: widget.targetIsReply,
         );
       },
     );
@@ -507,9 +514,7 @@ void _scrollToTopFromNav() {
   late final AnimationController _searchAnimCtrl;
   late final Animation<double> _searchAnim;
 bool _isSupervisor() {
-    final user = FirebaseAuth.instance.currentUser;
-    final email = user?.email?.trim().toLowerCase();
-    return email == 'hmode.qq@gmail.com' || email == 'hmode.qu@gmail.com' || email == 'info@majidalbana.com';
+    return PlatformUserService.isSupervisorEmail(FirebaseAuth.instance.currentUser?.email);
   }
 
   void _onFilePublished() {
@@ -2959,6 +2964,8 @@ class _PdfFileDetailsPage extends StatelessWidget {
   final VoidCallback onView;
   final VoidCallback onDownload;
   final void Function(BuildContext shareContext) onShare;
+  final int? targetCommentId;
+  final bool targetIsReply;
 
   const _PdfFileDetailsPage({
     required this.file,
@@ -2970,6 +2977,8 @@ class _PdfFileDetailsPage extends StatelessWidget {
     required this.onView,
     required this.onDownload,
     required this.onShare,
+    this.targetCommentId,
+    this.targetIsReply = false,
   });
 
   static const gold = Color(0xFFD4A017);
@@ -3247,6 +3256,8 @@ class _PdfFileDetailsPage extends StatelessWidget {
                         fileId: file.id,
                         isDark: isDark,
                         surface: surface,
+                        targetCommentId: targetCommentId,
+                        targetIsReply: targetIsReply,
                       ),
                     ],
                   ),
@@ -4055,11 +4066,15 @@ class _PdfCommentsSection extends StatefulWidget {
   final int fileId;
   final bool isDark;
   final Color surface;
+  final int? targetCommentId;
+  final bool targetIsReply;
 
   const _PdfCommentsSection({
     required this.fileId,
     required this.isDark,
     required this.surface,
+    this.targetCommentId,
+    this.targetIsReply = false,
   });
 
   @override
@@ -4084,17 +4099,22 @@ class _PdfCommentsSectionState extends State<_PdfCommentsSection> {
   Timer? _pollTimer;
   _PdfFileComment? _replyTarget;
   final Set<int> _expandedReplyRoots = <int>{};
+  final Map<int, GlobalKey> _commentKeys = <int, GlobalKey>{};
+  int? _highlightedCommentId;
+  bool _targetCommentFocused = false;
+  Timer? _commentHighlightTimer;
 
   @override
   void initState() {
     super.initState();
     _loadComments(initial: true);
-    _pollTimer = Timer.periodic(const Duration(seconds: 5), (_) => _loadComments(silent: true));
+    _pollTimer = Timer.periodic(const Duration(seconds: 2), (_) => _loadComments(silent: true));
   }
 
   @override
   void dispose() {
     _pollTimer?.cancel();
+    _commentHighlightTimer?.cancel();
     _commentCtrl.dispose();
     _commentFocus.dispose();
     _commentsScroll.dispose();
@@ -4102,8 +4122,7 @@ class _PdfCommentsSectionState extends State<_PdfCommentsSection> {
   }
 
   bool get _isSupervisor {
-    final email = FirebaseAuth.instance.currentUser?.email?.trim().toLowerCase();
-    return email == 'hmode.qq@gmail.com' || email == 'hmode.qu@gmail.com' || email == 'info@majidalbana.com';
+    return PlatformUserService.isSupervisorEmail(FirebaseAuth.instance.currentUser?.email);
   }
 
   Future<void> _showLoginOptions() async {
@@ -4170,7 +4189,7 @@ class _PdfCommentsSectionState extends State<_PdfCommentsSection> {
                   onTap: () async {
                     Navigator.pop(sheetContext);
                     try {
-                      final result = await AppAuthService.signInWithGoogle();
+                      final result = await AppAuthService.signInWithGoogle(context: context);
                       if (result == null) return;
                       if (mounted) setState(() {});
                     } catch (_) {
@@ -4215,6 +4234,7 @@ class _PdfCommentsSectionState extends State<_PdfCommentsSection> {
           _loading = false;
           _error = null;
         });
+        _focusTargetCommentIfNeeded();
       } else if (_loading) {
         setState(() => _loading = false);
       }
@@ -4229,6 +4249,99 @@ class _PdfCommentsSectionState extends State<_PdfCommentsSection> {
     }
   }
 
+  void _focusTargetCommentIfNeeded() {
+    final requestedId = widget.targetCommentId;
+    if (_targetCommentFocused || requestedId == null || requestedId <= 0) return;
+
+    _PdfFileComment? target;
+    for (final comment in _comments) {
+      if (comment.id == requestedId) {
+        target = comment;
+        break;
+      }
+    }
+    if (target == null) return;
+
+    if (widget.targetIsReply && !target.isReply) {
+      final rootId = target.id;
+      final replies = _comments
+          .where((c) => c.isReply && (c.parentId == rootId || c.replyToCommentId == rootId))
+          .toList();
+      if (replies.isNotEmpty) {
+        replies.sort((a, b) => b.id.compareTo(a.id));
+        target = replies.first;
+      }
+    }
+
+    final resolved = target;
+    if (resolved == null) return;
+
+    if (resolved.isReply) {
+      final rootId = resolved.parentId > 0 ? resolved.parentId : resolved.replyToCommentId;
+      if (rootId > 0 && !_expandedReplyRoots.contains(rootId)) {
+        setState(() => _expandedReplyRoots.add(rootId));
+      }
+    }
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      unawaited(_tryFocusTargetComment(resolved.id, 0));
+    });
+  }
+
+  Future<void> _tryFocusTargetComment(int targetId, int attempt) async {
+    if (!mounted || _targetCommentFocused) return;
+    final targetContext = _commentKeys[targetId]?.currentContext;
+    if (targetContext == null) {
+      if (attempt >= 18) return;
+      await Future<void>.delayed(Duration(milliseconds: 80 + attempt * 30));
+      if (!mounted) return;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        unawaited(_tryFocusTargetComment(targetId, attempt + 1));
+      });
+      return;
+    }
+
+    _targetCommentFocused = true;
+    setState(() => _highlightedCommentId = targetId);
+
+    // مرحلتان حتى يعمل السكرول من أول ضغطة على الإشعار حتى قبل أول حركة يدوية.
+    // نقترب أولاً من قسم التعليقات ثم نثبت العنصر المطلوب بعد اكتمال layout.
+    if (_commentsScroll.hasClients) {
+      await _commentsScroll.animateTo(
+        _commentsScroll.position.maxScrollExtent,
+        duration: const Duration(milliseconds: 620),
+        curve: Curves.easeOutCubic,
+      );
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 120));
+    if (!mounted) return;
+    final refreshedContext = _commentKeys[targetId]?.currentContext ?? targetContext;
+    await Scrollable.ensureVisible(
+      refreshedContext,
+      duration: const Duration(milliseconds: 720),
+      curve: Curves.easeInOutCubic,
+      alignment: 0.30,
+      alignmentPolicy: ScrollPositionAlignmentPolicy.explicit,
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 100));
+    if (mounted && _commentKeys[targetId]?.currentContext != null) {
+      await Scrollable.ensureVisible(
+        _commentKeys[targetId]!.currentContext!,
+        duration: const Duration(milliseconds: 260),
+        curve: Curves.easeOutCubic,
+        alignment: 0.30,
+        alignmentPolicy: ScrollPositionAlignmentPolicy.explicit,
+      );
+    }
+
+    _commentHighlightTimer?.cancel();
+    _commentHighlightTimer = Timer(const Duration(milliseconds: 3200), () {
+      if (mounted && _highlightedCommentId == targetId) {
+        setState(() => _highlightedCommentId = null);
+      }
+    });
+  }
+
   Future<void> _sendComment() async {
     final text = _commentCtrl.text.trim();
     if (text.isEmpty || _sending) return;
@@ -4238,6 +4351,8 @@ class _PdfCommentsSectionState extends State<_PdfCommentsSection> {
       await _showLoginOptions();
       return;
     }
+    final banned = await PlatformUserService.refreshCurrentUserStatus();
+    if (banned) return;
 
     HapticFeedback.lightImpact();
     setState(() => _sending = true);
@@ -4568,6 +4683,7 @@ class _PdfCommentsSectionState extends State<_PdfCommentsSection> {
                                         isDark: widget.isDark,
                                         onReply: () => replyTo(comment),
                                         child: _PdfCommentBubble(
+                                          key: _commentKeys.putIfAbsent(comment.id, () => GlobalKey()),
                                           comment: comment,
                                           isDark: widget.isDark,
                                           canEdit: ownsComment,
@@ -4576,6 +4692,7 @@ class _PdfCommentsSectionState extends State<_PdfCommentsSection> {
                                           onDelete: () => _deleteComment(comment),
                                           onReply: () => replyTo(comment),
                                           showReplyAction: replies.isEmpty,
+                                          highlighted: _highlightedCommentId == comment.id,
                                         ),
                                       ),
                                       if (replies.isNotEmpty)
@@ -4619,6 +4736,7 @@ class _PdfCommentsSectionState extends State<_PdfCommentsSection> {
                                                     isDark: widget.isDark,
                                                     onReply: () => replyTo(r),
                                                     child: _PdfCommentBubble(
+                                                      key: _commentKeys.putIfAbsent(r.id, () => GlobalKey()),
                                                       comment: r,
                                                       isDark: widget.isDark,
                                                       canEdit: owns,
@@ -4627,6 +4745,7 @@ class _PdfCommentsSectionState extends State<_PdfCommentsSection> {
                                                       onDelete: () => _deleteComment(r),
                                                       onReply: () => replyTo(r),
                                                       compact: true,
+                                                      highlighted: _highlightedCommentId == r.id,
                                                     ),
                                                   );
                                                 }),
@@ -4700,9 +4819,13 @@ class _PdfCommentsSectionState extends State<_PdfCommentsSection> {
                 ),
                 const SizedBox(width: 9),
                 Expanded(
-                  child: TextField(
+                  child: ValueListenableBuilder<bool>(
+                    valueListenable: PlatformUserService.bannedCommentsNotifier,
+                    builder: (context, banned, _) => TextField(
                     controller: _commentCtrl,
                     focusNode: _commentFocus,
+                    enabled: !banned,
+                    readOnly: banned,
                     textDirection: TextDirection.rtl,
                     minLines: 1,
                     maxLines: 4,
@@ -4710,12 +4833,13 @@ class _PdfCommentsSectionState extends State<_PdfCommentsSection> {
                     style: TextStyle(color: textPrimary, fontSize: 14, fontWeight: FontWeight.w700, height: 1.55),
                     decoration: InputDecoration(
                       counterText: '',
-                      hintText: FirebaseAuth.instance.currentUser == null ? 'سجل دخولك لإضافة تعليق...' : 'اكتب تعليقك...',
+                      hintText: banned ? 'لقد تم منعك من قبل المشرفون' : (FirebaseAuth.instance.currentUser == null ? 'سجل دخولك لإضافة تعليق...' : 'اكتب تعليقك...'),
                       hintStyle: TextStyle(color: textSub.withOpacity(0.72), fontSize: 13.5, fontWeight: FontWeight.w700),
                       border: InputBorder.none,
                       isDense: true,
                       contentPadding: const EdgeInsets.symmetric(vertical: 10),
                     ),
+                  ),
                   ),
                 ),
                 const SizedBox(width: 8),
@@ -4784,8 +4908,10 @@ class _PdfCommentBubble extends StatefulWidget {
   final VoidCallback onReply;
   final bool compact;
   final bool showReplyAction;
+  final bool highlighted;
 
   const _PdfCommentBubble({
+    super.key,
     required this.comment,
     required this.isDark,
     required this.canEdit,
@@ -4795,6 +4921,7 @@ class _PdfCommentBubble extends StatefulWidget {
     required this.onReply,
     this.compact = false,
     this.showReplyAction = true,
+    this.highlighted = false,
   });
 
   @override
@@ -4891,7 +5018,9 @@ class _PdfCommentBubbleState extends State<_PdfCommentBubble> {
     final name = _effectiveName;
     final initial = name.runes.isEmpty ? '؟' : String.fromCharCode(name.runes.first);
 
-    return TweenAnimationBuilder<double>(
+    return CommentNotificationFlash(
+      active: widget.highlighted,
+      child: TweenAnimationBuilder<double>(
       tween: Tween(begin: 0.97, end: 1),
       duration: const Duration(milliseconds: 240),
       curve: Curves.easeOutCubic,
@@ -4983,30 +5112,29 @@ class _PdfCommentBubbleState extends State<_PdfCommentBubble> {
                   ),
                   const SizedBox(height: 12),
                   if (widget.showReplyAction)
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.end,
-                      textDirection: TextDirection.rtl,
-                      children: [
-                        Transform.translate(
-                          offset: const Offset(10, -10),
-                          child: TextButton(
-                            style: TextButton.styleFrom(
-                              padding: EdgeInsets.zero,
-                              minimumSize: const Size(32, 28),
-                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                            ),
-                            onPressed: widget.onReply,
-                            child: const Text(
-                              'رد',
-                              style: TextStyle(
-                                color: Color(0xFF757575),
-                                fontSize: 12,
-                                fontWeight: FontWeight.w800,
-                              ),
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: Transform.translate(
+                        offset: const Offset(0, -10),
+                        child: TextButton(
+                          style: TextButton.styleFrom(
+                            padding: EdgeInsets.zero,
+                            minimumSize: const Size(32, 28),
+                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                            alignment: Alignment.centerRight,
+                          ),
+                          onPressed: widget.onReply,
+                          child: const Text(
+                            'رد',
+                            textAlign: TextAlign.right,
+                            style: TextStyle(
+                              color: Color(0xFF757575),
+                              fontSize: 12,
+                              fontWeight: FontWeight.w800,
                             ),
                           ),
                         ),
-                      ],
+                      ),
                     ),
                 ],
               ),
@@ -5073,6 +5201,7 @@ class _PdfCommentBubbleState extends State<_PdfCommentBubble> {
             ],
           ],
         ),
+      ),
       ),
     );
   }

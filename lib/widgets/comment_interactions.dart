@@ -750,3 +750,93 @@ class CommentReplyContextChip extends StatelessWidget {
     );
   }
 }
+
+/// وميض خفيف للتعليق/الرد المفتوح من الإشعار، بدون إطار أو تغيير أبعاد العنصر.
+class CommentNotificationFlash extends StatefulWidget {
+  final bool active;
+  final Widget child;
+
+  const CommentNotificationFlash({
+    super.key,
+    required this.active,
+    required this.child,
+  });
+
+  @override
+  State<CommentNotificationFlash> createState() => _CommentNotificationFlashState();
+}
+
+class _CommentNotificationFlashState extends State<CommentNotificationFlash>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 3000),
+    );
+    if (widget.active) _play();
+  }
+
+  @override
+  void didUpdateWidget(covariant CommentNotificationFlash oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.active && !oldWidget.active) _play();
+  }
+
+  void _play() {
+    _controller.forward(from: 0);
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      clipBehavior: Clip.hardEdge,
+      children: [
+        widget.child,
+        if (widget.active)
+          Positioned.fill(
+            child: IgnorePointer(
+              child: AnimatedBuilder(
+                animation: _controller,
+                builder: (_, __) {
+                  final t = Curves.easeInOutCubic.transform(_controller.value);
+                  return FractionalTranslation(
+                    translation: Offset(1.35 - (2.7 * t), 0),
+                    child: FractionallySizedBox(
+                      widthFactor: 0.48,
+                      alignment: Alignment.centerRight,
+                      child: DecoratedBox(
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            begin: Alignment.centerRight,
+                            end: Alignment.centerLeft,
+                            colors: [
+                              Colors.transparent,
+                              _commentGold.withOpacity(0.07),
+                              _commentGold.withOpacity(0.22),
+                              _commentGold.withOpacity(0.07),
+                              Colors.transparent,
+                            ],
+                            stops: const [0, 0.18, 0.5, 0.82, 1],
+                          ),
+                        ),
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+}
