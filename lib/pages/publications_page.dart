@@ -12,7 +12,6 @@ import 'package:image_picker/image_picker.dart' show ImagePicker, ImageSource, X
 import 'package:video_player/video_player.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:path_provider/path_provider.dart';
 import '../widgets/shared_widgets.dart';
 import '../widgets/comment_interactions.dart';
 import '../services/app_auth_service.dart';
@@ -2641,70 +2640,38 @@ class _PublicationPost {
   }
 }
 
-// FIX_IOS_SHARE_SAFE_ORIGIN
-// FIX_IOS_SHARE_PREVIEW_THUMBNAIL
-String _sharePreviewFileExtension(String imageUrl, String? contentType) {
-  final lowerUrl = imageUrl.toLowerCase().split('?').first;
-  final lowerType = (contentType ?? '').toLowerCase();
-
-  if (lowerType.contains('png') || lowerUrl.endsWith('.png')) {
-    return 'png';
-  }
-  if (lowerType.contains('webp') || lowerUrl.endsWith('.webp')) {
-    return 'webp';
-  }
-  return 'jpg';
-}
-
-String _sharePreviewMimeType(String extension) {
-  switch (extension) {
-    case 'png':
-      return 'image/png';
-    case 'webp':
-      return 'image/webp';
-    default:
-      return 'image/jpeg';
-  }
-}
-
-Future<XFile?> _prepareIosSharePreviewThumbnail(_PublicationPost post) async {
-  if (!Platform.isIOS) return null;
-
-  final previewUrl = post.imageUrls.isNotEmpty ? post.imageUrls.first : '';
-  if (previewUrl.isEmpty) return null;
+// FIX_LINK_SHARE_DYNAMIC_PREVIEW
+Future<void> _ensureVideoSharePreview(_PublicationPost post) async {
+  final videoUrl = post.videoUrl;
+  if (videoUrl == null || videoUrl.isEmpty) return;
 
   try {
-    final uri = Uri.parse(previewUrl);
-    final response = await http.get(uri).timeout(const Duration(seconds: 10));
+    final bytes = await VideoThumbnail.thumbnailData(
+      video: videoUrl,
+      imageFormat: ImageFormat.JPEG,
+      maxWidth: 1200,
+      quality: 88,
+      timeMs: 800,
+    );
+    if (bytes == null || bytes.isEmpty) return;
 
-    if (response.statusCode != 200 || response.bodyBytes.isEmpty) {
-      return null;
-    }
-
-    final contentType = response.headers['content-type'];
-    if (contentType != null &&
-        contentType.isNotEmpty &&
-        !contentType.toLowerCase().contains('image/')) {
-      return null;
-    }
-
-    final extension = _sharePreviewFileExtension(previewUrl, contentType);
-    final mimeType = _sharePreviewMimeType(extension);
-    final tempDir = await getTemporaryDirectory();
-    final file = File(
-      '${tempDir.path}/ios_share_preview_${post.id}_${DateTime.now().millisecondsSinceEpoch}.$extension',
+    final request = http.MultipartRequest(
+      'POST',
+      Uri.parse('https://majidalbana.com/post/share_thumbnail.php'),
+    );
+    request.fields['post_id'] = '${post.id}';
+    request.files.add(
+      http.MultipartFile.fromBytes(
+        'thumbnail',
+        bytes,
+        filename: 'post_${post.id}_preview.jpg',
+      ),
     );
 
-    await file.writeAsBytes(response.bodyBytes, flush: true);
-
-    return XFile(
-      file.path,
-      mimeType: mimeType,
-      name: 'majidalbana_post_preview.$extension',
-    );
-  } catch (_) {
-    return null;
-  }
+    final response = await request.send().timeout(const Duration(seconds: 12));
+    // فشل إنشاء المعاينة لا يمنع مشاركة الرابط نفسه.
+    await response.stream.drain<void>();
+  } catch (_) {}
 }
 
 Future<void> _sharePublicationPost(
@@ -2723,13 +2690,13 @@ Future<void> _sharePublicationPost(
   } catch (_) {}
 
   try {
-    final previewThumbnail = await _prepareIosSharePreviewThumbnail(post);
+    // لا نرسل صورة أو وصف كمرفق منفصل. إذا كان المنشور فيديو، نجهز فقط
+    // صورة Open Graph على الخادم كي يسحبها WhatsApp من الرابط نفسه.
+    await _ensureVideoSharePreview(post);
 
     await SharePlus.instance.share(
       ShareParams(
         uri: Uri.parse(url),
-        title: 'منشور د.ماجد البنا',
-        previewThumbnail: previewThumbnail,
         sharePositionOrigin:
             shareOrigin ?? const Rect.fromLTWH(0, 0, 1, 1),
       ),
@@ -2749,7 +2716,7 @@ Future<void> _sharePublicationPost(
     } catch (_) {}
 
     try {
-      AppNotice.showSnackBar(context, 
+      AppNotice.showSnackBar(context,
         const SnackBar(
           content: Text(
             'تعذر فتح نافذة المشاركة، تم نسخ الرابط',
