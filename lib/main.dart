@@ -5998,7 +5998,7 @@ class _UserAvatarButtonState extends State<_UserAvatarButton>
   @override
   Widget build(BuildContext context) {
     return StreamBuilder<User?>(
-      stream: FirebaseAuth.instance.authStateChanges(),
+      stream: FirebaseAuth.instance.userChanges(),
       builder: (context, snapshot) {
         final user = snapshot.data;
         final photoUrl = user?.photoURL;

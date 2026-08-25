@@ -713,7 +713,7 @@ final urlMatch =
     _syncScheduleRowKeys();
 
     return StreamBuilder<User?>(
-      stream: FirebaseAuth.instance.authStateChanges(),
+      stream: FirebaseAuth.instance.userChanges(),
       builder: (context, snapshot) {
         final user = snapshot.data;
         final isAdmin = _isSupervisor(user);

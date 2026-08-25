@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
@@ -17,7 +18,9 @@ class AccountProfilePage extends StatefulWidget {
 class _AccountProfilePageState extends State<AccountProfilePage> {
   static const gold = Color(0xFFD4A017);
   late Future<Map<String,dynamic>> _future;
-  @override void initState(){super.initState();_future=_load();}
+  StreamSubscription<User?>? _profileSubscription;
+  @override void initState(){super.initState();_future=_load();_profileSubscription=FirebaseAuth.instance.userChanges().listen((_){if(mounted)setState((){});});}
+  @override void dispose(){_profileSubscription?.cancel();super.dispose();}
 
   Future<Map<String,dynamic>> _load() async {
     final identity=AppAuthService.userIdentity(widget.user).trim().toLowerCase();
@@ -43,7 +46,7 @@ class _AccountProfilePageState extends State<AccountProfilePage> {
 
   String _date(DateTime? d)=> d==null?'غير متوفر':'${d.year}/${d.month.toString().padLeft(2,'0')}/${d.day.toString().padLeft(2,'0')}';
   @override Widget build(BuildContext context){
-    final u=widget.user; final apple=AppAuthService.isAppleUser(u); final bg=widget.isDark?const Color(0xFF090909):const Color(0xFFF7F4EE); final fg=widget.isDark?Colors.white:const Color(0xFF1A1000);
+    final u=FirebaseAuth.instance.currentUser??widget.user; final apple=AppAuthService.isAppleUser(u); final bg=widget.isDark?const Color(0xFF090909):const Color(0xFFF7F4EE); final fg=widget.isDark?Colors.white:const Color(0xFF1A1000);
     return Directionality(textDirection: TextDirection.rtl, child: Scaffold(backgroundColor:bg, appBar:AppBar(backgroundColor:bg,elevation:0,title:Text('الملف الشخصي',style:TextStyle(color:fg,fontWeight:FontWeight.w900)),iconTheme:IconThemeData(color:fg)), body:FutureBuilder<Map<String,dynamic>>(future:_future,builder:(context,s){final d=s.data??const{}; return ListView(padding:const EdgeInsets.all(18),children:[
       Center(child:CircleAvatar(radius:46,backgroundColor:gold.withOpacity(.15),backgroundImage:(u.photoURL??'').isNotEmpty?NetworkImage(u.photoURL!):null,child:(u.photoURL??'').isEmpty?Text(String.fromCharCode(AppAuthService.displayNameFor(u).runes.first),style:const TextStyle(fontSize:34,color:gold,fontWeight:FontWeight.w900)):null)),
       const SizedBox(height:12),Center(child:Text(AppAuthService.displayNameFor(u),style:TextStyle(color:fg,fontSize:22,fontWeight:FontWeight.w900))),const SizedBox(height:18),

@@ -3100,7 +3100,7 @@ class _PdfFileDetailsPage extends StatelessWidget {
                                 child: LayoutBuilder(
                                   builder: (context, constraints) {
                                     final wide = constraints.maxWidth >= 620;
-                                    final preview = _DetailPreviewPanel(file: file, isDark: isDark);
+                                    final preview = _DetailPreviewPanel(file: file, isDark: isDark, onView: onView);
                                     final info = _DetailHeaderInfo(
                                       file: file,
                                       title: title,
@@ -3413,8 +3413,9 @@ class _DetailHeaderInfo extends StatelessWidget {
 class _DetailPreviewPanel extends StatelessWidget {
   final PdfFileItem file;
   final bool isDark;
+  final VoidCallback onView;
 
-  const _DetailPreviewPanel({required this.file, required this.isDark});
+  const _DetailPreviewPanel({required this.file, required this.isDark, required this.onView});
 
   static const gold = Color(0xFFD4A017);
 
@@ -3422,9 +3423,18 @@ class _DetailPreviewPanel extends StatelessWidget {
   Widget build(BuildContext context) {
     final bg = isDark ? const Color(0xFF201A10) : const Color(0xFFF6E8C8);
 
-    return AspectRatio(
-      aspectRatio: 1.03,
-      child: Container(
+    return Material(
+      color: Colors.transparent,
+      borderRadius: BorderRadius.circular(28),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(28),
+        onTap: () {
+          HapticFeedback.lightImpact();
+          onView();
+        },
+        child: AspectRatio(
+          aspectRatio: 1.03,
+          child: Container(
         decoration: BoxDecoration(
           color: bg,
           borderRadius: BorderRadius.circular(28),
@@ -3543,6 +3553,8 @@ class _DetailPreviewPanel extends StatelessWidget {
               ),
             ],
           ),
+        ),
+      ),
         ),
       ),
     );
@@ -6033,6 +6045,9 @@ class _AdminPdfPublishBoxState extends State<_AdminPdfPublishBox> {
       req.fields['title'] = _titleCtrl.text.trim();
       req.fields['description'] = _descCtrl.text.trim();
       req.fields['category'] = categoryValue;
+      final publishUser = FirebaseAuth.instance.currentUser;
+      req.fields['user_email'] = (publishUser?.email ?? '').trim().toLowerCase();
+      req.fields['user_uid'] = (publishUser?.uid ?? '').trim();
       req.files.add(await http.MultipartFile.fromPath('pdf_file', _pickedPdf!.path));
       final res = await req.send().timeout(const Duration(seconds: 60));
       if (res.statusCode == 200 || res.statusCode == 302) {
@@ -6291,12 +6306,19 @@ class _EditPdfSheetState extends State<_EditPdfSheet> {
     if (categoryValue.isEmpty) { _showSnack('اختر تصنيف أو أضف تصنيف جديد'); return; }
     setState(() => _saving = true);
     try {
-      final res = await http.post(Uri.parse(_updateApi), body: {
-        'id': '${widget.file.id}',
-        'title': _titleCtrl.text.trim(),
-        'description': _descCtrl.text.trim(),
-        'category': categoryValue,
-      }).timeout(const Duration(seconds: 30));
+      final manageUser = FirebaseAuth.instance.currentUser;
+      final res = await http.post(
+        Uri.parse(_updateApi),
+        headers: const {'Accept': 'application/json'},
+        body: {
+          'id': '${widget.file.id}',
+          'title': _titleCtrl.text.trim(),
+          'description': _descCtrl.text.trim(),
+          'category': categoryValue,
+          'user_email': (manageUser?.email ?? '').trim().toLowerCase(),
+          'user_uid': (manageUser?.uid ?? '').trim(),
+        },
+      ).timeout(const Duration(seconds: 30));
       if (res.statusCode == 200) {
         final updated = widget.file.copyWith(
           title: _titleCtrl.text.trim(),
@@ -6390,9 +6412,15 @@ class _EditPdfSheetState extends State<_EditPdfSheet> {
     if (_deleting) return;
     setState(() => _deleting = true);
     try {
+      final manageUser = FirebaseAuth.instance.currentUser;
       final res = await http.post(
         Uri.parse(_deleteApi),
-        body: {'id': '${widget.file.id}'},
+        headers: const {'Accept': 'application/json'},
+        body: {
+          'id': '${widget.file.id}',
+          'user_email': (manageUser?.email ?? '').trim().toLowerCase(),
+          'user_uid': (manageUser?.uid ?? '').trim(),
+        },
       ).timeout(const Duration(seconds: 30));
 
       final body = res.body.trim();

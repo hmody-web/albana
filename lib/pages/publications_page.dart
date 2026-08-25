@@ -1878,6 +1878,9 @@ class _AdminPublishBoxState extends State<_AdminPublishBox> {
       final request =
           http.MultipartRequest('POST', Uri.parse(widget.addPostApi));
       request.fields['content'] = _contentCtrl.text.trim();
+      final publishUser = FirebaseAuth.instance.currentUser;
+      request.fields['user_email'] = (publishUser?.email ?? '').trim().toLowerCase();
+      request.fields['user_uid'] = (publishUser?.uid ?? '').trim();
 
       if (_mediaType == 'video') {
         request.files.add(
@@ -3767,27 +3770,32 @@ void _openCommentsSheet({bool autoFocus = false}) {
                   const SizedBox(width: 8),
 
                   // Share button
-                  GestureDetector(
-                    onTap: () => _sharePublicationPost(context, widget.post),
-                    behavior: HitTestBehavior.opaque,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 14, vertical: 7),
-                      decoration: BoxDecoration(
-                        color: Colors.transparent,
-                        borderRadius: BorderRadius.circular(20),
-                        border: Border.all(color: gold.withOpacity(0.3)),
-                      ),
-                      child: Row(
-                        children: [
-                          Icon(Icons.share_rounded, size: 16, color: gold),
-                          const SizedBox(width: 6),
-                          Text('مشاركة',
-                              style: TextStyle(
-                                  color: textPrimary,
-                                  fontSize: 12.5,
-                                  fontWeight: FontWeight.w600)),
-                        ],
+                  Material(
+                    color: Colors.transparent,
+                    borderRadius: BorderRadius.circular(20),
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(20),
+                      hoverColor: gold.withOpacity(0.10),
+                      highlightColor: gold.withOpacity(0.14),
+                      splashColor: gold.withOpacity(0.18),
+                      onTap: () {
+                        HapticFeedback.lightImpact();
+                        _sharePublicationPost(context, widget.post);
+                      },
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+                        decoration: BoxDecoration(
+                          color: Colors.transparent,
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(color: gold.withOpacity(0.3)),
+                        ),
+                        child: Row(
+                          children: [
+                            Icon(Icons.share_rounded, size: 16, color: gold),
+                            const SizedBox(width: 6),
+                            Text('مشاركة', style: TextStyle(color: textPrimary, fontSize: 12.5, fontWeight: FontWeight.w600)),
+                          ],
+                        ),
                       ),
                     ),
                   ),
@@ -5024,6 +5032,7 @@ class _CommentTile extends StatefulWidget {
 
 class _CommentTileState extends State<_CommentTile> {
   static const gold = Color(0xFFD4A017);
+  StreamSubscription<User?>? _profileSubscription;
   bool _editing = false;
   late TextEditingController _editCtrl;
 
@@ -5031,6 +5040,9 @@ class _CommentTileState extends State<_CommentTile> {
   void initState() {
     super.initState();
     _editCtrl = TextEditingController(text: widget.comment.text);
+    _profileSubscription = FirebaseAuth.instance.userChanges().listen((_) {
+      if (mounted) setState(() {});
+    });
   }
 
   @override
@@ -5043,6 +5055,7 @@ class _CommentTileState extends State<_CommentTile> {
 
   @override
   void dispose() {
+    _profileSubscription?.cancel();
     _editCtrl.dispose();
     super.dispose();
   }
@@ -5052,6 +5065,25 @@ class _CommentTileState extends State<_CommentTile> {
     if (user == null) return false;
     final identity = AppAuthService.userIdentity(user).trim().toLowerCase();
     return widget.comment.userEmail.trim().toLowerCase() == identity;
+  }
+
+
+  String get _effectiveName {
+    final user = FirebaseAuth.instance.currentUser;
+    if (_isOwner && user != null) {
+      final name = AppAuthService.displayNameFor(user).trim();
+      if (name.isNotEmpty && name != 'مستخدم') return name;
+    }
+    return widget.comment.userName.trim().isEmpty ? 'مستخدم' : widget.comment.userName.trim();
+  }
+
+  String get _effectiveAvatar {
+    final user = FirebaseAuth.instance.currentUser;
+    if (_isOwner && user != null) {
+      final avatar = (user.photoURL ?? '').trim();
+      if (avatar.isNotEmpty) return avatar;
+    }
+    return widget.comment.userAvatar.trim();
   }
 
   Future<void> _confirmDelete() async {
@@ -5080,8 +5112,8 @@ class _CommentTileState extends State<_CommentTile> {
     showCommentUserProfile(
       context: context,
       isDark: widget.isDark,
-      userName: widget.comment.userName,
-      userAvatar: widget.comment.userAvatar,
+      userName: _effectiveName,
+      userAvatar: _effectiveAvatar,
       userEmail: widget.comment.userEmail,
       fallbackJoinedAt: widget.comment.parsedCreatedAt,
     );
@@ -5120,10 +5152,10 @@ return Container(
             child: CircleAvatar(
               radius: avatarSize,
               backgroundColor: gold.withOpacity(0.16),
-              backgroundImage: widget.comment.userAvatar.trim().isNotEmpty ? NetworkImage(widget.comment.userAvatar) : null,
-              child: widget.comment.userAvatar.trim().isEmpty
+              backgroundImage: _effectiveAvatar.isNotEmpty ? NetworkImage(_effectiveAvatar) : null,
+              child: _effectiveAvatar.isEmpty
                   ? Text(
-                      widget.comment.userName.trim().isNotEmpty ? String.fromCharCode(widget.comment.userName.trim().runes.first) : '؟',
+                      _effectiveName.isNotEmpty ? String.fromCharCode(_effectiveName.runes.first) : '؟',
                       style: TextStyle(color: gold, fontWeight: FontWeight.w800, fontSize: widget.compact ? 11 : 13),
                     )
                   : null,
@@ -5149,7 +5181,7 @@ return Container(
                             behavior: HitTestBehavior.opaque,
                             onTap: _openProfile,
                             child: Text(
-                              widget.comment.userName,
+                              _effectiveName,
                               textDirection: TextDirection.rtl,
                               textAlign: TextAlign.right,
                               overflow: TextOverflow.ellipsis,
@@ -6417,27 +6449,36 @@ Future<void> _editComment(int commentId, String newText) async {
           ),
         ),
         leadingWidth: 112,
-        leading: GestureDetector(
-          onTap: () => _sharePublicationPost(context, p),
-          child: Container(
-            margin: const EdgeInsets.only(left: 12, top: 8, bottom: 8),
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
-            decoration: BoxDecoration(
-              color: gold.withOpacity(0.10),
+        leading: Padding(
+          padding: const EdgeInsets.only(left: 12, top: 8, bottom: 8),
+          child: Material(
+            color: Colors.transparent,
+            borderRadius: BorderRadius.circular(20),
+            child: InkWell(
               borderRadius: BorderRadius.circular(20),
-              border: Border.all(color: gold.withOpacity(0.3)),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(Icons.share_rounded, size: 16, color: gold),
-                const SizedBox(width: 6),
-                Text('مشاركة',
-                    style: TextStyle(
-                        color: textPrimary,
-                        fontSize: 12.5,
-                        fontWeight: FontWeight.w600)),
-              ],
+              hoverColor: gold.withOpacity(0.14),
+              highlightColor: gold.withOpacity(0.18),
+              splashColor: gold.withOpacity(0.20),
+              onTap: () {
+                HapticFeedback.lightImpact();
+                _sharePublicationPost(context, p);
+              },
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+                decoration: BoxDecoration(
+                  color: gold.withOpacity(0.10),
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: gold.withOpacity(0.3)),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.share_rounded, size: 16, color: gold),
+                    const SizedBox(width: 6),
+                    Text('مشاركة', style: TextStyle(color: textPrimary, fontSize: 12.5, fontWeight: FontWeight.w600)),
+                  ],
+                ),
+              ),
             ),
           ),
         ),
@@ -6972,9 +7013,13 @@ class _EditPostSheetState extends State<_EditPostSheet> {
           http.MultipartRequest('POST', Uri.parse(_updateApi));
       request.fields['id'] = '${widget.post.id}';
       request.fields['content'] = _contentCtrl.text.trim();
+      final manageUser = FirebaseAuth.instance.currentUser;
+      request.fields['user_email'] = (manageUser?.email ?? '').trim().toLowerCase();
+      request.fields['user_uid'] = (manageUser?.uid ?? '').trim();
+      request.headers['Accept'] = 'application/json';
       if (_newImage != null) {
         request.files.add(
-          await http.MultipartFile.fromPath('image', _newImage!.path),
+          await http.MultipartFile.fromPath('new_images[]', _newImage!.path),
         );
       }
       final streamed =
@@ -7046,9 +7091,15 @@ class _EditPostSheetState extends State<_EditPostSheet> {
 
     setState(() => _saving = true);
     try {
+      final manageUser = FirebaseAuth.instance.currentUser;
       final response = await http.post(
         Uri.parse('https://majidalbana.com/admin/posts/delete_post.php'),
-        body: {'id': '${widget.post.id}'},
+        headers: const {'Accept': 'application/json'},
+        body: {
+          'id': '${widget.post.id}',
+          'user_email': (manageUser?.email ?? '').trim().toLowerCase(),
+          'user_uid': (manageUser?.uid ?? '').trim(),
+        },
       ).timeout(const Duration(seconds: 20));
       final json = jsonDecode(response.body);
       if (json['success'] == true) {

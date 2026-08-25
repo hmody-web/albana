@@ -746,7 +746,7 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
               sliver: SliverList(
                 delegate: SliverChildListDelegate([
                   StreamBuilder<User?>(
-                    stream: FirebaseAuth.instance.authStateChanges(),
+                    stream: FirebaseAuth.instance.userChanges(),
                     builder: (context, snapshot) {
                       final user = snapshot.data;
                       return _ModernLoginCard(
@@ -830,7 +830,7 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
                   ),
                   const SizedBox(height: 14),
                   StreamBuilder<User?>(
-                    stream: FirebaseAuth.instance.authStateChanges(),
+                    stream: FirebaseAuth.instance.userChanges(),
                     builder: (context, snapshot) {
                       final user = snapshot.data;
                       final loggedIn = user != null;
