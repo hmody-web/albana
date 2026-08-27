@@ -17,6 +17,7 @@ import '../widgets/comment_interactions.dart';
 import '../services/app_auth_service.dart';
 import '../services/platform_user_service.dart';
 import '../services/app_notice.dart';
+import '../services/user_safety_service.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:visibility_detector/visibility_detector.dart';
 import 'package:provider/provider.dart';
@@ -4710,13 +4711,24 @@ Listener(
                                       ),
                                 padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
                                 itemCount: _Comment.rootComments(widget.comments).length,
-                                separatorBuilder: (_, __) => Divider(
-                                  height: 28,
-                                  color: isDark
-                                      ? const Color.fromARGB(1, 49, 49, 49)
-                                          .withOpacity(0.05)
-                                      : const Color.fromARGB(6, 190, 190, 190)
-                                          .withOpacity(0.06),
+                                separatorBuilder: (_, index) => ValueListenableBuilder<Set<String>>(
+                                  valueListenable: UserSafetyService.blockedEmails,
+                                  builder: (_, blocked, __) {
+                                    final roots = _Comment.rootComments(widget.comments);
+                                    if (index < 0 || index + 1 >= roots.length) return const SizedBox.shrink();
+                                    final current = roots[index].userEmail.trim().toLowerCase();
+                                    final next = roots[index + 1].userEmail.trim().toLowerCase();
+                                    if ((current.isNotEmpty && blocked.contains(current)) ||
+                                        (next.isNotEmpty && blocked.contains(next))) {
+                                      return const SizedBox.shrink();
+                                    }
+                                    return Divider(
+                                      height: 28,
+                                      color: isDark
+                                          ? const Color.fromARGB(1, 49, 49, 49).withOpacity(0.05)
+                                          : const Color.fromARGB(6, 190, 190, 190).withOpacity(0.06),
+                                    );
+                                  },
                                 ),
                                 itemBuilder: (context, i) {
                                   final c = _Comment.rootComments(widget.comments)[i];
@@ -4770,7 +4782,7 @@ Listener(
                                           _inputFocusNode.requestFocus();
                                         }
 
-                                        return Column(
+                                        return BlockedCommentThreadVisibility(userEmail: c.userEmail, child: Column(
                                           crossAxisAlignment: CrossAxisAlignment.stretch,
                                           children: [
                                             CommentSwipeReply(
@@ -4854,7 +4866,7 @@ Listener(
                                                 ),
                                               ),
                                           ],
-                                        );
+                                        ));
                                       },
                                     ),
                                   );
@@ -6711,7 +6723,7 @@ if (p.videoUrl != null)
                         _commentFocusNode.requestFocus();
                       }
 
-                      return Column(
+                      return BlockedCommentThreadVisibility(userEmail: c.userEmail, child: Column(
                         children: [
                           CommentSwipeReply(
                             isDark: isDark,
@@ -6806,7 +6818,7 @@ if (p.videoUrl != null)
                                 : Colors.black.withOpacity(0.06),
                           ),
                         ],
-                      );
+                      ));
                     }).toList(),
                         
               ],

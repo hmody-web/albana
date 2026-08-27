@@ -141,8 +141,9 @@
 			<dict>
 				<key>CFBundleIconFiles</key>
 				<array>
-					<string>AppIconBlackAlt</string>
-					<string>AppIconBlackAlt~ipad</string>
+					<string>AppIconBlackAlt-76</string>
+					<string>AppIconBlackAlt-152</string>
+					<string>AppIconBlackAlt-167</string>
 				</array>
 				<key>UIPrerenderedIcon</key>
 				<false/>
@@ -151,8 +152,9 @@
 			<dict>
 				<key>CFBundleIconFiles</key>
 				<array>
-					<string>AppIconWhiteAlt</string>
-					<string>AppIconWhiteAlt~ipad</string>
+					<string>AppIconWhiteAlt-76</string>
+					<string>AppIconWhiteAlt-152</string>
+					<string>AppIconWhiteAlt-167</string>
 				</array>
 				<key>UIPrerenderedIcon</key>
 				<false/>
@@ -160,15 +162,15 @@
 		</dict>
 	</dict>
 	<key>NSPhotoLibraryUsageDescription</key>
-<string>يحتاج التطبيق إلى الوصول إلى مكتبة الصور لاختيار الصور والملفات المرئية التي تريد استخدامها داخل التطبيق.</string>
-
-<key>NSCameraUsageDescription</key>
-<string>يحتاج التطبيق إلى الوصول إلى الكاميرا لالتقاط الصور أو الفيديو عند استخدام الميزات التي تتطلب ذلك.</string>
-<key>UIBackgroundModes</key>
-<array>
-	<string>fetch</string>
-	<string>remote-notification</string>
-</array> 
-
+	<string>يحتاج التطبيق إلى الوصول إلى مكتبة الصور لاختيار الصور والملفات المرئية التي تريد استخدامها داخل التطبيق.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>يحتاج التطبيق إلى الوصول إلى الكاميرا لالتقاط الصور أو الفيديو عند استخدام الميزات التي تتطلب ذلك.</string>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>fetch</string>
+		<string>remote-notification</string>
+	</array>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>قد يطلب المحتوى المضمّن داخل التطبيق الوصول إلى موقعك عند استخدام ميزة تعتمد على الموقع. لن يستخدم التطبيق موقعك إلا بعد موافقتك.</string>
 </dict>
 </plist>

@@ -175,10 +175,12 @@ class _CommentSwipeReplyState extends State<CommentSwipeReply> {
               onLongPressStart: widget.safetyUserEmail.trim().isEmpty ? null : (_) async {
                 if (mounted) setState(() => _pressed = true);
                 await HapticFeedback.lightImpact();
+                if (!mounted) return;
+                setState(() => _pressed = false);
+                UserSafetyService.showActions(context,isDark:widget.isDark,name:widget.safetyUserName,email:widget.safetyUserEmail,avatar:widget.safetyUserAvatar,sourceType:widget.safetySourceType,sourceId:widget.safetySourceId,commentId:widget.safetyCommentId,commentText:widget.safetyCommentText);
               },
               onLongPressEnd: widget.safetyUserEmail.trim().isEmpty ? null : (_) {
                 if (mounted) setState(() => _pressed = false);
-                UserSafetyService.showActions(context,isDark:widget.isDark,name:widget.safetyUserName,email:widget.safetyUserEmail,avatar:widget.safetyUserAvatar,sourceType:widget.safetySourceType,sourceId:widget.safetySourceId,commentId:widget.safetyCommentId,commentText:widget.safetyCommentText);
               },
               child: AnimatedScale(
                 duration: const Duration(milliseconds: 110),
@@ -200,6 +202,34 @@ class _CommentSwipeReplyState extends State<CommentSwipeReply> {
       builder: (_, blocked, child) {
         final email = widget.safetyUserEmail.trim().toLowerCase();
         if (email.isNotEmpty && blocked.contains(email)) return const SizedBox.shrink();
+        return child!;
+      },
+    );
+  }
+}
+
+/// يخفي سلسلة التعليق كاملة (التعليق الرئيسي وكل ما تحته) عند حظر صاحبها،
+/// حتى لا تبقى الردود أو المسافات والفواصل ظاهرة بعد الحظر.
+class BlockedCommentThreadVisibility extends StatelessWidget {
+  final String userEmail;
+  final Widget child;
+
+  const BlockedCommentThreadVisibility({
+    super.key,
+    required this.userEmail,
+    required this.child,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<Set<String>>(
+      valueListenable: UserSafetyService.blockedEmails,
+      child: child,
+      builder: (_, blocked, child) {
+        final email = userEmail.trim().toLowerCase();
+        if (email.isNotEmpty && blocked.contains(email)) {
+          return const SizedBox.shrink();
+        }
         return child!;
       },
     );

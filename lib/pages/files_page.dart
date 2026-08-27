@@ -4689,7 +4689,7 @@ class _PdfCommentsSectionState extends State<_PdfCommentsSection> {
                                     });
                                   }
 
-                                  return Column(
+                                  return BlockedCommentThreadVisibility(userEmail: comment.userEmail, child: Column(
                                     children: [
                                       CommentSwipeReply(
                                         isDark: widget.isDark,
@@ -4780,7 +4780,7 @@ class _PdfCommentsSectionState extends State<_PdfCommentsSection> {
                                         ),
                                       const SizedBox(height: 10),
                                     ],
-                                  );
+                                  ));
                                 }),
                               ]
                             ],
