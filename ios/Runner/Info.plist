@@ -135,31 +135,6 @@
 			<key>CFBundleIconName</key>
 			<string>AppIcon</string>
 		</dict>
-		<key>CFBundleAlternateIcons</key>
-		<dict>
-			<key>AppIconBlackAlt</key>
-			<dict>
-				<key>CFBundleIconFiles</key>
-				<array>
-					<string>AppIconBlackAlt-76</string>
-					<string>AppIconBlackAlt-152</string>
-					<string>AppIconBlackAlt-167</string>
-				</array>
-				<key>UIPrerenderedIcon</key>
-				<false/>
-			</dict>
-			<key>AppIconWhiteAlt</key>
-			<dict>
-				<key>CFBundleIconFiles</key>
-				<array>
-					<string>AppIconWhiteAlt-76</string>
-					<string>AppIconWhiteAlt-152</string>
-					<string>AppIconWhiteAlt-167</string>
-				</array>
-				<key>UIPrerenderedIcon</key>
-				<false/>
-			</dict>
-		</dict>
 	</dict>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>يحتاج التطبيق إلى الوصول إلى مكتبة الصور لاختيار الصور والملفات المرئية التي تريد استخدامها داخل التطبيق.</string>
