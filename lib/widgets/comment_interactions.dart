@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:http/http.dart' as http;
+import '../services/user_safety_service.dart';
 
 const Color _commentGold = Color(0xFFD4A017);
 
@@ -13,6 +14,13 @@ class CommentSwipeReply extends StatefulWidget {
   final bool enabled;
   final bool isDark;
   final ValueChanged<bool>? onSwipeStateChanged;
+  final String safetyUserName;
+  final String safetyUserAvatar;
+  final String safetyUserEmail;
+  final String safetySourceType;
+  final int safetySourceId;
+  final int safetyCommentId;
+  final String safetyCommentText;
 
   const CommentSwipeReply({
     super.key,
@@ -21,6 +29,7 @@ class CommentSwipeReply extends StatefulWidget {
     required this.isDark,
     this.enabled = true,
     this.onSwipeStateChanged,
+    this.safetyUserName='', this.safetyUserAvatar='', this.safetyUserEmail='', this.safetySourceType='profile', this.safetySourceId=0, this.safetyCommentId=0, this.safetyCommentText='',
   });
 
   @override
@@ -34,6 +43,7 @@ class _CommentSwipeReplyState extends State<CommentSwipeReply> {
   double _offset = 0;
   bool _dragging = false;
   bool _hapticDone = false;
+  bool _pressed = false;
 
   void _start(DragStartDetails details) {
     if (!widget.enabled || widget.onReply == null) return;
@@ -83,6 +93,7 @@ class _CommentSwipeReplyState extends State<CommentSwipeReply> {
 
   @override
   Widget build(BuildContext context) {
+    UserSafetyService.ensureLoaded();
     final progress = (_offset / _triggerOffset).clamp(0.0, 1.0);
     final hintColor = widget.isDark ? Colors.white70 : Colors.black54;
 
@@ -90,7 +101,9 @@ class _CommentSwipeReplyState extends State<CommentSwipeReply> {
         ? const Color.fromARGB(83, 24, 24, 24)
         : Colors.white;
 
-    return ClipRect(
+    return ValueListenableBuilder<Set<String>>(
+      valueListenable: UserSafetyService.blockedEmails,
+      child: ClipRect(
       child: Stack(
         clipBehavior: Clip.hardEdge,
         children: [
@@ -152,15 +165,43 @@ class _CommentSwipeReplyState extends State<CommentSwipeReply> {
             ),
             child: GestureDetector(
               behavior: HitTestBehavior.opaque,
+              onTapDown: (_) { if (mounted) setState(() => _pressed = true); },
+              onTapUp: (_) { if (mounted) setState(() => _pressed = false); },
+              onTapCancel: () { if (mounted) setState(() => _pressed = false); },
               onHorizontalDragStart: _start,
               onHorizontalDragUpdate: _update,
               onHorizontalDragEnd: (_) => _finish(),
               onHorizontalDragCancel: _finish,
-              child: widget.child,
+              onLongPressStart: widget.safetyUserEmail.trim().isEmpty ? null : (_) async {
+                if (mounted) setState(() => _pressed = true);
+                await HapticFeedback.lightImpact();
+              },
+              onLongPressEnd: widget.safetyUserEmail.trim().isEmpty ? null : (_) {
+                if (mounted) setState(() => _pressed = false);
+                UserSafetyService.showActions(context,isDark:widget.isDark,name:widget.safetyUserName,email:widget.safetyUserEmail,avatar:widget.safetyUserAvatar,sourceType:widget.safetySourceType,sourceId:widget.safetySourceId,commentId:widget.safetyCommentId,commentText:widget.safetyCommentText);
+              },
+              child: AnimatedScale(
+                duration: const Duration(milliseconds: 110),
+                scale: _pressed ? 0.985 : 1,
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 110),
+                  decoration: BoxDecoration(
+                    color: _pressed ? _commentGold.withOpacity(widget.isDark ? .075 : .055) : Colors.transparent,
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                  child: widget.child,
+                ),
+              ),
             ),
           ),
         ],
       ),
+    ),
+      builder: (_, blocked, child) {
+        final email = widget.safetyUserEmail.trim().toLowerCase();
+        if (email.isNotEmpty && blocked.contains(email)) return const SizedBox.shrink();
+        return child!;
+      },
     );
   }
 }
@@ -675,6 +716,14 @@ class _CommentUserProfileSheetState extends State<_CommentUserProfileSheet> {
                 );
               },
             ),
+            if (!UserSafetyService.isMe(widget.userEmail) && widget.userEmail.trim().isNotEmpty) ...[
+              const SizedBox(height: 14),
+              Row(children:[
+                Expanded(child:OutlinedButton.icon(style:OutlinedButton.styleFrom(foregroundColor:_commentGold,side:BorderSide(color:_commentGold.withOpacity(.38)),backgroundColor:_commentGold.withOpacity(widget.isDark ? .07 : .045),shape:RoundedRectangleBorder(borderRadius:BorderRadius.circular(14)),padding:const EdgeInsets.symmetric(vertical:12)),onPressed:()=>UserSafetyService.showReport(context,isDark:widget.isDark,name:name,email:widget.userEmail,avatar:widget.userAvatar),icon:const Icon(Icons.flag_outlined,size:18),label:const Text('إبلاغ',style:TextStyle(fontWeight:FontWeight.w800)))),
+                const SizedBox(width:10),
+                Expanded(child:OutlinedButton.icon(style:OutlinedButton.styleFrom(foregroundColor:const Color(0xFFE14D4D),side:BorderSide(color:const Color(0xFFE14D4D).withOpacity(.38)),backgroundColor:const Color(0xFFE14D4D).withOpacity(widget.isDark ? .08 : .05),shape:RoundedRectangleBorder(borderRadius:BorderRadius.circular(14)),padding:const EdgeInsets.symmetric(vertical:12)),onPressed:()=>UserSafetyService.showBlockConfirm(context,isDark:widget.isDark,name:name,email:widget.userEmail,avatar:widget.userAvatar),icon:const Icon(Icons.block_rounded,size:18),label:const Text('حظر',style:TextStyle(fontWeight:FontWeight.w900)))),
+              ]),
+            ],
           ],
         ),
       ),

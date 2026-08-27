@@ -13,6 +13,7 @@ import '../services/app_auth_service.dart';
 import '../services/platform_user_service.dart';
 import '../services/apple_profile_service.dart';
 import '../services/app_notice.dart';
+import '../services/user_safety_service.dart';
 import '../widgets/shared_widgets.dart';
 import 'account_profile_page.dart';
 
@@ -705,6 +706,15 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
     });
   }
 
+
+  void _openBlockedUsers() {
+    Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => _BlockedUsersPage(isDark: widget.isDark)));
+  }
+
+  void _openSafetyActivity() {
+    Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => _SafetyActivityPage(isDark: widget.isDark)));
+  }
+
   void _openProfile(User user) {
     Navigator.of(context).push(
       MaterialPageRoute<void>(
@@ -838,6 +848,20 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
                         isDark: widget.isDark,
                         title: 'الحساب',
                         children: [
+                          if (loggedIn) ...[
+                            _SettingsActionTile(
+                              isDark: widget.isDark,
+                              icon: Icons.person_off_outlined,
+                              title: 'المحظورون',
+                              onTap: _openBlockedUsers,
+                            ),
+                            _SettingsActionTile(
+                              isDark: widget.isDark,
+                              icon: Icons.flag_outlined,
+                              title: 'البلاغات',
+                              onTap: _openSafetyActivity,
+                            ),
+                          ],
                           _SettingsActionTile(
                             isDark: widget.isDark,
                             icon: loggedIn ? Icons.logout_rounded : Icons.login_rounded,
@@ -2688,4 +2712,27 @@ class _ThemeSwitch extends StatelessWidget {
       ),
     );
   }
+}
+
+class _BlockedUsersPage extends StatefulWidget {
+  final bool isDark;
+  const _BlockedUsersPage({required this.isDark});
+  @override State<_BlockedUsersPage> createState()=>_BlockedUsersPageState();
+}
+class _BlockedUsersPageState extends State<_BlockedUsersPage>{
+  late Future<List<Map<String,dynamic>>> _future;
+  @override void initState(){super.initState();_future=UserSafetyService.blockedUsers();}
+  void _reload(){setState(()=>_future=UserSafetyService.blockedUsers());}
+  @override Widget build(BuildContext context){final bg=widget.isDark?const Color(0xFF080808):const Color(0xFFF7F4EE);final card=widget.isDark?const Color(0xFF151515):Colors.white;final text=widget.isDark?Colors.white:const Color(0xFF1A1000);return Scaffold(backgroundColor:bg,appBar:AppBar(backgroundColor:bg,foregroundColor:text,elevation:0,title:const Text('المحظورون',style:TextStyle(fontWeight:FontWeight.w900))),body:FutureBuilder<List<Map<String,dynamic>>>(future:_future,builder:(context,s){if(s.connectionState!=ConnectionState.done)return const Center(child:CircularProgressIndicator(color:Color(0xFFD4A017)));if(s.hasError)return Center(child:Text('تعذر تحميل القائمة',style:TextStyle(color:text)));final a=s.data??[];if(a.isEmpty)return Center(child:Text('لا يوجد أشخاص محظورون',style:TextStyle(color:text.withOpacity(.55),fontWeight:FontWeight.w700)));return ListView.separated(padding:const EdgeInsets.all(16),itemCount:a.length,separatorBuilder:(_,__)=>const SizedBox(height:10),itemBuilder:(context,i){final x=a[i];final name='${x['name']??x['email']??'مستخدم'}';final avatar='${x['avatar']??''}';final email='${x['email']??''}';return Container(padding:const EdgeInsets.all(13),decoration:BoxDecoration(color:card,borderRadius:BorderRadius.circular(20),border:Border.all(color:const Color(0xFFD4A017).withOpacity(.14))),child:Row(children:[CircleAvatar(radius:23,backgroundColor:const Color(0xFFD4A017).withOpacity(.12),backgroundImage:avatar.isNotEmpty?NetworkImage(avatar):null,child:avatar.isEmpty?const Icon(Icons.person_rounded,color:Color(0xFFD4A017)):null),const SizedBox(width:12),Expanded(child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[Text(name,style:TextStyle(color:text,fontWeight:FontWeight.w900,fontSize:14)),const SizedBox(height:3),Text(email,style:TextStyle(color:text.withOpacity(.48),fontSize:10.5),overflow:TextOverflow.ellipsis)])),TextButton(onPressed:()async{try{await UserSafetyService.unblock(email);if(mounted){AppNotice.show(context,'تم إلغاء الحظر',success:true);_reload();}}catch(_){if(mounted)AppNotice.show(context,'تعذر إلغاء الحظر',success:false);}},style:TextButton.styleFrom(foregroundColor:const Color(0xFFD4A017)),child:const Text('إلغاء الحظر',style:TextStyle(fontWeight:FontWeight.w900))) ]));});}));}
+}
+
+class _SafetyActivityPage extends StatefulWidget{
+  final bool isDark; const _SafetyActivityPage({required this.isDark});
+  @override State<_SafetyActivityPage> createState()=>_SafetyActivityPageState();
+}
+class _SafetyActivityPageState extends State<_SafetyActivityPage>{
+  late Future<List<Map<String,dynamic>>> _future;
+  @override void initState(){super.initState();_future=UserSafetyService.myActivity();}
+  String _status(dynamic v){final s='${v??'pending'}';switch(s){case'banned':return'تم منع التعليق';case'deleted_comment':return'تم حذف التعليق';case'deleted_all':return'تم حذف جميع التعليقات';case'invalid':return'بلاغ غير صحيح';default:return'قيد المراجعة';}}
+  @override Widget build(BuildContext context){final bg=widget.isDark?const Color(0xFF080808):const Color(0xFFF7F4EE);final card=widget.isDark?const Color(0xFF151515):Colors.white;final text=widget.isDark?Colors.white:const Color(0xFF1A1000);return Scaffold(backgroundColor:bg,appBar:AppBar(backgroundColor:bg,foregroundColor:text,elevation:0,title:const Text('البلاغات',style:TextStyle(fontWeight:FontWeight.w900))),body:FutureBuilder<List<Map<String,dynamic>>>(future:_future,builder:(context,s){if(s.connectionState!=ConnectionState.done)return const Center(child:CircularProgressIndicator(color:Color(0xFFD4A017)));if(s.hasError)return Center(child:Text('تعذر تحميل السجل',style:TextStyle(color:text)));final a=s.data??[];if(a.isEmpty)return Center(child:Text('لا يوجد سجل حتى الآن',style:TextStyle(color:text.withOpacity(.55),fontWeight:FontWeight.w700)));return ListView.separated(padding:const EdgeInsets.all(16),itemCount:a.length,separatorBuilder:(_,__)=>const SizedBox(height:10),itemBuilder:(context,i){final x=a[i];final report='${x['event_type']}'=='report';final name='${x['target_name']??x['target_email']??'مستخدم'}';final status=_status(x['review_status']);return Container(padding:const EdgeInsets.all(14),decoration:BoxDecoration(color:card,borderRadius:BorderRadius.circular(20),border:Border.all(color:const Color(0xFFD4A017).withOpacity(.14))),child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[Row(children:[Icon(report?Icons.flag_outlined:Icons.block_rounded,color:report?const Color(0xFFD4A017):const Color(0xFFE14D4D),size:20),const SizedBox(width:8),Expanded(child:Text(report?'إبلاغ عن $name':'قمت بحظر $name',style:TextStyle(color:text,fontSize:13.5,fontWeight:FontWeight.w900))),Container(padding:const EdgeInsets.symmetric(horizontal:9,vertical:5),decoration:BoxDecoration(color:const Color(0xFFD4A017).withOpacity(.1),borderRadius:BorderRadius.circular(99)),child:Text(status,style:const TextStyle(color:Color(0xFFD4A017),fontSize:10,fontWeight:FontWeight.w800)))]),if(report&&'${x['reason']??''}'.isNotEmpty)...[const SizedBox(height:9),Text('${x['reason']}',style:TextStyle(color:text.withOpacity(.72),fontSize:12.5,height:1.5))],if('${x['comment_text']??''}'.isNotEmpty)...[const SizedBox(height:8),Container(width:double.infinity,padding:const EdgeInsets.all(10),decoration:BoxDecoration(color:text.withOpacity(.045),borderRadius:BorderRadius.circular(12)),child:Text('${x['comment_text']}',style:TextStyle(color:text.withOpacity(.62),fontSize:11.5,height:1.45)))] ]));});}));}
 }

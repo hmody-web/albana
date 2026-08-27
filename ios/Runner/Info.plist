@@ -164,10 +164,6 @@
 
 <key>NSCameraUsageDescription</key>
 <string>يحتاج التطبيق إلى الوصول إلى الكاميرا لالتقاط الصور أو الفيديو عند استخدام الميزات التي تتطلب ذلك.</string>
-
-<key>NSLocationWhenInUseUsageDescription</key>
-<string>يحتاج التطبيق إلى الوصول إلى موقعك أثناء استخدام التطبيق لتوفير الميزات التي تعتمد على الموقع.</string>
-
 <key>UIBackgroundModes</key>
 <array>
 	<string>fetch</string>

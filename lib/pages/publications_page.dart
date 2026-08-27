@@ -4775,6 +4775,7 @@ Listener(
                                           children: [
                                             CommentSwipeReply(
                                               isDark: isDark,
+                                              safetyUserName:c.userName, safetyUserAvatar:c.userAvatar, safetyUserEmail:c.userEmail, safetySourceType:'post', safetySourceId:c.postId, safetyCommentId:c.id, safetyCommentText:c.text,
                                               onReply: () => replyTo(c),
                                               child: _CommentTile(
                                                 comment: c,
@@ -4821,6 +4822,7 @@ Listener(
                                                     for (int ri = 0; ri < replies.length; ri++) ...[
                                                       CommentSwipeReply(
                                                         isDark: isDark,
+                                                        safetyUserName:replies[ri].userName, safetyUserAvatar:replies[ri].userAvatar, safetyUserEmail:replies[ri].userEmail, safetySourceType:'post', safetySourceId:replies[ri].postId, safetyCommentId:replies[ri].id, safetyCommentText:replies[ri].text,
                                                         onReply: () => replyTo(replies[ri]),
                                                         child: Padding(
                                                           padding: EdgeInsets.zero,
@@ -6713,6 +6715,7 @@ if (p.videoUrl != null)
                         children: [
                           CommentSwipeReply(
                             isDark: isDark,
+                            safetyUserName:c.userName, safetyUserAvatar:c.userAvatar, safetyUserEmail:c.userEmail, safetySourceType:'post', safetySourceId:c.postId, safetyCommentId:c.id, safetyCommentText:c.text,
                             onReply: () => replyTo(c),
                             child: _CommentBubble(
                               key: _commentKeys.putIfAbsent(c.id, () => GlobalKey()),
@@ -6765,6 +6768,7 @@ if (p.videoUrl != null)
                                     for (int i = 0; i < replies.length; i++) ...[
                                       CommentSwipeReply(
                                         isDark: isDark,
+                                        safetyUserName:replies[i].userName, safetyUserAvatar:replies[i].userAvatar, safetyUserEmail:replies[i].userEmail, safetySourceType:'post', safetySourceId:replies[i].postId, safetyCommentId:replies[i].id, safetyCommentText:replies[i].text,
                                         onReply: () => replyTo(replies[i]),
                                         child: _CommentBubble(
                                           key: _commentKeys.putIfAbsent(replies[i].id, () => GlobalKey()),

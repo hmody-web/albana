@@ -4693,6 +4693,7 @@ class _PdfCommentsSectionState extends State<_PdfCommentsSection> {
                                     children: [
                                       CommentSwipeReply(
                                         isDark: widget.isDark,
+                                        safetyUserName:comment.userName, safetyUserAvatar:comment.userAvatar, safetyUserEmail:comment.userEmail, safetySourceType:'pdf', safetySourceId:comment.fileId, safetyCommentId:comment.id, safetyCommentText:comment.text,
                                         onReply: () => replyTo(comment),
                                         child: _PdfCommentBubble(
                                           key: _commentKeys.putIfAbsent(comment.id, () => GlobalKey()),
@@ -4746,6 +4747,7 @@ class _PdfCommentsSectionState extends State<_PdfCommentsSection> {
                                                       currentEmail == r.userEmail.trim().toLowerCase();
                                                   return CommentSwipeReply(
                                                     isDark: widget.isDark,
+                                                    safetyUserName:r.userName, safetyUserAvatar:r.userAvatar, safetyUserEmail:r.userEmail, safetySourceType:'pdf', safetySourceId:r.fileId, safetyCommentId:r.id, safetyCommentText:r.text,
                                                     onReply: () => replyTo(r),
                                                     child: _PdfCommentBubble(
                                                       key: _commentKeys.putIfAbsent(r.id, () => GlobalKey()),
