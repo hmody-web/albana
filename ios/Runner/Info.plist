@@ -102,5 +102,9 @@
 	</array>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>قد يطلب المحتوى المضمّن داخل التطبيق الوصول إلى موقعك عند استخدام ميزة تعتمد على الموقع. لن يستخدم التطبيق موقعك إلا بعد موافقتك.</string>
+
+	<key>ITSAppUsesNonExemptEncryption</key>
+    <false/>
+	
 </dict>
 </plist>
