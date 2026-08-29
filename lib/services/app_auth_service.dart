@@ -129,20 +129,22 @@ class AppAuthService {
     await FirebaseAuth.instance.signOut();
   }
 
-  static Future<void> reauthenticateAndDelete(User user) async {
+  /// Re-authenticates the current user before destructive account deletion.
+  /// For Apple, the returned authorization code is later used to revoke the
+  /// Sign in with Apple token as required by Apple before deleting Firebase Auth.
+  static Future<String?> reauthenticateForAccountDeletion(User user) async {
     if (isAppleUser(user)) {
       final result = await user.reauthenticateWithProvider(AppleAuthProvider());
       final authorizationCode = result.additionalUserInfo?.authorizationCode;
-      if (authorizationCode != null && authorizationCode.isNotEmpty) {
-        await FirebaseAuth.instance.revokeTokenWithAuthorizationCode(authorizationCode);
+      if (authorizationCode == null || authorizationCode.isEmpty) {
+        throw Exception('تعذر تأكيد حساب Apple للحذف. حاول مرة أخرى.');
       }
-      await FirebaseAuth.instance.currentUser?.delete();
-      return;
+      return authorizationCode;
     }
 
     final googleUser = await GoogleSignIn().signIn();
     if (googleUser == null) {
-      throw Exception('يجب تسجيل الدخول مرة أخرى لتأكيد حذف الحساب.');
+      throw Exception('يجب تسجيل الدخول مرة أخرى بواسطة Google لتأكيد حذف الحساب.');
     }
 
     final googleAuth = await googleUser.authentication;
@@ -151,6 +153,28 @@ class AppAuthService {
       idToken: googleAuth.idToken,
     );
     await user.reauthenticateWithCredential(credential);
-    await FirebaseAuth.instance.currentUser?.delete();
+    return null;
+  }
+
+  /// Deletes the already re-authenticated Firebase account.
+  /// Apple accounts also have their Apple authorization token revoked first.
+  static Future<void> deleteReauthenticatedAccount({String? appleAuthorizationCode}) async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+
+    if (isAppleUser(user)) {
+      final code = appleAuthorizationCode?.trim() ?? '';
+      if (code.isEmpty) {
+        throw Exception('رمز تأكيد Apple غير متوفر لإكمال حذف الحساب.');
+      }
+      await FirebaseAuth.instance.revokeTokenWithAuthorizationCode(code);
+    }
+
+    await user.delete();
+  }
+
+  static Future<void> reauthenticateAndDelete(User user) async {
+    final authorizationCode = await reauthenticateForAccountDeletion(user);
+    await deleteReauthenticatedAccount(appleAuthorizationCode: authorizationCode);
   }
 }

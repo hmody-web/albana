@@ -9,9 +9,7 @@ import '../services/apple_profile_service.dart';
 class AccountProfilePage extends StatefulWidget {
   final bool isDark;
   final User user;
-  final Future<void> Function() onDeleteAccount;
-  final bool deletingAccount;
-  const AccountProfilePage({super.key, required this.isDark, required this.user, required this.onDeleteAccount, this.deletingAccount = false});
+  const AccountProfilePage({super.key, required this.isDark, required this.user});
   @override State<AccountProfilePage> createState() => _AccountProfilePageState();
 }
 
@@ -64,8 +62,7 @@ class _AccountProfilePageState extends State<AccountProfilePage> {
         onPressed:() async { final ok=await AppleProfileService.ensureProfile(context,FirebaseAuth.instance.currentUser??u,forceEdit:true); if(ok&&mounted){setState((){_future=_load();});}},
         icon:const Icon(Icons.edit_rounded),label:const Text('تعديل الملف الشخصي'),
         style:FilledButton.styleFrom(backgroundColor:gold,foregroundColor:Colors.white,shape:RoundedRectangleBorder(borderRadius:BorderRadius.circular(16)))
-      )), const SizedBox(height:12),
-      OutlinedButton.icon(onPressed:widget.deletingAccount?null:() async {await widget.onDeleteAccount(); if(mounted && FirebaseAuth.instance.currentUser==null) Navigator.of(context).pop();},icon:widget.deletingAccount?const SizedBox(width:18,height:18,child:CircularProgressIndicator(strokeWidth:2)):const Icon(Icons.delete_forever_rounded),label:Text(widget.deletingAccount?'جاري مسح بيانات الحساب...':'مسح بيانات الحساب'),style:OutlinedButton.styleFrom(foregroundColor:Colors.red,padding:const EdgeInsets.symmetric(vertical:14),side:BorderSide(color:Colors.red.withOpacity(.35)),shape:RoundedRectangleBorder(borderRadius:BorderRadius.circular(16))))
+      ))
     ]);}))); }
   Widget _card(Color fg,List<Widget> children)=>Container(padding:const EdgeInsets.all(16),decoration:BoxDecoration(color:widget.isDark?const Color(0xFF151515):Colors.white,borderRadius:BorderRadius.circular(22),border:Border.all(color:gold.withOpacity(.18))),child:Column(children:children));
   Widget _row(IconData icon,String title,String value,Color fg)=>Padding(padding:const EdgeInsets.symmetric(vertical:9),child:Row(crossAxisAlignment:CrossAxisAlignment.start,children:[Icon(icon,color:gold,size:21),const SizedBox(width:10),Expanded(child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[Text(title,style:TextStyle(color:fg.withOpacity(.58),fontSize:12,fontWeight:FontWeight.w700)),const SizedBox(height:3),Text(value,style:TextStyle(color:fg,fontSize:14,fontWeight:FontWeight.w800))]))]));

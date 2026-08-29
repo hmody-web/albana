@@ -53,6 +53,7 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
   static const _supportEmail = 'support@majidalbana.com';
 
   bool _deletingAccount = false;
+  bool _clearingAccountData = false;
   bool _loadingNotificationPrefs = true;
   bool _systemNotificationsEnabled = true;
   Map<String, bool> _notificationPrefs = const {};
@@ -151,6 +152,7 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
     required String confirmText,
     required IconData icon,
     Color confirmColor = gold,
+    String? warningMessage,
   }) async {
     final isDark = widget.isDark;
     final result = await showGeneralDialog<bool>(
@@ -226,6 +228,28 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
                         fontWeight: FontWeight.w600,
                       ),
                     ),
+                    if (warningMessage != null && warningMessage.trim().isNotEmpty) ...[
+                      const SizedBox(height: 12),
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFE53935).withOpacity(isDark ? 0.12 : 0.08),
+                          borderRadius: BorderRadius.circular(14),
+                          border: Border.all(color: const Color(0xFFE53935).withOpacity(0.30)),
+                        ),
+                        child: Text(
+                          warningMessage,
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(
+                            color: Color(0xFFE53935),
+                            fontSize: 12.5,
+                            height: 1.5,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                      ),
+                    ],
                     const SizedBox(height: 20),
                     Row(
                       children: [
@@ -361,16 +385,22 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
     if (confirmed) await _signOut();
   }
 
-  Future<void> _deleteServerAccountData(User user) async {
+  Future<void> _deleteServerAccountData(User user, {required String mode}) async {
+    final idToken = await user.getIdToken(true);
+    if (idToken == null || idToken.trim().isEmpty) {
+      throw Exception('تعذر التحقق من جلسة Firebase. أعد تسجيل الدخول ثم حاول مرة أخرى.');
+    }
     final response = await http
         .post(
           Uri.parse(_deleteAccountDataUrl),
           body: {
-            'email': user.email ?? '',
+            'email': AppAuthService.userIdentity(user),
             'uid': user.uid,
+            'id_token': idToken,
+            'mode': mode,
           },
         )
-        .timeout(const Duration(seconds: 25));
+        .timeout(const Duration(seconds: 35));
 
     Map<String, dynamic> data = {};
     try {
@@ -384,61 +414,74 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
     }
   }
 
-  Future<void> _deleteFirebaseAccount(User user) async {
-    if (AppAuthService.isAppleUser(user)) {
-      await AppAuthService.reauthenticateAndDelete(user);
-      return;
-    }
-
-    try {
-      await user.delete();
-    } on FirebaseAuthException catch (e) {
-      if (e.code != 'requires-recent-login') rethrow;
-      await AppAuthService.reauthenticateAndDelete(user);
-    }
-  }
-
-  Future<void> _clearLocalAppData() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.clear();
-  }
-
-  Future<void> _deleteAccountCompletely() async {
+  Future<void> _clearAccountData() async {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) {
-      AppNotice.showSnackBar(context, 
-        const SnackBar(content: Text('يجب تسجيل الدخول أولاً.')),
-      );
+      AppNotice.showSnackBar(context, const SnackBar(content: Text('يجب تسجيل الدخول أولاً.')));
       return;
     }
 
     final confirmed = await _confirmDialog(
       title: 'مسح بيانات الحساب',
-      message: 'سيتم حذف تعليقاتك وإعجاباتك وبيانات التسجيل والحضور المرتبطة بحسابك من الخادم، ثم حذف حساب تسجيل الدخول من التطبيق. لا يمكن التراجع عن هذه العملية.',
-      confirmText: 'حذف البيانات',
+      message: 'سيتم مسح تعليقاتك وإعجاباتك وبيانات التسجيل والحضور والبلاغات والبيانات المرتبطة باستخدامك للتطبيق، مع بقاء حساب تسجيل الدخول فعالاً.',
+      confirmText: 'مسح البيانات',
+      icon: Icons.cleaning_services_rounded,
+      confirmColor: const Color(0xFFE07A22),
+    );
+    if (!confirmed || _clearingAccountData) return;
+
+    setState(() => _clearingAccountData = true);
+    try {
+      await _deleteServerAccountData(user, mode: 'data');
+      if (!mounted) return;
+      AppNotice.showSnackBar(context, const SnackBar(content: Text('تم مسح بيانات الحساب بنجاح.')));
+    } catch (e) {
+      if (!mounted) return;
+      AppNotice.showSnackBar(context, SnackBar(content: Text('تعذر مسح بيانات الحساب: $e')));
+    } finally {
+      if (mounted) setState(() => _clearingAccountData = false);
+    }
+  }
+
+  Future<void> _deleteAccountCompletely() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) {
+      AppNotice.showSnackBar(context, const SnackBar(content: Text('يجب تسجيل الدخول أولاً.')));
+      return;
+    }
+
+    final confirmed = await _confirmDialog(
+      title: 'حذف الحساب نهائياً',
+      message: 'سيتم حذف حسابك من التطبيق، وجميع البيانات المرتبطة به من قاعدة البيانات، ثم حذف حساب تسجيل الدخول من Firebase.',
+      warningMessage: 'تحذير: هذا الإجراء نهائي ولا يمكن التراجع عنه أو استعادة الحساب وبياناته بعد الحذف.',
+      confirmText: 'حذف الحساب',
       icon: Icons.delete_forever_rounded,
       confirmColor: const Color(0xFFE53935),
     );
     if (!confirmed || _deletingAccount) return;
 
     setState(() => _deletingAccount = true);
-    final messenger = ScaffoldMessenger.of(context);
-
     try {
-      await _deleteServerAccountData(user);
-      await _deleteFirebaseAccount(user);
-      await _clearLocalAppData();
+      // نطلب إعادة المصادقة أولاً حتى لا تُحذف بيانات الخادم ثم يفشل حذف Firebase
+      // بسبب requires-recent-login. يعمل هذا مع Google وApple.
+      final appleAuthorizationCode = await AppAuthService.reauthenticateForAccountDeletion(user);
+      final refreshedUser = FirebaseAuth.instance.currentUser ?? user;
+
+      // لا نحذف Firebase إلا بعد نجاح حذف كل بيانات الخادم.
+      await _deleteServerAccountData(refreshedUser, mode: 'account');
+      await AppAuthService.deleteReauthenticatedAccount(
+        appleAuthorizationCode: appleAuthorizationCode,
+      );
+
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.clear();
       await AppAuthService.signOut();
 
       if (!mounted) return;
-      AppNotice.showSnackBar(context, 
-        const SnackBar(content: Text('تم حذف بيانات الحساب بنجاح.')),
-      );
+      AppNotice.showSnackBar(context, const SnackBar(content: Text('تم حذف الحساب نهائياً.')));
     } catch (e) {
       if (!mounted) return;
-      AppNotice.showSnackBar(context, 
-        SnackBar(content: Text('تعذر حذف الحساب: $e')),
-      );
+      AppNotice.showSnackBar(context, SnackBar(content: Text('تعذر حذف الحساب: $e')));
     } finally {
       if (mounted) setState(() => _deletingAccount = false);
     }
@@ -721,11 +764,26 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
         builder: (_) => AccountProfilePage(
           isDark: widget.isDark,
           user: user,
-          deletingAccount: _deletingAccount,
-          onDeleteAccount: _deleteAccountCompletely,
         ),
       ),
     );
+  }
+
+  void _openPrivacySecurity(User user) {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => _PrivacySecurityPage(
+          isDark: widget.isDark,
+          user: user,
+          clearingData: _clearingAccountData,
+          deletingAccount: _deletingAccount,
+          onClearData: _clearAccountData,
+          onDeleteAccount: _deleteAccountCompletely,
+        ),
+      ),
+    ).then((_) {
+      if (mounted) setState(() {});
+    });
   }
 
   void _openAboutPage() {
@@ -851,6 +909,12 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
                           if (loggedIn) ...[
                             _SettingsActionTile(
                               isDark: widget.isDark,
+                              icon: Icons.shield_outlined,
+                              title: 'الخصوصية والأمان',
+                              onTap: () => _openPrivacySecurity(user!),
+                            ),
+                            _SettingsActionTile(
+                              isDark: widget.isDark,
                               icon: Icons.person_off_outlined,
                               title: 'المحظورون',
                               onTap: _openBlockedUsers,
@@ -873,6 +937,294 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
                     },
                   ),
                 ]),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+
+class _PrivacySecurityPage extends StatefulWidget {
+  final bool isDark;
+  final User user;
+  final bool clearingData;
+  final bool deletingAccount;
+  final Future<void> Function() onClearData;
+  final Future<void> Function() onDeleteAccount;
+
+  const _PrivacySecurityPage({
+    required this.isDark,
+    required this.user,
+    required this.clearingData,
+    required this.deletingAccount,
+    required this.onClearData,
+    required this.onDeleteAccount,
+  });
+
+  @override
+  State<_PrivacySecurityPage> createState() => _PrivacySecurityPageState();
+}
+
+class _PrivacySecurityPageState extends State<_PrivacySecurityPage> {
+  static const gold = Color(0xFFD4A017);
+  bool _clearing = false;
+  bool _deleting = false;
+
+  User get _user => FirebaseAuth.instance.currentUser ?? widget.user;
+
+  Future<void> _runClear() async {
+    if (_clearing || _deleting) return;
+    setState(() => _clearing = true);
+    try {
+      await widget.onClearData();
+    } finally {
+      if (mounted) setState(() => _clearing = false);
+    }
+  }
+
+  Future<void> _runDelete() async {
+    if (_clearing || _deleting) return;
+    setState(() => _deleting = true);
+    try {
+      await widget.onDeleteAccount();
+      if (mounted && FirebaseAuth.instance.currentUser == null) {
+        Navigator.of(context).pop();
+      }
+    } finally {
+      if (mounted) setState(() => _deleting = false);
+    }
+  }
+
+  void _openAccountInfo() {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => _AccountInformationPage(isDark: widget.isDark, user: _user),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final bg = widget.isDark ? const Color(0xFF090909) : const Color(0xFFF7F4EE);
+    final fg = widget.isDark ? Colors.white : const Color(0xFF1A1000);
+    final card = widget.isDark ? const Color(0xFF151515) : Colors.white;
+    final busyClear = _clearing || widget.clearingData;
+    final busyDelete = _deleting || widget.deletingAccount;
+
+    return Directionality(
+      textDirection: TextDirection.rtl,
+      child: Scaffold(
+        backgroundColor: bg,
+        appBar: AppBar(
+          backgroundColor: bg,
+          foregroundColor: fg,
+          elevation: 0,
+          title: const Text('الخصوصية والأمان', style: TextStyle(fontWeight: FontWeight.w900)),
+        ),
+        body: ListView(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 28),
+          children: [
+            Container(
+              decoration: BoxDecoration(
+                color: card,
+                borderRadius: BorderRadius.circular(24),
+                border: Border.all(color: gold.withOpacity(.16)),
+              ),
+              child: Column(
+                children: [
+                  _PrivacyActionTile(
+                    isDark: widget.isDark,
+                    icon: Icons.badge_outlined,
+                    title: 'معلومات الحساب',
+                    subtitle: 'البريد الإلكتروني والاسم وتاريخ الانضمام',
+                    onTap: _openAccountInfo,
+                  ),
+                  Divider(height: 1, indent: 18, endIndent: 18, color: fg.withOpacity(.08)),
+                  _PrivacyActionTile(
+                    isDark: widget.isDark,
+                    icon: Icons.cleaning_services_outlined,
+                    title: 'مسح بيانات الحساب',
+                    subtitle: 'مسح بيانات استخدامك مع إبقاء تسجيل الدخول فعالاً',
+                    loading: busyClear,
+                    onTap: busyDelete ? null : _runClear,
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 18),
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: const Color(0xFFE53935).withOpacity(widget.isDark ? .10 : .06),
+                borderRadius: BorderRadius.circular(24),
+                border: Border.all(color: const Color(0xFFE53935).withOpacity(.28)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  const Row(
+                    children: [
+                      Icon(Icons.warning_amber_rounded, color: Color(0xFFE53935)),
+                      SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'منطقة حساسة',
+                          style: TextStyle(color: Color(0xFFE53935), fontWeight: FontWeight.w900, fontSize: 16),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  const Text(
+                    'حذف الحساب سيؤدي إلى حذف الحساب وجميع البيانات المرتبطة به نهائياً. لا يمكن التراجع عن هذا القرار أو استعادة البيانات بعد الحذف.',
+                    style: TextStyle(color: Color(0xFFE53935), fontWeight: FontWeight.w800, height: 1.55, fontSize: 12.5),
+                  ),
+                  const SizedBox(height: 14),
+                  SizedBox(
+                    height: 50,
+                    child: OutlinedButton.icon(
+                      onPressed: (busyClear || busyDelete) ? null : _runDelete,
+                      icon: busyDelete
+                          ? const SizedBox(width: 19, height: 19, child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFFE53935)))
+                          : const Icon(Icons.delete_forever_rounded),
+                      label: Text(busyDelete ? 'جاري حذف الحساب...' : 'حذف الحساب'),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: const Color(0xFFE53935),
+                        side: BorderSide(color: const Color(0xFFE53935).withOpacity(.45)),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                        textStyle: const TextStyle(fontWeight: FontWeight.w900),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _PrivacyActionTile extends StatelessWidget {
+  final bool isDark;
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final VoidCallback? onTap;
+  final bool loading;
+
+  const _PrivacyActionTile({
+    required this.isDark,
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.onTap,
+    this.loading = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final fg = isDark ? Colors.white : const Color(0xFF1A1000);
+    return ListTile(
+      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 5),
+      leading: Container(
+        width: 42,
+        height: 42,
+        decoration: BoxDecoration(
+          color: const Color(0xFFD4A017).withOpacity(.12),
+          borderRadius: BorderRadius.circular(14),
+        ),
+        child: Icon(icon, color: const Color(0xFFD4A017), size: 22),
+      ),
+      title: Text(title, style: TextStyle(color: fg, fontWeight: FontWeight.w900, fontSize: 14)),
+      subtitle: Padding(
+        padding: const EdgeInsets.only(top: 3),
+        child: Text(subtitle, style: TextStyle(color: fg.withOpacity(.48), fontSize: 11.5, height: 1.35)),
+      ),
+      trailing: loading
+          ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFFD4A017)))
+          : Icon(Icons.chevron_left_rounded, color: fg.withOpacity(.35)),
+      onTap: onTap,
+    );
+  }
+}
+
+class _AccountInformationPage extends StatelessWidget {
+  final bool isDark;
+  final User user;
+
+  const _AccountInformationPage({required this.isDark, required this.user});
+
+  String _date(DateTime? date) {
+    if (date == null) return 'غير متوفر';
+    final d = date.toLocal();
+    return '${d.year}/${d.month.toString().padLeft(2, '0')}/${d.day.toString().padLeft(2, '0')}';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final current = FirebaseAuth.instance.currentUser ?? user;
+    final bg = isDark ? const Color(0xFF090909) : const Color(0xFFF7F4EE);
+    final fg = isDark ? Colors.white : const Color(0xFF1A1000);
+    final card = isDark ? const Color(0xFF151515) : Colors.white;
+    final email = current.email?.trim().isNotEmpty == true
+        ? current.email!.trim()
+        : AppAuthService.userIdentity(current);
+    final name = AppAuthService.displayNameFor(current);
+
+    Widget row(IconData icon, String label, String value) => Padding(
+      padding: const EdgeInsets.symmetric(vertical: 12),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, color: const Color(0xFFD4A017), size: 21),
+          const SizedBox(width: 11),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(label, style: TextStyle(color: fg.withOpacity(.52), fontSize: 12, fontWeight: FontWeight.w700)),
+                const SizedBox(height: 4),
+                SelectableText(value, style: TextStyle(color: fg, fontSize: 14, fontWeight: FontWeight.w900)),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+
+    return Directionality(
+      textDirection: TextDirection.rtl,
+      child: Scaffold(
+        backgroundColor: bg,
+        appBar: AppBar(
+          backgroundColor: bg,
+          foregroundColor: fg,
+          elevation: 0,
+          title: const Text('معلومات الحساب', style: TextStyle(fontWeight: FontWeight.w900)),
+        ),
+        body: ListView(
+          padding: const EdgeInsets.all(18),
+          children: [
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 7),
+              decoration: BoxDecoration(
+                color: card,
+                borderRadius: BorderRadius.circular(22),
+                border: Border.all(color: const Color(0xFFD4A017).withOpacity(.16)),
+              ),
+              child: Column(
+                children: [
+                  row(Icons.email_outlined, 'البريد الإلكتروني', email),
+                  Divider(height: 1, color: fg.withOpacity(.07)),
+                  row(Icons.person_outline_rounded, 'اسم الحساب الحالي', name),
+                  Divider(height: 1, color: fg.withOpacity(.07)),
+                  row(Icons.calendar_month_outlined, 'تاريخ الانضمام', _date(current.metadata.creationTime)),
+                ],
               ),
             ),
           ],
