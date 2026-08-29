@@ -388,7 +388,7 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
   Future<void> _deleteServerAccountData(User user, {required String mode}) async {
     final idToken = await user.getIdToken(true);
     if (idToken == null || idToken.trim().isEmpty) {
-      throw Exception('تعذر التحقق من جلسة Firebase. أعد تسجيل الدخول ثم حاول مرة أخرى.');
+      throw Exception('تعذر التحقق من جلسة الحساب. أعد تسجيل الدخول ثم حاول مرة أخرى.');
     }
     final response = await http
         .post(
@@ -409,7 +409,7 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
     } catch (_) {}
 
     if (response.statusCode < 200 || response.statusCode >= 300 || data['success'] != true) {
-      final message = (data['message'] ?? 'فشل حذف بيانات الحساب من الخادم').toString();
+      final message = (data['message'] ?? 'تعذر إكمال العملية').toString();
       throw Exception(message);
     }
   }
@@ -451,9 +451,9 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
     }
 
     final confirmed = await _confirmDialog(
-      title: 'حذف الحساب نهائياً',
-      message: 'سيتم حذف حسابك من التطبيق، وجميع البيانات المرتبطة به من قاعدة البيانات، ثم حذف حساب تسجيل الدخول من Firebase.',
-      warningMessage: 'تحذير: هذا الإجراء نهائي ولا يمكن التراجع عنه أو استعادة الحساب وبياناته بعد الحذف.',
+      title: 'حذف الحساب',
+      message: 'سيتم حذف حسابك من المنصة نهائياً وجميع البيانات المرتبطة به.',
+      warningMessage: 'تحذير: لا يمكن التراجع عن هذا القرار أو استعادة الحساب وبياناته بعد الحذف.',
       confirmText: 'حذف الحساب',
       icon: Icons.delete_forever_rounded,
       confirmColor: const Color(0xFFE53935),
@@ -462,16 +462,14 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
 
     setState(() => _deletingAccount = true);
     try {
-      // نطلب إعادة المصادقة أولاً حتى لا تُحذف بيانات الخادم ثم يفشل حذف Firebase
-      // بسبب requires-recent-login. يعمل هذا مع Google وApple.
-      final appleAuthorizationCode = await AppAuthService.reauthenticateForAccountDeletion(user);
+      // تأكيد هوية المستخدم أولاً. لحساب Apple يتم أيضاً إلغاء صلاحية
+      // تسجيل الدخول المرتبطة بالتطبيق قبل تنفيذ الحذف النهائي على الخادم.
+      await AppAuthService.prepareAccountDeletion(user);
       final refreshedUser = FirebaseAuth.instance.currentUser ?? user;
 
-      // لا نحذف Firebase إلا بعد نجاح حذف كل بيانات الخادم.
+      // الخادم يتحقق من جلسة المستخدم ثم يحذف جميع بيانات المنصة والحساب
+      // المرتبط بخدمة المصادقة كعملية حذف واحدة قابلة لإعادة المحاولة بأمان.
       await _deleteServerAccountData(refreshedUser, mode: 'account');
-      await AppAuthService.deleteReauthenticatedAccount(
-        appleAuthorizationCode: appleAuthorizationCode,
-      );
 
       final prefs = await SharedPreferences.getInstance();
       await prefs.clear();
@@ -1051,53 +1049,14 @@ class _PrivacySecurityPageState extends State<_PrivacySecurityPage> {
                     loading: busyClear,
                     onTap: busyDelete ? null : _runClear,
                   ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 18),
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: const Color(0xFFE53935).withOpacity(widget.isDark ? .10 : .06),
-                borderRadius: BorderRadius.circular(24),
-                border: Border.all(color: const Color(0xFFE53935).withOpacity(.28)),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  const Row(
-                    children: [
-                      Icon(Icons.warning_amber_rounded, color: Color(0xFFE53935)),
-                      SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          'منطقة حساسة',
-                          style: TextStyle(color: Color(0xFFE53935), fontWeight: FontWeight.w900, fontSize: 16),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  const Text(
-                    'حذف الحساب سيؤدي إلى حذف الحساب وجميع البيانات المرتبطة به نهائياً. لا يمكن التراجع عن هذا القرار أو استعادة البيانات بعد الحذف.',
-                    style: TextStyle(color: Color(0xFFE53935), fontWeight: FontWeight.w800, height: 1.55, fontSize: 12.5),
-                  ),
-                  const SizedBox(height: 14),
-                  SizedBox(
-                    height: 50,
-                    child: OutlinedButton.icon(
-                      onPressed: (busyClear || busyDelete) ? null : _runDelete,
-                      icon: busyDelete
-                          ? const SizedBox(width: 19, height: 19, child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFFE53935)))
-                          : const Icon(Icons.delete_forever_rounded),
-                      label: Text(busyDelete ? 'جاري حذف الحساب...' : 'حذف الحساب'),
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: const Color(0xFFE53935),
-                        side: BorderSide(color: const Color(0xFFE53935).withOpacity(.45)),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                        textStyle: const TextStyle(fontWeight: FontWeight.w900),
-                      ),
-                    ),
+                  Divider(height: 1, indent: 18, endIndent: 18, color: fg.withOpacity(.08)),
+                  _PrivacyActionTile(
+                    isDark: widget.isDark,
+                    icon: Icons.delete_forever_outlined,
+                    title: 'حذف الحساب',
+                    subtitle: 'حذف الحساب وجميع البيانات المرتبطة به نهائياً',
+                    loading: busyDelete,
+                    onTap: busyClear ? null : _runDelete,
                   ),
                 ],
               ),

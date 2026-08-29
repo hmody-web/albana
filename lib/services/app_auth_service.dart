@@ -137,14 +137,14 @@ class AppAuthService {
       final result = await user.reauthenticateWithProvider(AppleAuthProvider());
       final authorizationCode = result.additionalUserInfo?.authorizationCode;
       if (authorizationCode == null || authorizationCode.isEmpty) {
-        throw Exception('تعذر تأكيد حساب Apple للحذف. حاول مرة أخرى.');
+        throw Exception('تعذر تأكيد الحساب للحذف. حاول مرة أخرى.');
       }
       return authorizationCode;
     }
 
     final googleUser = await GoogleSignIn().signIn();
     if (googleUser == null) {
-      throw Exception('يجب تسجيل الدخول مرة أخرى بواسطة Google لتأكيد حذف الحساب.');
+      throw Exception('يجب تأكيد تسجيل الدخول مرة أخرى لإكمال حذف الحساب.');
     }
 
     final googleAuth = await googleUser.authentication;
@@ -156,6 +156,21 @@ class AppAuthService {
     return null;
   }
 
+
+  /// Confirms the user's identity before permanent deletion. For Apple users,
+  /// revokes the Sign in with Apple authorization using Firebase's supported
+  /// authorization-code flow before the server removes the account.
+  static Future<void> prepareAccountDeletion(User user) async {
+    final authorizationCode = await reauthenticateForAccountDeletion(user);
+    if (isAppleUser(FirebaseAuth.instance.currentUser ?? user)) {
+      final code = authorizationCode?.trim() ?? '';
+      if (code.isEmpty) {
+        throw Exception('تعذر تأكيد الحساب للحذف. حاول مرة أخرى.');
+      }
+      await FirebaseAuth.instance.revokeTokenWithAuthorizationCode(code);
+    }
+  }
+
   /// Deletes the already re-authenticated Firebase account.
   /// Apple accounts also have their Apple authorization token revoked first.
   static Future<void> deleteReauthenticatedAccount({String? appleAuthorizationCode}) async {
@@ -165,7 +180,7 @@ class AppAuthService {
     if (isAppleUser(user)) {
       final code = appleAuthorizationCode?.trim() ?? '';
       if (code.isEmpty) {
-        throw Exception('رمز تأكيد Apple غير متوفر لإكمال حذف الحساب.');
+        throw Exception('تعذر تأكيد الحساب لإكمال الحذف.');
       }
       await FirebaseAuth.instance.revokeTokenWithAuthorizationCode(code);
     }
